@@ -1096,6 +1096,7 @@ content = html.Div(
                     {"label": "RSV CDC 8 amplicon 230901", "value": "RSV_CDC_8amplicon_230901"},
                     {"label": "Dong et al. 230312", "value": "dong_et_al"},
                     {"label": "Davina-Nunez et al. - WG pools", "value": "davina_nunez_wgs"},
+                    {"label": "Artic V1", "value":"artic_v1"}
                 ],  # add handling here for no primers used
                 id="Amplicon_Library_RSV",
                 placeholder="For Illumina RSV, which primer schema was used?",
