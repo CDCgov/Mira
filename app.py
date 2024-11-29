@@ -1094,7 +1094,7 @@ content = html.Div(
             dcc.Dropdown(
                 [
                     {"label": "RSV CDC 8 amplicon 230901", "value": "RSV_CDC_8amplicon_230901"},
-                    {"label": "Dong et al. 230312", "value": "dong_et_al"},
+                    {"label": "WHO-CC Australia | 2024", "value": "australia_cc_2024"},
                     {"label": "Davina-Nunez et al. - WG pools", "value": "davina_nunez_wgs"},
                     {"label": "Artic V1", "value":"artic_v1"}
                 ],  # add handling here for no primers used
