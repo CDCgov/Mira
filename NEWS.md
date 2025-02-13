@@ -1,8 +1,13 @@
 
-# MIRA 2.0.0
+# MIRA 2.1.0
 
 * Github Repo: https://github.com/CDCgov/MIRA
 * Documentation: https://cdcgov.github.io/MIRA
+
+### v2.1.0
+- Artic RSV primers added
+- VIDRL RSV primers added
+- Containers rebuilt without vulnerability
 
 ### v2.0.0
 - Single container distribution (previously 4 docker images)
