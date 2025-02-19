@@ -18,3 +18,4 @@ services:
       - 8020:8050
     volumes:
       - *data-volume
+    command: tail -f /dev/null
