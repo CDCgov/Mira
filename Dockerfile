@@ -14,11 +14,7 @@ RUN if [ -n "$APT_MIRROR_NAME" ]; then sed -i.bak -E '/security/! s^https?://.+?
 # Install and update system libraries of general use
 RUN apt-get update --allow-releaseinfo-change --fix-missing \
   && apt-get install --no-install-recommends -y \
-  build-essential \ 
-  iptables \
-  python3.7 \
-  python3-pip \
-  python3-setuptools \
+  vim \
   dos2unix
 
 # Create a working directory variable
@@ -41,11 +37,46 @@ COPY . ${MIRA_PROGRAM_DIR}
 
 ############# Install python packages ##################
 
-# Copy python requirements file to docker images
+# Copy all files to docker images
 COPY requirements.txt ${MIRA_PROGRAM_DIR}/requirements.txt
 
-# Install python requirements
-RUN pip3 install --no-cache-dir -r ${MIRA_PROGRAM_DIR}/requirements.txt
+# Update pip and setuptools and then install python packages
+RUN pip install --no-cache-dir --upgrade pip \
+  && pip install --no-cache-dir -r ${MIRA_PROGRAM_DIR}/requirements.txt  
+
+############# Fix vulnerablities pkgs ##################
+
+# Copy all files to docker images
+COPY fixed_vulnerability_pkgs.txt ${MIRA_PROGRAM_DIR}/fixed_vulnerability_pkgs.txt
+
+# Copy all files to docker images
+COPY fixed_vulnerability_pkgs.sh ${MIRA_PROGRAM_DIR}/fixed_vulnerability_pkgs.sh
+
+# Convert bash script from Windows style line endings to Unix-like control characters
+RUN dos2unix ${MIRA_PROGRAM_DIR}/fixed_vulnerability_pkgs.sh
+
+# Allow permission to excute the bash script
+RUN chmod a+x ${MIRA_PROGRAM_DIR}/fixed_vulnerability_pkgs.sh
+
+# Execute bash script to wget the file and tar the package
+RUN bash ${MIRA_PROGRAM_DIR}/fixed_vulnerability_pkgs.sh    
+
+############# Remove vulnerability pkgs ##################
+
+# Copy all files to docker images
+COPY remove_vulnerability_pkgs.txt ${MIRA_PROGRAM_DIR}/remove_vulnerability_pkgs.txt
+
+# Copy all files to docker images
+COPY remove_vulnerability_pkgs.sh ${MIRA_PROGRAM_DIR}/remove_vulnerability_pkgs.sh
+
+# Convert bash script from Windows style line endings to Unix-like control characters
+RUN dos2unix ${MIRA_PROGRAM_DIR}/remove_vulnerability_pkgs.sh
+
+# Allow permission to excute the bash script
+RUN chmod a+x ${MIRA_PROGRAM_DIR}/remove_vulnerability_pkgs.sh
+
+# Execute bash script to wget the file and tar the package
+RUN bash ${MIRA_PROGRAM_DIR}/remove_vulnerability_pkgs.sh
 
 ############# Launch MIRA dashboard ##################
 
