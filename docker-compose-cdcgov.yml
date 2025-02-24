@@ -1,8 +1,7 @@
-version: "3.9"
 
 x-mira-image:
   &mira-image
-  cdcgov/mira:v2.0.0
+  cdcgov/mira:latest
 
 x-data-volume:
   &data-volume
@@ -19,3 +18,4 @@ services:
       - 8020:8050
     volumes:
       - *data-volume
+    command: tail -f /dev/null
