@@ -1310,6 +1310,13 @@ content = html.Div(
                     target="_blank",
                 ), ], className="display-8")
                 ]
+                + [html.Br()]
+    + [html.P( ["Seasonal ", dcc.Link(
+                    "Candidate Vaccine Viruses (CVVs)",
+                    href="https://www.fda.gov/vaccines-blood-biologics/lot-release/use-trivalent-influenza-vaccines-2024-2025-us-influenza-season",
+                    target="_blank",
+                ), ], className="display-8")
+                ]
     + [html.Br()]
     + [dbc.Row(html.Div(id="vars_table"))]
     + [html.Br()]
