@@ -6,7 +6,7 @@ Date: 2024-09-23
 Authors@R: 
   c(person(given="Kristine", family="Lacek", role=c("cre", "aut"), 
            email="qgx6@cdc.gov", comment=c(ORCID="0000-0002-6247-5082")),
-    person(given="Amanda", family="Sullivan", role=c("cre","aut"), 
+    person(given="Amanda", family="Sullivan", role=c("aut"), 
            email="xpa3@cdc.gov", comment=c(ORCID="0000-0003-2007-4210")),    
     person(given="Reina", family="Chau", role=c("aut"), 
            email="snu3@cdc.gov", comment=c(ORCID="0000-0003-3012-1404")),
