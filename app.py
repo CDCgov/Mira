@@ -1078,6 +1078,7 @@ content = html.Div(
                     {"label": "Artic V4", "value": "articv4"},
                     {"label": "Artic V4.1", "value": "articv4.1"},
                     {"label": "Artic V5.3.2", "value": "articv5.3.2"},
+                    {"label": "Artic V5.4.2", "value": "articv5.4.2"}
                     {"label": "Qiagen QIAseq", "value": "qiagen"},
                     {"label": "xGen™ SARS-CoV-2 Amplicon Panel", "value": "swift"},
                     {
@@ -1311,9 +1312,9 @@ content = html.Div(
                 ), ], className="display-8")
                 ]
                 + [html.Br()]
-    + [html.P( ["Seasonal ", dcc.Link(
+    + [html.P( ["Influenza References and ", dcc.Link(
                     "Candidate Vaccine Viruses (CVVs)",
-                    href="https://www.fda.gov/vaccines-blood-biologics/lot-release/use-trivalent-influenza-vaccines-2024-2025-us-influenza-season",
+                    href="https://cdcgov.github.io/MIRA/articles/sequence-qc.html#amino-acid-variant-references",
                     target="_blank",
                 ), ], className="display-8")
                 ]
