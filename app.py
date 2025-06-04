@@ -1078,7 +1078,7 @@ content = html.Div(
                     {"label": "Artic V4", "value": "articv4"},
                     {"label": "Artic V4.1", "value": "articv4.1"},
                     {"label": "Artic V5.3.2", "value": "articv5.3.2"},
-                    {"label": "Artic V5.4.2", "value": "articv5.4.2"}
+                    {"label": "Artic V5.4.2", "value": "articv5.4.2"},
                     {"label": "Qiagen QIAseq", "value": "qiagen"},
                     {"label": "xGen™ SARS-CoV-2 Amplicon Panel", "value": "swift"},
                     {
