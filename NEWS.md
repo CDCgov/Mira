@@ -9,7 +9,7 @@
 - VIDRL RSV primers added
 - Containers rebuilt without vulnerability CVEs
 - S-gene Illumina module added
-- Influena AA variants called againt updated [seasonal references](https://www.who.int/publications/m/item/recommended-composition-of-influenza-virus-vaccines-for-use-in-the-2025-2026-nh-influenza-season) and [zoonotic cvvs](https://aspr.hhs.gov/legal/Pandemic-Influenza-Strategy/Pages/Objective-1.aspx)
+- Influenza AA variants called againt updated [seasonal references](https://www.who.int/publications/m/item/recommended-composition-of-influenza-virus-vaccines-for-use-in-the-2025-2026-nh-influenza-season) and [zoonotic cvvs](https://aspr.hhs.gov/legal/Pandemic-Influenza-Strategy/Pages/Objective-1.aspx)
 
 ### v2.0.0
 - Single container distribution (previously 4 docker images)
