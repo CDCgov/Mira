@@ -4,11 +4,11 @@ citHeader("To cite MIRA in publications use:")
 citEntry(
   entry    = "manual",
   title    = "MIRA: An Interactive Dashboard for Influenza Genome and SARS-CoV-2 Spike-Gene Assembly and Curation",
-  author   = "Ben Rambo-Martin, Kristine Lacek, Reina Chau",
+  author   = "Ben Rambo-Martin, Kristine Lacek, Reina Chau, Amanda Sullivan",
   institution = "Centers for Disease Control and Prevention",
   address  = "1600 Clifton Road NE, Building 21, 8th Floor, Atlanta, Georgia 30333",
   year     = "2023",
   textVersion = paste(
-  "Rambo-Martin, B., Lacek, K., & Chau, R. MIRA: An Interactive Dashboard for Influenza Genome and SARS-CoV-2 Spike-Gene Assembly and Curation."
+  "Rambo-Martin, B., Lacek, K., Chau, R., & Sullivan, A. MIRA: High-Quality Influenza, SARS-CoV-2, and RSV Genome Assembly, Annotation, and Curation"
   )
 )

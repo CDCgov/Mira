@@ -74,3 +74,31 @@ Second, consensus sequences undergo additional genome-level QC to ensure complet
 - Less than 20 minor variants >=5% for SARS-CoV-2 whole-genome and ONT RSV
 - Less than 50 variants >=5% for Illumina RSV 
 - No premature stop codons in Spike (SC2), HA (Flu), NA (Flu), G (RSV), or F (RSV)
+
+## Amino acid variant references
+For influenza samples, MIRA will call amino acid variants in your sequences against the most genetically similar
+candidate vaccine virus (CVV) recommended by the WHO for 
+[human seasonal](https://www.who.int/publications/m/item/recommended-composition-of-influenza-virus-vaccines-for-use-in-the-2025-2026-nh-influenza-season) 
+or [zoonotic viruses](https://aspr.hhs.gov/legal/Pandemic-Influenza-Strategy/Pages/Objective-1.aspx).
+
+Current strains and their GISAID accessions are listed in the following table:
+
+| Reference                                           | Sybtype | Accession        |
+|-----------------------------------------------------|---------|------------------|
+| A/Wisconsin/67/2022                                 | H1N1    | EPI_ISL_15928563 |
+| A/District of Columbia/27/2023                      | H3N2    | EPI_ISL_18862356 |
+| A/Anhui/1/2013                                      | H7N9    | EPI_ISL_138739   |
+| A/Ann Arbor/6/1960                                  | H2N2    | EPI_ISL_130415   |
+| A/Astrakhan/3212/2020_N8                            | H5N8    | EPI_ISL_1038924  |
+| A/Northern Pintail/Alaska/UGAI17/4733/2017          | H6N5    | EPI_ISL_502620   |
+| A/Sichuan/26221/2014                                | H5N6    | EPI_ISL_163493   |
+| A/Turkey/Ontario/6118/1968                          | H8N4    | EPI_ISL_132847   |
+| A/Bangladesh/0994/2011                              | H9N2    | EPI_ISL_140388   |
+| A/American Wigeon/South Carolina/22-000345-001/2021 | H5N1    | EPI_ISL_17008863 |
+| A/California/07/2009                                | H1N1    | EPI_ISL_31553    |
+| A/Hong Kong/4801/2014                               | H3N2    | EPI_ISL_165554   |
+| A/Netherlands/219/2003                              | H7N7    | EPI_ISL_67238    |
+| A/Viet Nam/1203/2004                                | H5N1    | EPI_ISL_21080    |
+| B/Phuket/3073/2013                                  | BYAM    | EPI_ISL_161843   |
+| B/Austria/1359417/2021                              | BVIC    | EPI_ISL_983345   |
+| B/Brisbane/60/2008                                  | BVIC    | EPI_ISL_115157   |

@@ -1,4 +1,4 @@
-url: https://cdcgov.github.io/MIRA/
+url: https://github.com/CDCgov/MIRA #https://cdcgov.github.io/MIRA/
 
 template:
   bootstrap: 5
@@ -11,10 +11,11 @@ authors:
     href: https://github.com/nbx0
   Kristine Lacek:
     href: https://github.com/kristinelacek
-  Reina Chau:
-    href: https://github.com/rchau88
   Amanda Sullivan:
     href: https://github.com/mandysulli
+  Reina Chau:
+    href: https://github.com/rchau88
+
 
 news:
   one_page: false
@@ -38,10 +39,12 @@ navbar:
       icon: fa-home
       href: index.html
     mira_desktop:
-      text: "MIRA in Docker Desktop"
+      text: "MIRA in Docker|Podman Desktop"
       menu:
-        - text: Getting Started and Installation
+        - text: Getting Started and Installation with Docker
           href: articles/mira-dd-getting-started.html
+        - text: Getting Started and Installation with Podman
+          href: articles/mac-podman-setup.html
         - text: Running Genome Assembly with MIRA -- NANOPORE DATA
           href: articles/running-mira-dd-ont.html
         - text: Running Genome Assembly with MIRA -- ILLUMINA DATA
