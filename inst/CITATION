@@ -9,6 +9,6 @@ citEntry(
   address  = "1600 Clifton Road NE, Building 21, 8th Floor, Atlanta, Georgia 30333",
   year     = "2023",
   textVersion = paste(
-  "Rambo-Martin, B., Lacek, K., Chau, R., & Sullivan, A MIRA: High-Quality Influenza, SARS-CoV-2, and RSV Genome Assembly, Annotation, and Curation"
+  "Rambo-Martin, B., Lacek, K., Chau, R., & Sullivan, A. MIRA: High-Quality Influenza, SARS-CoV-2, and RSV Genome Assembly, Annotation, and Curation"
   )
 )
