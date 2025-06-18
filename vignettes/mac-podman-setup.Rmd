@@ -1,4 +1,4 @@
-# Running MIRA on a Mac with Podman Desktop
+# Running MIRA on an "M-chip" Mac with Podman Desktop
 
 ## Install Podman Desktop
 [Podman](https://podman-desktop.io/) is an open source replacement for Docker that allows 
