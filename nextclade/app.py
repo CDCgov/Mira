@@ -55,9 +55,9 @@ def get_fasta():
 
 if __name__ == "__main__":
     """
-    Argument parser to setup and launch MIRA Dashboard
+    Argument parser to setup and launch MIRA API
     """
-    parser = argparse.ArgumentParser(description="Launch MIRA Dashboard")
+    parser = argparse.ArgumentParser(description="Launch MIRA API")
     parser.add_argument("--host",
         help="The address that the app should listen on. Default 0.0.0.0",
     	  type=str,
