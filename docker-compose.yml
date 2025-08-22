@@ -1,0 +1,38 @@
+
+x-spyne-image:
+  &spyne-image
+  spyne_image: cdcgov/spyne-dev:v2.1.0
+  
+x-data-volume:
+  &data-volume
+  type: bind
+  source: /home/snu3/Github/FLU_SC2_SEQUENCING
+  target: /data  
+
+services:
+  mira_shiny:
+    container_name: mira_shiny
+    image: mira_shiny:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        << : [*spyne-image]
+    restart: always
+    ports:
+      - 8888:8050
+    volumes:
+      - *data-volume
+    entrypoint: ["/bin/bash", "-c", "/MIRA/dashboard-kickoff"]
+    
+  mira_api:
+    container_name: mira_api
+    image: mira_shiny:latest
+    depends_on:
+      - mira_shiny
+    restart: always
+    ports:
+      - 5000:5000
+    volumes:
+      - *data-volume
+    entrypoint: ["/bin/bash", "-c", "/MIRA/api-kickoff"]

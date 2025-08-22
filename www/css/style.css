@@ -1,0 +1,219 @@
+
+table {
+  width: 100%;
+  border: 1px solid gray;
+}
+
+th, tr, td {
+  border: 1px solid gray;
+}
+
+.shiny-input-select {
+  border-radius: 5px;
+  border: 1px solid gray;
+}
+
+.itables_anywidget {
+  height: inherit;
+}
+
+.shiny-ipywidget-output {
+  width: 100%;
+}
+
+#navbar-logo:hover {
+  cursor: pointer;
+}
+
+.logo-link {
+  color: #fff;
+  display: flex;
+  justify-content: start;
+  align-items: center;
+  text-decoration: none;
+  font-weight: bold;
+  /*border: 1px solid red;*/
+}
+
+.logo-link:hover, .logo-link:focus {
+  color: #18bc9c;
+  font-weight: bold;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: none;
+}
+
+.logo-title {
+  padding-left: 3px;
+}
+
+.sidebar-logo {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.sidebar-title {
+  text-align: center;
+  padding-top: 3px;
+  font-weight: bold;
+  font-size: 20px;
+}
+
+.sidebar-description {
+  padding: 5px;
+  text-align: center;
+  /*border: 1px solid red;*/
+}
+
+.text-emphasis {
+  color: black;
+  font-weight: bold;
+  text-decoration: none;
+}
+
+.toc-link {
+  color: black;
+  text-decoration: none;
+  font-weight: bold;
+  padding: 10px 0 10px 0;
+}
+
+.navbar-info {
+  color: white;
+  height: 50px;
+  padding: 10px;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: inherit;
+}
+
+.navbar-info:hover, .navbar-info:focus {
+  color: #18bc9c;
+  font-weight: bold;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: none;
+}
+
+.navbar-button {
+  width: 100px;
+  height: 50px;
+  color: white;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: inherit;
+  /*border: 1px solid red;*/
+}
+
+.navbar-button:hover, .navbar-button:focus {
+  color: #18bc9c;
+  font-weight: bold;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: none;
+}
+
+.navbar-button.active {
+  color: #18bc9c;
+  font-weight: bold;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: none;
+}
+
+.main-visible {
+  visibility: visible;
+  z-index: 1;
+  opacity: 1;
+}
+
+.main-invisible {
+  visibility: none;
+  z-index: -1;
+  opacity: 0;
+  height: 0;
+}
+
+.error-message {
+  color: red;
+  font-weight: bold;
+}
+
+.watch-progress-widget-container {
+  width: 100%;
+  /*border: 1px solid blue;*/
+}
+
+.watch-progress-widget-container > .col-sm-12 > .form-group {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  /*border: 1px solid blue;*/
+}
+
+.sequencing-run-container {
+  display: flex;
+  justify-content: center;  
+  align-items: center;
+}
+
+.refresh-btn {
+  border-radius: 5px;
+  padding: 10px;
+}
+
+.samplesheet-download-btn-container {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.samplesheet-upload-container > .form-group {
+  width: 100%;
+  border-width: 1px;
+  border-radius: 5px;  
+  border: dashed;
+}
+
+.samplesheet-upload-container > .form-group > .input-group > .input-group-btn, .input-group-prepend {
+  width: 100%;
+  text-align: center;
+  /*border: 1px solid blue;*/
+}
+
+.samplesheet-upload-container > .form-group > .input-group {
+  width: 100%;
+  margin-top: 18px;
+  /*border: 1px solid red;*/
+}
+
+.samplesheet-upload-container > .form-group > .input-group > .form-control {
+  width: 100%;
+  margin: 0;
+  display: none;
+}
+
+.display-none {
+  display: none;
+}
+
+.assembly-buttons, .download-passed-fasta-btns, .download-failed-fasta-btns {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 10px 10px;
+  /*border: 1px solid red;*/
+}
+
+.irma-progress-content, .mira-assembly-content {
+  margin-top: 20px;
+}

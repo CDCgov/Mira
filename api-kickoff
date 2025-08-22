@@ -1,0 +1,10 @@
+
+#!/bin/bash 
+# Wrapper to launch mira dashboard
+
+# Run whatever Bash commands here
+MIRA_PROGRAM_DIR=${MIRA_PROGRAM_DIR:-/MIRA}
+WORKDIR=${WORKDIR:-/data}
+
+# Lauch NextClade API
+python3 ${MIRA_PROGRAM_DIR}/nextclade/app.py --host=0.0.0.0 --port=5000 --config_file=${MIRA_PROGRAM_DIR}/config/prod-config.yaml

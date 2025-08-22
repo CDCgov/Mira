@@ -1,0 +1,20 @@
+# Ignore file extensions
+*.DS_Store
+*.Rmd
+*.html
+*.Rhistory
+*.Rbuildignore
+
+# Ignore folders
+.Rproj.user
+data
+tests
+
+# Ignore specific python folders and files
+__pycache__
+__main__.py
+__init__.py
+modules/__pycache__
+modules/__init__.py
+utils/__pycache__
+utils/__init__.py

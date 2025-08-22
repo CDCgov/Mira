@@ -1,0 +1,30 @@
+# Ignore file extensions
+*.DS_Store
+*.Rmd
+*.html
+*.Rhistory
+*.gitignore
+*.Rbuildignore
+*.Rproj
+
+# Ignore folders
+.git
+.github
+.Rproj.user
+man
+inst
+data
+docs
+tests
+pkgdown
+vignettes
+
+# Ignore specific python folders
+__pycache__
+modules/__pycache__
+utils/__pycache__
+
+# Ignore specific python files
+__init__.py
+modules/__init__.py
+utils/__init__.py

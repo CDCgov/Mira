@@ -1,0 +1,18 @@
+
+#!/bin/bash 
+# Wrapper to launch mira dashboard
+
+# Run whatever Bash commands here
+MIRA_PROGRAM_DIR=${MIRA_PROGRAM_DIR:-/MIRA}
+WORKDIR=${WORKDIR:-/data}
+
+# Archive previous .appout and .apperr
+[ ! -d ${WORKDIR}/.applogs ] && mkdir ${WORKDIR}/.applogs
+if [ -f ${WORKDIR}/.apperr ]; then
+	tar --remove-files -czf ${WORKDIR}/.applogs/.$(date -d @$(stat -c %Y ${WORKDIR}/.apperr) "+%Y%b%d-%H%M%S").applog.tar.gz ${WORKDIR}/.appout ${WORKDIR}/.apperr
+elif [ -f ${WORKDIR}/.applogs/.apperr ]; then
+	tar --remove-files -czf ${WORKDIR}/.applogs/.$(date -d @$(stat -c %Y ${WORKDIR}/.applogs/.apperr) "+%Y%b%d-%H%M%S").applog.tar.gz ${WORKDIR}/.applogs/.appout ${WORKDIR}/.applogs/.apperr
+fi
+
+# Launch MIRA Dashboard
+python3 ${MIRA_PROGRAM_DIR}/app.py --host=0.0.0.0 --port=8050 --config_file=${MIRA_PROGRAM_DIR}/config/prod-config.yaml >> ${WORKDIR}/.appout 2>> >( grep -v POST >> ${WORKDIR}/.apperr)

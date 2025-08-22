@@ -1,0 +1,6 @@
+DATA_ROOT: /home/snu3/Github/FLU_SC2_SEQUENCING 
+DEBUG: False
+DEPLOY: False
+VERSION_URL: https://raw.githubusercontent.com/CDCgov/MIRA/prod/DESCRIPTION
+
+
