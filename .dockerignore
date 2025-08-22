@@ -12,12 +12,21 @@
 .github
 .Rproj.user
 man
+css
 inst
 data
 docs
+envs
 tests
+images
+assets
 pkgdown
+scripts
 vignettes
+
+MIRA-INSTALL.sh
+MIRA.code-workspace
+_pkgdown.yml
 
 # Ignore specific python folders
 __pycache__

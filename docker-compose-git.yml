@@ -1,0 +1,94 @@
+ 
+x-spyne-git-repo:
+  &spyne-git-repo
+  https://github.com/CDCgov/spyne.git#prod
+ 
+x-mira-git-repo:
+  &mira-git-repo
+  https://github.com/CDCgov/MIRA.git#prod
+ 
+x-base-image:
+  &base-image
+  base_image: python:3.10-slim-bookworm
+
+x-python-version:
+  &python-version
+  python_version: python3.10
+
+x-irma-image:
+  &irma-image
+  irma_image: cdcgov/irma:v1.2.1
+
+x-dais-image:
+  &dais-image
+  dais_image: cdcgov/dais-ribosome:v1.5.5
+
+x-spyne-image:
+  &spyne-image
+  spyne:latest  
+ 
+x-mira-image:
+  &mira-image
+  mira:latest   
+ 
+x-data-volume:
+  &data-volume
+  type: bind
+  source: /home/snu3/Github/FLU_SC2_SEQUENCING
+  target: /data
+ 
+services:
+  spyne:
+    container_name: spyne
+    image: *spyne-image
+    build:
+      context: *spyne-git-repo
+      dockerfile: Dockerfile
+      args:
+        << : [*base-image, *python-version, *irma-image, *dais-image]
+    restart: always
+    networks:
+      - backend
+    volumes:
+      - *data-volume
+    command: tail -f /dev/null
+ 
+  mira_shiny:
+    container_name: mira_shiny
+    image: *mira-image
+    build:
+      context: *mira-git-repo
+      dockerfile: Dockerfile
+      args:
+        spyne_image: *spyne-image
+    depends_on:
+      - spyne    
+    restart: always
+    networks:
+      - frontend
+      - backend
+    ports:
+      - 8888:8050
+    volumes:
+      - *data-volume
+    entrypoint: ["/bin/bash", "-c", "/MIRA/dashboard-kickoff"]
+
+  mira_api:
+    container_name: mira_api
+    image: *mira-image
+    depends_on:
+      - mira_shiny
+    restart: always
+    networks:
+      - backend
+    ports:
+      - 5000:5000
+    volumes:
+      - *data-volume
+    entrypoint: ["/bin/bash", "-c", "/MIRA/api-kickoff"]
+ 
+networks:
+  backend:
+    name: backend
+  frontend:
+    name: frontend
