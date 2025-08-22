@@ -249,12 +249,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Launch MIRA Dashboard")
     parser.add_argument("--host",
         help="The address that the app should listen on. Default 127.0.0.1",
-    	  type=str,
+    	type=str,
       	default="127.0.0.1")
     parser.add_argument("--port",
-    		help="The port that the app should listen on. Set to 0 to use a random port. Default 8050",
-    	  type=int,
-    		default=8050)
+        help="The port that the app should listen on. Set to 0 to use a random port. Default 8050",
+        type=int,
+        default=8050)
     parser.add_argument("--config_file",
         help="Config file for the app",
         type=str,
