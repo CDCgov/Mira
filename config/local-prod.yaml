@@ -1,0 +1,4 @@
+DATA_ROOT: /home/nbx0/projects/mira-testdata/
+DEBUG: False
+DEPLOY: False
+VERSION_URL: https://raw.githubusercontent.com/CDCgov/MIRA/prod/DESCRIPTION

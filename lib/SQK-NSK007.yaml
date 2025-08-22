@@ -1,0 +1,9 @@
+name: Nanopore Sequencing Kit (SQK-NSK007)
+
+properties:
+        forward: True
+        reverse: True
+        sequence_source: chemistry-technical-document-CHTD_500_v1_revX_07Jul2016-any.pdf
+
+barcodes:
+        SQK-NSK007_Y: [GGCGTCTGCTTGGGTGTTTAACCTTTTTTTTTTAATGTACTTCGTTCAGTTACGTATTGCT, GCAATACGTAACTGAACGAAGT]

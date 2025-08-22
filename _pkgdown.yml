@@ -1,0 +1,147 @@
+url: https://cdcgov.github.io/MIRA/
+
+template:
+  bootstrap: 5
+  light-switch: true
+  includes:
+    in_header: <link rel="stylesheet" type="text/css" href="https://..." />
+    
+authors:
+  Ben Rambo-Martin:
+    href: https://github.com/nbx0
+  Kristine Lacek:
+    href: https://github.com/kristinelacek
+  Reina Chau:
+    href: https://github.com/rchau88
+  Amanda Sullivan:
+    href: https://github.com/mandysulli
+
+news:
+  one_page: false
+   
+home:
+  title: Documentation
+  sidebar:
+    structure: [license, citation, authors, resources]
+    components:
+      resources:
+        title: "Resources"
+        text: "<a href='mailto:idseqsupport@cdc.gov'><span class='fa fa-envelope'></span> Contact Us</a>"
+          
+navbar:
+  title: "MIRA"
+  structure:
+    left: [home, mira_desktop, mira_cli, lab_protocols, help, legacy]
+    right: [search, change_log, issue, github, lightswitch]
+  components:
+    home:
+      icon: fa-home
+      href: index.html
+    mira_desktop:
+      text: "MIRA in Docker Desktop"
+      menu:
+        - text: Getting Started and Installation
+          href: articles/mira-dd-getting-started.html
+        - text: Running Genome Assembly with MIRA -- NANOPORE DATA
+          href: articles/running-mira-dd-ont.html
+        - text: Running Genome Assembly with MIRA -- ILLUMINA DATA
+          href: articles/running-mira-dd-illumina.html
+        - text: Data Transfer with Mk1C
+          href: articles/data-transfer.html  
+        - text: Upgrading MIRA Docker Desktop
+          href: articles/upgrading-mira-dd.html
+    mira_cli:
+      text: "MIRA-CLI"
+      menu:
+        - text: Quick Start in Ubuntu
+          href: articles/quick-start-ubuntu.html
+        - text: PC Getting Started
+          href: articles/getting-started.html
+        - text: MAC Getting Started
+          href: articles/mira-cli-mac-getting-started.html
+        - text: MIRA installation
+          href: articles/mira-cli-installation.html
+        - text: Running Genome Assembly with MIRA-CLI -- NANOPORE DATA
+          href: articles/running-mira-cli-ont.html
+        - text: Running Genome Assembly with MIRA-CLI -- ILLUMINA DATA
+          href: articles/running-mira-cli-illumina.html
+        - text: Upgrading MIRA-CLI
+          href: articles/upgrading-mira-cli.html
+    lab_protocols:
+      text: "Lab Protocols"
+      menu:
+        - text: Sequencing Template Generation
+        - text: Automated RNA Extraction using QIAcube HT
+          href: articles/automated-rna-extraction.html
+        - text: Multi-segment Reverse Transcription-PCR (MRT-PCR) of Influenza A and B Viruses
+          href: articles/influenza-a-and-b-mrt-pcr.html
+        - text: Influenza A Virus MRT-PCR
+          icon: fa-star
+          href: articles/influenza-mrt-pcr.html
+        - text: SARS-COV-2 Virus RT-PCR
+          icon: fa-star
+          href: articles/sars-cov-2-rt-pcr.html
+        - text: MRT-PCR Purification using Exonuclease
+          href: articles/mrt-pcr-purification.html
+        - text: QIAxcel Sample Preparation and Quality Control Procedure
+          href: articles/QIAxcel-sample-preparation-and-quality-control.html
+        - text: Illumina Library Preparation and Sequencing
+        - text: Manual Procedure Illumina DNA Library Preparation
+          href: articles/manual-illumina-dna-prep-library.html
+        - text: DNA Quantification with Qubit ds DNA High Sensitivity Kit
+          href: articles/dna-quantification.html
+        - text: Performing a MiSeq Next Generation Sequencing Run
+          href: articles/miseq-next-generation-seq-run.html
+        - text: Preparation of the DNA Libraries for Loading onto the MiSeq
+          href: articles/miseq-library-loading-preparation.html
+        - text: Oxford Nanopore Library Preparation and Sequencing
+        - text: Library Preparation and Nanopore Sequencing of Influenza and SARS-COV-2 S-gene Amplicons
+          icon: fa-star
+          href: articles/influenza-sars-cov-2-s-gene-amplicons-nanopore.html 
+          
+    help:
+      text: "Help"
+      menu:
+        - text: FAQs
+          href: articles/FAQs.html
+        - text: Troubleshooting
+          href: articles/troubleshooting.html
+        - text: QC Standards
+          href: articles/sequence-qc.html
+        - text: Development Tips
+          href: articles/development-tips.html
+        - text: Nanopore Frameshift Correction
+          href: articles/nanopore-frameshift-correction.html
+    legacy:
+      text: "Legacy"
+      menu:
+        - text: Retired PC Getting Started
+          href: articles/getting-started.html
+        - text: Retired MAC Getting Started
+          href: articles/mac-getting-started.html
+        - text: Retired MIRA installation
+          href: articles/mira-installation.html
+        - text: Retired Data Transfer with Mk1C
+          href: articles/data-transfer.html
+        - text: Retired Running Genome Assembly -- NANOPORE DATA
+          href: articles/running-mira.html
+        - text: Retired Running Genome Assembly -- ILLUMINA DATA
+          href: articles/running-mira-illumina.html
+        - text: Retired Post MIRA sequence analysis with Nextclade
+          href: articles/training-post-mira.html
+    change_log:
+      text: "Change Log"
+      href: news/index.html
+    issue:
+      icon: fa-comments
+      href: https://github.com/CDCgov/MIRA/issues
+    github:
+      icon: fa-github
+      href: https://github.com/CDCgov/MIRA
+      
+footer:
+  structure: 
+    left: developed_by
+    right: built_with
+    
+    

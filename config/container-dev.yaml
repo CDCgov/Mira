@@ -1,0 +1,4 @@
+DATA_ROOT: /data/
+DEBUG: True
+DEPLOY: True
+VERSION_URL: https://raw.githubusercontent.com/CDCgov/MIRA/prod/DESCRIPTION

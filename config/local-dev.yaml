@@ -1,0 +1,6 @@
+DATA_ROOT: /home/nbx0/FLU_SC2_SEQUENCING #/mnt/y/collab/International/Thailand #/home/midas01/FLU_SC2_SEQUENCING
+DEBUG: True
+DEPLOY: False
+VERSION_URL: https://raw.githubusercontent.com/CDCgov/MIRA/prod/DESCRIPTION
+
+

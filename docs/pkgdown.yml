@@ -1,0 +1,45 @@
+pandoc: '3.4'
+pkgdown: 2.1.3
+pkgdown_sha: ~
+articles:
+  automated-rna-extraction: automated-rna-extraction.html
+  data-transfer: data-transfer.html
+  development-tips: development-tips.html
+  dna-quantification: dna-quantification.html
+  docker-compose: docker-compose.html
+  FAQs: FAQs.html
+  getting-started: getting-started.html
+  influenza-a-and-b-mrt-pcr: influenza-a-and-b-mrt-pcr.html
+  influenza-mrt-pcr: influenza-mrt-pcr.html
+  influenza-sars-cov-2-s-gene-amplicons-nanopore: influenza-sars-cov-2-s-gene-amplicons-nanopore.html
+  mac-getting-started: mac-getting-started.html
+  manual-illumina-dna-prep-library: manual-illumina-dna-prep-library.html
+  mira-cli-installation: mira-cli-installation.html
+  mira-cli-mac-getting-started: mira-cli-mac-getting-started.html
+  mira-dd-getting-started: mira-dd-getting-started.html
+  mira-installation: mira-installation.html
+  miseq-library-loading-preparation: miseq-library-loading-preparation.html
+  miseq-next-generation-seq-run: miseq-next-generation-seq-run.html
+  mrt-pcr-purification: mrt-pcr-purification.html
+  nanopore-frameshift-correction: nanopore-frameshift-correction.html
+  QIAxcel-sample-preparation-and-quality-control: QIAxcel-sample-preparation-and-quality-control.html
+  quick-start-ubuntu: quick-start-ubuntu.html
+  running-mira-cli-illumina: running-mira-cli-illumina.html
+  running-mira-cli-ont: running-mira-cli-ont.html
+  running-mira-dd-illumina: running-mira-dd-illumina.html
+  running-mira-dd-ont: running-mira-dd-ont.html
+  running-mira-illumina: running-mira-illumina.html
+  running-mira: running-mira.html
+  s-gene-rt-pcr: s-gene-rt-pcr.html
+  sars-cov-2-rt-pcr: sars-cov-2-rt-pcr.html
+  sequence-qc: sequence-qc.html
+  training-answers: training-answers.html
+  training-post-mira: training-post-mira.html
+  troubleshooting: troubleshooting.html
+  upgrading-mira-cli: upgrading-mira-cli.html
+  upgrading-mira-dd: upgrading-mira-dd.html
+  upgrading-mira: upgrading-mira.html
+last_built: 2025-08-22T12:26Z
+urls:
+  reference: https://cdcgov.github.io/MIRA/reference
+  article: https://cdcgov.github.io/MIRA/articles
