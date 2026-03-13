@@ -1,10 +1,9 @@
-
 # Create an argument to pull a particular version of dias image
-ARG spyne_image
-ARG spyne_image=${spyne_image:-cdcgov/spyne:latest}
+ARG mira_nf_image
+ARG mira_nf_image=${mira_nf_image:-cdcgov/mira-nf:test}
 
-############# spyne image as base ##################
-FROM ${spyne_image} as base
+############# mira-nf image as base ##################
+FROM ${mira_nf_image} AS base
 
 # Install system dependencies
 ARG DEBIAN_FRONTEND=noninteractive
@@ -49,7 +48,7 @@ COPY . ${MIRA_PROGRAM_DIR}
 COPY requirements.txt ${MIRA_PROGRAM_DIR}/requirements.txt
 
 # Update pip and setuptools and then install python packages
-RUN pip install --no-cache-dir -r ${MIRA_PROGRAM_DIR}/requirements.txt  
+RUN python3 -m pip install --no-cache-dir  --break-system-packages -r ${MIRA_PROGRAM_DIR}/requirements.txt
 
 ############# Fix vulnerablities pkgs ##################
 
@@ -99,14 +98,8 @@ RUN chmod a+x ${MIRA_PROGRAM_DIR}/dashboard-kickoff
 # Make the app available at port 8050
 EXPOSE 8050 5000
 
-# Export dais-ribosome script to path
-ENV PATH "$PATH:/dais-ribosome"
-
-# Export irma script to path
-ENV PATH "$PATH:/flu-amd"
-
-# Export spyne script to path
-ENV PATH "$PATH:/spyne"
+# Export mira-nf script to path
+ENV PATH "$PATH:/mira-nf"
 
 # Execute the pipeline 
 ENTRYPOINT ["/bin/bash", "-c", "${MIRA_PROGRAM_DIR}/dashboard-kickoff"]

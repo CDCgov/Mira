@@ -1,12 +1,12 @@
 
-x-spyne-image:
-  &spyne-image
-  spyne_image: cdcgov/spyne-dev:v2.1.0
+x-mira-nf-image:
+  &mira-nf-image
+  mira_nf_image: cdcgov/mira-nf:test
   
 x-data-volume:
   &data-volume
   type: bind
-  source: /home/snu3/Github/FLU_SC2_SEQUENCING
+  source: /home/xpa3/FLU_SC2_SEQUENCING
   target: /data  
 
 services:
@@ -17,7 +17,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        << : [*spyne-image]
+        << : [*mira-nf-image]
     restart: always
     ports:
       - 8888:8050
