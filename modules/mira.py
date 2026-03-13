@@ -1026,30 +1026,30 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
             samplesheet_tbl_message.set(f"Invalid Samplesheet for an Illumina run!! Please reload the Samplesheet with the required column names: {illumina_ss_colnames}")
             return
         # Check for duplicated
-        if True in list(ss_df["Sample ID"].duplicated(keep=False)):
-            duplicated_ids = list(ss_df["Sample ID"].loc[ss_df["Sample ID"].duplicated(keep=False) == True])
-            samplesheet_tbl_message.set(f"No duplicated Sample IDs allowed. Duplicates = {duplicated_ids}")
+        if True in list(ss_df["sample_id"].duplicated(keep=False)):
+            duplicated_ids = list(ss_df["sample_id"].loc[ss_df["sample_id"].duplicated(keep=False) == True])
+            samplesheet_tbl_message.set(f"No duplicated sample_ids allowed. Duplicates = {duplicated_ids}")
             return
         # Check for white spaces
-        if True in list(ss_df["Sample ID"].str.contains(r"\s")):
-            ids_with_spaces = list(ss_df["Sample ID"].loc[ss_df["Sample ID"].str.contains(r"\s") == True])
-            samplesheet_tbl_message.set(f"No spaces allowed in Sample IDs. Offenders = {ids_with_spaces}")
+        if True in list(ss_df["sample_id"].str.contains(r"\s")):
+            ids_with_spaces = list(ss_df["sample_id"].loc[ss_df["sample_id"].str.contains(r"\s") == True])
+            samplesheet_tbl_message.set(f"No spaces allowed in sample_ids. Offenders = {ids_with_spaces}")
             return
         # Check for forward or backward slashes
-        if True in list(ss_df["Sample ID"].str.contains(r"[\\/]")):
-            ids_with_slashes = list(ss_df["Sample ID"].loc[ss_df["Sample ID"].str.contains(r"[\\/]") == True])
-            samplesheet_tbl_message.set(f"No forward slashes ('/') or backward slashes ('\\') allowed in Sample IDs. Offenders = {ids_with_slashes}")
+        if True in list(ss_df["sample_id"].str.contains(r"[\\/]")):
+            ids_with_slashes = list(ss_df["sample_id"].loc[ss_df["sample_id"].str.contains(r"[\\/]") == True])
+            samplesheet_tbl_message.set(f"No forward slashes ('/') or backward slashes ('\\') allowed in sample_ids. Offenders = {ids_with_slashes}")
             return
         # Check sample type (- control, + control, test, etc)
-        if True in list(~ss_df["Sample Type"].isin(sample_type_options)):
-            id_list = list(ss_df["Sample ID"].loc[~ss_df["Sample Type"].isin(sample_type_options)])
-            samplesheet_tbl_message.set(f"Invalid Sample Type for Sample ID = {id_list}. Options are {sample_type_options}")
+        if True in list(~ss_df["sample_type"].isin(sample_type_options)):
+            id_list = list(ss_df["sample_id"].loc[~ss_df["sample_type"].isin(sample_type_options)])
+            samplesheet_tbl_message.set(f"Invalid sample_type for sample_id = {id_list}. Options are {sample_type_options}")
             return   
         # Create place holder to check sample files
         check_sample_files = []
         # Check if sample id folder exists for ILLUMINA 
         if "ILLUMINA" in selected_experiment_type.upper():
-            for id in ss_df["Sample ID"]:
+            for id in ss_df["sample_id"]:
                sample_file = glob(f"{data_root}/{selected_run}/fastq*/{id}*R[12]*fastq*")
                if len(sample_file) < 2:
                     check_sample_files.append(True)
@@ -1057,7 +1057,7 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
                     check_sample_files.append(False)
         # Check if barcode id folder exists for ONT 
         elif "ONT" in selected_experiment_type.upper():
-            for id in ss_df["Barcode #"]:
+            for id in ss_df["barcode"]:
                sample_file = glob(f"{data_root}/{selected_run}/fastq_pass/{id}/*fastq*")
                if len(sample_file) == 0:
                     check_sample_files.append(True)
@@ -1065,11 +1065,11 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
                     check_sample_files.append(False)
         # Check sample files
         if True in check_sample_files and "ILLUMINA" in selected_experiment_type.upper():
-              id_list = list(ss_df["Sample ID"].loc[check_sample_files])
-              samplesheet_tbl_message.set(f"Cannot find {selected_experiment_type} fastq files for Sample ID = {id_list}. Make sure fastq files have both R1 and R2 for paired-end run. Please check your run folder again!")
+              id_list = list(ss_df["sample_id"].loc[check_sample_files])
+              samplesheet_tbl_message.set(f"Cannot find {selected_experiment_type} fastq files for sample_id = {id_list}. Make sure fastq files have both R1 and R2 for paired-end run. Please check your run folder again!")
               return 
         elif True in check_sample_files and "ONT" in selected_experiment_type.upper():
-              id_list = list(ss_df["Barcode #"].loc[check_sample_files])
+              id_list = list(ss_df["barcode"].loc[check_sample_files])
               samplesheet_tbl_message.set(f"Cannot find {selected_experiment_type} fastq files for Barcoder # = {id_list}. Please check your run folder again!")
               return    
         # Save the final validated samplesheet
