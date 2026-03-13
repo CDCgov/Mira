@@ -122,9 +122,9 @@ def generate_samplesheet_xl(data_root, seq_run, experiment_type):
             bar_nums = list(range(1, 4))
         # Populate worksheet
         ws["A1"].value, ws["B1"].value, ws["C1"].value = (
-            "Barcode #",
-            "Sample ID",
-            "Sample Type",
+            "barcode",
+            "sample_id",
+            "sample_type",
         )
         bar_nums.sort()
         barcodes = [f"barcode{i:02}" for i in bar_nums]
@@ -148,7 +148,7 @@ def generate_samplesheet_xl(data_root, seq_run, experiment_type):
                 ill_samples = ["<sample_1>", "<sample_2>", "<sample_3>"]
         else:
             ill_samples = ["<sample_1>", "<sample_2>", "<sample_3>"]
-        ws["A1"].value, ws["B1"].value = "Sample ID", "Sample Type"
+        ws["A1"].value, ws["B1"].value = "sample_id", "sample_type"
         ill_samples.sort()
         row = 2
         for r, s in enumerate(ill_samples):

@@ -29,8 +29,8 @@ rsv_amplicon_libraries = {"RSV_CDC_8amplicon_230901": "RSV CDC 8 amplicon 230901
 sample_type_options = ["- Control", "+ Control", "Test"]
                           
 # Define samplesheet column names for ONT
-ont_ss_colnames = ["Barcode #", "Sample ID", "Sample Type"]
+ont_ss_colnames = ["barcode", "sample_id", "sample_type"]
 
 # Define samplesheet column names for ILLUMINA
-illumina_ss_colnames = ["Sample ID", "Sample Type"]
+illumina_ss_colnames = ["sample_id", "sample_type"]
 
