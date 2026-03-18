@@ -4,12 +4,13 @@
 ################################################################################
 
 # Options for assembly
-seq_organisms = {"FLU": "FLU", 
-                 "RSV": "RSV", 
-                 "SC2-Whole-Genome": "SC2-Whole-Genome", 
+seq_experiment_types = {"Flu-Illumina": "Flu-Illumina", 
+                 "Flu-ONT": "Flu-ONT", 
+                 "RSV-Illumina": "RSV-Illumina", 
+                 "RSV-ONT": "RSV-ONT", 
+                 "SC2-Whole-Genome-Illumina": "SC2-Whole-Genome-Illumina", 
+                 "SC2-Whole-Genome-ONT": "SC2-Whole-Genome-ONT", 
                  "SC2-Spike-Only": "SC2-Spike-Only"}
-                 
-seq_experiment_types = {"Illumina": "Illumina", "ONT": "ONT"}
 
 sc2_amplicon_libraries = {"": "None",
                           "articv3": "Artic V3", 

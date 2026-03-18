@@ -88,7 +88,7 @@ def mira_ui(data_root):
             ui.tags.div(
                 ui.tags.a(
                     "MIRA Summary",
-                    href="#irma_head",
+                    href="#mira_head",
                 ),
                 class_="toc-link",
             ),
@@ -109,7 +109,7 @@ def mira_ui(data_root):
             ui.tags.div(
                 ui.tags.a(
                     "Minor SNVs",
-                    href="#alleles_head",
+                    href="#minor_variants_head",
                 ),
                 class_="toc-link",
             ),
@@ -134,7 +134,7 @@ def mira_ui(data_root):
             ui.row(
                 ui.column(12,
                     ui.input_switch(
-                        id="watch_irma_progress", label="Watch MIRA Progress", value=True,
+                        id="watch_mira_progress", label="Watch MIRA Progress", value=True,
                     ),
                 ),
                 class_="watch-progress-widget-container content-container",
@@ -166,20 +166,8 @@ def mira_ui(data_root):
             ui.row(
                 ui.column(6, 
                     ui.input_selectize(
-                        id="seq_organism",
-                        label=ui.HTML("<span style='color:red'>*</span>Select an Organism:"),
-                        choices=seq_organisms,
-                        selected=None,
-                        multiple=False,
-                        width="100%",
-                        remove_button=None,
-                        options=None,
-                    ),
-                ),
-                ui.column(6, 
-                    ui.input_selectize(
                         id="seq_experiment_type",
-                        label=ui.HTML("<span style='color:red'>*</span>Select an Instructment Type:"),
+                        label=ui.HTML("<span style='color:red'>*</span>Select an Experiment Type:"),
                         choices=seq_experiment_types,
                         selected=None,
                         multiple=False,
@@ -204,6 +192,33 @@ def mira_ui(data_root):
                     ),
                 ),
                 class_="amplicon-library-container main-invisible content-container", id="amplicon-library-container",
+            ),
+            ui.row(
+                ui.column(6, 
+                    ui.input_selectize(
+                        id="parquet_files",
+                        label=ui.HTML("<span style='color:red'>*</span>Make Parquet Files:"),
+                        choices={"False": False, "True": True},
+                        selected=False,
+                        multiple=False,
+                        width="100%",
+                        remove_button=None,
+                        options=None,
+                    ),
+                ),
+                ui.column(6, 
+                    ui.input_selectize(
+                        id="run_nextclade",
+                        label=ui.HTML("<span style='color:red'>*</span>Run Nextclade:"),
+                        choices={"False": False, "True": True},
+                        selected=False,
+                        multiple=False,
+                        width="100%",
+                        remove_button=None,
+                        options=None,
+                    ),
+                ),
+                class_="boolean-option-types-container content-container"
             ),
             ui.row(
                 ui.column(12, 
@@ -289,18 +304,18 @@ def mira_ui(data_root):
             ),
             ui.row(
                 ui.column(12, 
-                    ui.tags.h3("IRMA Progress"),
+                    ui.tags.h3("MIRA Progress"),
                 ),
                 ui.column(12,
                     ui.output_ui(
-                        id="irma_progress",
+                        id="mira_progress",
                         inline=False,
                         container=False,
                         fill=True,
                         fillable=False,
                     ),
                 ),
-                class_="irma-progress-content content-container", id="irma-progress-content",
+                class_="mira-progress-content content-container",
             ), 
             ui.row(
                 ui.column(12, 
@@ -321,7 +336,7 @@ def mira_ui(data_root):
                     class_="pass-fail-container content-container", id="pass-fail-container",
                 ), 
                 ui.column(12, 
-                    ui.tags.h3("MIRA Summary", id="irma_head"),
+                    ui.tags.h3("MIRA Summary", id="mira_head"),
                     output_widget(id="irma_summary"),
                     class_="irma-summary-container content-container", id="irma-summary-container",
                 ),                 
@@ -371,8 +386,8 @@ def mira_ui(data_root):
                     class_="variants-container content-container", id="variants-container",
                 ),                 
                 ui.column(12, 
-                    ui.tags.h3("Minor SNVs", id="alleles_head"),
-                    output_widget(id="minor_alleles_table"),
+                    ui.tags.h3("Minor SNVs", id="minor_variants_head"),
+                    output_widget(id="minor_variants_table"),
                     class_="snvs-container content-container", id="snvs-container",
                 ),                 
                 ui.column(12, 
@@ -382,7 +397,7 @@ def mira_ui(data_root):
                 ),                 
                 ui.row(
                     ui.column(12, 
-                        ui.tags.h3("Download Passed Fastas", id="dl_fastas"),
+                        ui.tags.h3("Download Passed Fastas", id="dl_passed_fastas"),
                     ), 
                     ui.column(12,
                         ui.download_button(
@@ -405,7 +420,7 @@ def mira_ui(data_root):
                 ),
                 ui.row(
                     ui.column(12,
-                        ui.tags.h3("Download Failed Fastas", id="dl_fastas"),
+                        ui.tags.h3("Download Failed Fastas", id="dl_failed_fastas"),
                     ),
                     ui.column(12,
                         ui.download_button(
@@ -437,12 +452,15 @@ def mira_ui(data_root):
 @module.server
 def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_command_type):
   
-    # Create local variable to store irma progress and its completion status
-    track_irma_progress = None
-    irma_assembly_task = None
+    # Create local variable to store mira progress and its completion status
+    track_mira_progress = None
+    nextflow_mira_log = os.path.realpath(f"{data_root}/nextflow_mira.log")
+
+    # Clean to re-stage log file
+    open(nextflow_mira_log, "w").close()
   
-    # Create reative value to store status of irma
-    irma_completion_status = reactive.value()
+    # Create reative value to store status of mira
+    mira_progress_log = reactive.value()
     
     # Create reative value to store error message
     start_assembly_counter = reactive.value()
@@ -451,7 +469,7 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
     samplesheet_tbl_message = reactive.value()
     
     # Reactive value to store indels
-    irma_progress_message = reactive.Value() 
+    mira_progress_message = reactive.Value() 
     
     # Create reative value to store error message
     coverage_error_message = reactive.value() 
@@ -498,44 +516,16 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
     async def _():
         # Get selected sequencing run
         selected_run = input.seq_run()
-        # Extract run organism
-        check_run_organism = re.compile(r"^(rsv|sc2-spike|sc2|flu)(-|_)", re.IGNORECASE).match(selected_run)
-        # Update organism
-        if check_run_organism:
-            pattern = check_run_organism.group(1)
-            matched_organisms = {i: i for i in seq_organisms.keys() if re.match(pattern, i, re.IGNORECASE)}
-            selected_organism = seq_organisms[list(matched_organisms.keys())[0]] if len(matched_organisms) > 0 else input.seq_organism()
-        else:
-            selected_organism = input.seq_organism()
-        # Update organism
-        ui.update_selectize(
-            id="seq_organism",
-            selected=selected_organism,
-            session=session,
-        )
+        # Extract Experiment type
+        selected_seq_experiment_type = input.seq_experiment_type()
         # Define samplesheet file
         samplesheet_file = f"{data_root}/{selected_run}/samplesheet.csv"
         # Get samplesheet
         ss_df, selected_experiment_type = parse_samplesheet(samplesheet_file = samplesheet_file)
         # Update samplesheet
         orig_samplesheet_tbl.set(ss_df)   
-        # Update experiment types
-        if selected_organism == 'SC2-Spike-Only':
-            ui.update_selectize(
-                id="seq_experiment_type",
-                choices={"ONT": "ONT"},
-                selected=["ONT"],
-                session=session,
-            )
-        else:
-            ui.update_selectize(
-                id="seq_experiment_type",
-                choices=seq_experiment_types,
-                selected=selected_experiment_type if selected_experiment_type in seq_experiment_types.keys() else seq_experiment_types[list(seq_experiment_types.keys())[0]],
-                session=session,
-            )
         # Update amplicon library
-        if selected_organism == 'SC2-Whole-Genome' and selected_experiment_type == 'Illumina':
+        if selected_experiment_type == 'SC2-Whole-Genome-Illumina':
             ui.update_selectize(
                 id="seq_amplicon_library",
                 choices=sc2_amplicon_libraries,
@@ -544,7 +534,7 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
             await session.send_custom_message(
                 "toggleAmpliconContent", {"id": "amplicon-library-container", "visible": True, "label": "For Illumina SC2, Which Primer Schema Was Used?"}
             )
-        elif selected_organism == 'RSV' and selected_experiment_type == 'Illumina':
+        elif selected_experiment_type == 'RSV-Illumina':
             ui.update_selectize(
                 id="seq_amplicon_library",
                 choices=rsv_amplicon_libraries,
@@ -556,87 +546,39 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
         # Reset error message
         samplesheet_tbl_message.set("")
         coverage_error_message.set("")
-        # Reset irma progress and its message
-        nonlocal track_irma_progress
-        track_irma_progress = None
-        irma_progress_message.set('Press the <span class="text-info text-emphasis">"START GENOME ASSEMBLY"</span> button to start the assembly process!')
-        # Reset assembly task
-        nonlocal irma_assembly_task
-        irma_assembly_task = None
+        # Reset mira progress and its message
+        nonlocal track_mira_progress
+        track_mira_progress = None
+        mira_progress_message.set('Press the <span class="text-info text-emphasis">"START GENOME ASSEMBLY"</span> button to start the assembly process!')
         # Reset assembly counter 
         start_assembly_counter.set("")
         # Reset assembly completion status
-        irma_completion_status.set("")
+        mira_progress_log.set("")
         # Update result files
-        barcode_dist_file.set(f"{data_root}/{selected_run}/dash-json/barcode_distribution.json")
-        qc_statement_file.set(f"{data_root}/{selected_run}/dash-json/qc_statement.json")
-        quality_control_file.set(f"{data_root}/{selected_run}/dash-json/pass_fail_heatmap.json")
-        irma_summary_file.set(f"{data_root}/{selected_run}/dash-json/irma_summary.json")
-        coverage_heatmap_file.set(f"{data_root}/{selected_run}/dash-json/heatmap.json")
-        coverage_sample_file.set(f"{data_root}/{selected_run}/dash-json/reads.json")
-        mira_variants_file.set(f"{data_root}/{selected_run}/dash-json/dais_vars.json")
-        mira_snvs_file.set(f"{data_root}/{selected_run}/dash-json/alleles.json")
-        mira_indels_file.set(f"{data_root}/{selected_run}/dash-json/indels.json")
-        passed_nt_file.set(f"{data_root}/{selected_run}/amended_consensus.fasta")
-        passed_aa_file.set(f"{data_root}/{selected_run}/amino_acid_consensus.fasta")
-        failed_nt_file.set(f"{data_root}/{selected_run}/failed_amended_consensus.fasta")
-        failed_aa_file.set(f"{data_root}/{selected_run}/failed_amino_acid_consensus.fasta")
-        
-    # Observe organism selection
-    @reactive.effect
-    @reactive.event(input.seq_organism, ignore_none=True, ignore_init=True)
-    async def _():
-        # Get inputs
-        selected_organism = input.seq_organism()
-        selected_experiment_type = input.seq_experiment_type()
-        if selected_organism == 'SC2-Spike-Only':
-            ui.update_selectize(
-                id="seq_experiment_type",
-                choices={"ONT": "ONT"},
-                selected=["ONT"],
-                session=session,
-            )
-        else:
-            ui.update_selectize(
-                id="seq_experiment_type",
-                choices=seq_experiment_types,
-                selected=selected_experiment_type if selected_experiment_type in seq_experiment_types.keys() else seq_experiment_types[list(seq_experiment_types.keys())[0]],
-                session=session,
-            )
-         # Update amplicon library
-        if selected_organism == 'SC2-Whole-Genome' and selected_experiment_type == 'Illumina':
-            ui.update_selectize(
-                id="seq_amplicon_library",
-                choices=sc2_amplicon_libraries,
-                session=session,
-            )
-            await session.send_custom_message(
-                "toggleAmpliconContent", {"id": "amplicon-library-container", "visible": True, "label": "For Illumina SC2, Which Primer Schema Was Used?"}
-            )
-        elif selected_organism == 'RSV' and selected_experiment_type == 'Illumina':
-            ui.update_selectize(
-                id="seq_amplicon_library",
-                choices=rsv_amplicon_libraries,
-                session=session,
-            )
-            await session.send_custom_message(
-                "toggleAmpliconContent", {"id": "amplicon-library-container", "visible": True, "label": "For Illumina RSV, Which Primer Schema Was Used?"}
-            )
-        else:
-            await session.send_custom_message(
-                "toggleAmpliconContent", {"id": "amplicon-library-container", "invisible": False, "label": ""}
-            )
+        barcode_dist_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/barcode_distribution.json")
+        qc_statement_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/qc_statement.json")
+        quality_control_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/pass_fail_heatmap.json")
+        irma_summary_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/irma_summary.json")
+        coverage_heatmap_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/heatmap.json")
+        coverage_sample_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/reads.json")
+        mira_variants_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/dais_vars.json")
+        mira_snvs_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/minor_variants.json")
+        mira_indels_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/indels.json")
+        passed_nt_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/mira_{selected_run}_amended_consensus.fasta")
+        passed_aa_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/mira_{selected_run}_amino_acid_consensus.fasta")
+        failed_nt_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/mira_{selected_run}_failed_amended_consensus.fasta")
+        failed_aa_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/mira_{selected_run}_failed_amino_acid_consensus.fasta")
   
-    # Observe organism selection
+    # Observe Exp Type selection
     @reactive.effect
     @reactive.event(input.seq_experiment_type, ignore_none=True, ignore_init=True)
     async def _():
         # Get inputs
-        selected_organism = input.seq_organism()
-        selected_experiment_type = input.seq_experiment_type()
+        # Extract Experiment type
+        selected_seq_experiment_type = input.seq_experiment_type()
         selected_amplicon_library = input.seq_amplicon_library()
         # Update amplicon library
-        if selected_organism == 'SC2-Whole-Genome' and selected_experiment_type == 'Illumina':
+        if selected_seq_experiment_type == 'SC2-Whole-Genome-Illumina':
             ui.update_selectize(
                 id="seq_amplicon_library",
                 choices=sc2_amplicon_libraries,
@@ -646,7 +588,7 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
             await session.send_custom_message(
                 "toggleAmpliconContent", {"id": "amplicon-library-container", "visible": True, "label": "For Illumina SC2, Which Primer Schema Was Used?"}
             )
-        elif selected_organism == 'RSV' and selected_experiment_type == 'Illumina':
+        elif selected_seq_experiment_type == 'RSV-Illumina':
             ui.update_selectize(
                 id="seq_amplicon_library",
                 choices=rsv_amplicon_libraries,
@@ -751,24 +693,16 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
         if file is None:
             ss_df = pd.DataFrame()
         elif Path(file[0]["datapath"]).suffix in [".csv", ".xls", ".xlsx"]:
-            selected_organism = input.seq_organism()
+            selected_seq_experiment_type = input.seq_experiment_type()
             ss_df, selected_experiment_type = parse_samplesheet(samplesheet_file = file[0]["datapath"])
             # Update experiment type
             if not ss_df.empty:
-                if selected_organism == 'SC2-Spike-Only':
-                    ui.update_selectize(
-                        id="seq_experiment_type",
-                        choices={"ONT": "ONT"},
-                        selected=["ONT"],
-                        session=session,
-                    )
-                else:
-                    ui.update_selectize(
-                        id="seq_experiment_type",
-                        choices=seq_experiment_types,
-                        selected=selected_experiment_type if selected_experiment_type in seq_experiment_types.keys() else seq_experiment_types[list(seq_experiment_types.keys())[0]],
-                        session=session,
-                    )
+                ui.update_selectize(
+                    id="seq_experiment_type",
+                    choices=seq_experiment_type,
+                    selected=selected_experiment_type if selected_experiment_type in seq_experiment_type.keys() else seq_experiment_type[list(seq_experiment_type.keys())[0]],
+                    session=session,
+                )
             else:
                 selected_experiment_type = input.seq_experiment_type()
                 required_ss_colnames = illumina_ss_colnames if selected_experiment_type.upper() == "ILLUMINA" else ont_ss_colnames
@@ -792,73 +726,18 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
         else:
             return
           
-    # Observe when watch irma progress is selected
+    # Observe when watch mira progress is selected
     @reactive.effect
-    @reactive.event(input.watch_irma_progress, ignore_none=False, ignore_init=False)
+    @reactive.event(input.watch_mira_progress, ignore_none=False, ignore_init=False)
     async def watch_btn_click():
-        if input.watch_irma_progress():
+        if input.watch_mira_progress():
             await session.send_custom_message(
-                "toggleContent", {"id": "irma-progress-content", "visible": True}
+                "toggleContent", {"id": "mira-progress-content", "visible": True}
             )
         else:
             await session.send_custom_message(
-                "toggleContent", {"id": "irma-progress-content", "visible": False}
+                "toggleContent", {"id": "mira-progress-content", "visible": False}
             )
-
-    # Display IRMA progress
-    @output
-    @render.ui
-    def irma_progress():
-        req(input.watch_irma_progress(), irma_progress_message.get())
-        return ui.HTML(irma_progress_message.get())
-        
-    # Display IRMA progress
-    @reactive.effect
-    def get_irma_progress():
-        reactive.invalidate_later(3)
-        nonlocal track_irma_progress
-        req(track_irma_progress == True)
-        counter = start_assembly_counter.get()
-        seq_run = input.seq_run()          
-        if counter == "start":
-            logs = glob(f"{data_root}/{seq_run}/logs/*irma*out.log")
-            if os.path.exists(f"{data_root}/{seq_run}/.snakemake") and len(logs) == 0:
-                irma_progress_message.set("Data processing has started, please wait...")
-                return
-            if (len(glob(f"{data_root}/{seq_run}/spyne_logs.tar.gz")) == 1) and (len(glob(f"{data_root}/{seq_run}/dash-json")) == 0):
-                irma_progress_message.set("The sequencing run has failed. Please contact us at IDSeqsupport@cdc.gov!")
-                irma_completion_status.set("fail")
-                track_irma_progress = False
-                return
-            if (len(glob(f"{data_root}/{seq_run}/spyne_logs.tar.gz")) == 1) and len(glob(f"{data_root}/{seq_run}/dash-json")) == 1:
-                irma_progress_message.set("MIRA has finished running! Resulting figures and tables will be displayed below.")
-                irma_completion_status.set("success")
-                track_irma_progress = False
-            if len(logs) > 0:
-                log_dic = {}
-                for l in logs:
-                    sample = l.split("/")[-1].split(".")[0]
-                    with open(l, "r") as d:
-                        log_dic[sample] = "".join(d.readlines())
-                finished_samples = [i for i in log_dic.keys() if "finished!" in log_dic[i].lower()]
-                running_samples = {
-                    i: f"  ".join(j.split("\t"))
-                    for i, j in log_dic.items()
-                    if i not in finished_samples
-                }
-                df = pd.DataFrame.from_dict(running_samples, orient="index")
-                if not df.empty:
-                    df = df.reset_index()
-                    df.replace(to_replace=r'\n', value='<br>', regex=True, inplace=True)
-                    df.columns = ["Sample", "IRMA Stage"]
-                    irma_progress_message.set(
-                        ui.HTML(f"<p>MIRA Finished Samples: {', '.join(finished_samples)}</p>") +
-                        ui.HTML(df.to_html(index=False, escape=False, justify="left", table_id="irma_progress_tbl"))
-                    )
-        elif counter == "stop":
-            irma_progress_message.set('MIRA run is interrupted.')
-            irma_completion_status.set("interrupted")
-            track_irma_progress = False
         
     # Trigger the assembly button 
     @reactive.effect
@@ -869,114 +748,79 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
             await session.send_custom_message(
                 "triggerAssemblyBtn", {"assembly_btn_id": assembly_btn_id, "samplesheet_tbl_id": samplesheet_tbl_id}
             )
-            
-    # Stop the assembly button 
-    @reactive.effect
-    @reactive.event(input.stop_assembly_button, ignore_none=True, ignore_init=True)
-    async def stop_assembly_task():
-        nonlocal irma_assembly_task
-        counter = start_assembly_counter.get()
-        # Get assembly counter    
-        if counter == "start":
-            # Wait for assembly worker to run for 5 seconds before attempt to stop the process
-            await asyncio.sleep(5)               
-            # Cancel the task if it exists
-            if irma_assembly_task.pid is None:
-                print(f"Cancel the assembly task with PID: {irma_assembly_task.pid}")
-                os.kill(irma_assembly_task.pid, signal.SIGKILL)
-                # Wait until process is completed
-                await irma_assembly_task.wait()            
-            # Set assembly counter to stop
-            start_assembly_counter.set("stop")
-            # Hide assembly content
-            await session.send_custom_message(
-                "toggleAssemblyContent", {"id": "mira-assembly-content", "visible": False}
-            )
-            # Enable assembly button again
-            seq_run_id = session.ns("seq_run")
-            assembly_btn_id = session.ns("trigger_assembly_button")
-            await session.send_custom_message(
-                "disableAssemblyBtn", {"seq_run_id": seq_run_id, "assembly_btn_id": assembly_btn_id, "disabled": False}
-            )
-            # Return message
-            samplesheet_tbl_message.set("The assembly run has been interrupted.")
-        else:
-            # Return message
-            samplesheet_tbl_message.set("There is no assembly running in progress.")
-
+    # ROUND 2 OFF ROADING
     # Start the assembly task when assembly button was clicked
     @ui.bind_task_button(button_id="start_assembly_button")
     @reactive.extended_task
-    async def start_assembly_task(data_root, seq_run, organism, experiment_type, amplicon_library, spyne_command_type):
-        nonlocal track_irma_progress
-        nonlocal irma_assembly_task
+    async def start_assembly_task(data_root, seq_run, experiment_type, amplicon_library, parquet_files, nextclade, spyne_command_type):
         # Construct the command to run IRMA
         if spyne_command_type == "docker":
-            docker_cmd = "docker exec -it spyne bash /spyne/MIRA.sh "
-            docker_cmd += f"-s /data/{seq_run}/samplesheet.csv "
+            docker_cmd = "docker exec -it mira-nf bash /MIRA-NF/MIRA.sh "
+            docker_cmd += f"-f mira_nf_container "
+            docker_cmd += f"-i /data/{seq_run}/samplesheet.csv "
             docker_cmd += f"-r /data/{seq_run} "
+            docker_cmd += f"-o /data/{seq_run}/mira_results "
         elif spyne_command_type == "bash":
-            docker_cmd = "bash /spyne/MIRA.sh "
-            docker_cmd += f"-s {data_root}/{seq_run}/samplesheet.csv "
-            docker_cmd += f"-r {data_root}/{seq_run} "            
-        docker_cmd += f"-e {organism}-{experiment_type} "
-        docker_cmd += "-a "
-        if organism in ["SC2-Whole-Genome", "RSV"] and experiment_type == "Illumina":
+            docker_cmd = "bash /MIRA-NF/MIRA.sh "
+            docker_cmd += f"-f mira_nf_container "
+            docker_cmd += f"-i {data_root}/{seq_run}/samplesheet.csv "
+            docker_cmd += f"-r {data_root}/{seq_run} "
+            docker_cmd += f"-o /data/{seq_run}/mira_results "            
+        docker_cmd += f"-e {experiment_type} "
+        docker_cmd += f"-a {parquet_files} "
+        docker_cmd += f"-n {nextclade} "
+        if experiment_type in ["SC2-Whole-Genome-Illumina", "RSV-Illumina"]:
             docker_cmd += f"-p {amplicon_library} "
-        docker_cmd += f"-c CLEANUP-FOOTPRINT"
+        docker_cmd += f"> {nextflow_mira_log} 2>&1"
         # Start subproccess to run IRMA
-        irma_assembly_task = await asyncio.create_subprocess_shell(docker_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        print(f"Start the assembly task with PID: {irma_assembly_task.pid}")
-        # Let the worker run for 3 seconds
-        await asyncio.sleep(3)
-        # Start tracking irma progress and start assembly counter
-        track_irma_progress = True
-        start_assembly_counter.set("start")  
-        # Enable the stop button once task is running
-        stop_btn_id = session.ns("stop_assembly_button")
-        await session.send_custom_message(
-            "disableBtn", {"id": stop_btn_id, "disabled": False}
-        )
-        # return
-        return irma_assembly_task
-      
-    # Observe once start_assembly_task() is completed
+        mira_assembly_task = await asyncio.create_subprocess_shell(docker_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        print(f"Start the assembly task with PID: {mira_assembly_task.pid}")
+
+        # Wait for the mira_assembly_task to complete and capture output
+        stdout, stderr = await mira_assembly_task.communicate()
+        # Decode bytes to strings
+        stdout_str = stdout.decode().strip()
+        stderr_str = stderr.decode().strip()
+        print(stdout_str)
+        print(stderr_str)
+        # Return code
+        return mira_assembly_task.returncode
+        
+    # After start_assembly_task() is completed, return results
     @reactive.effect
-    async def _():
-        reactive.invalidate_later(3)
-        req(irma_completion_status.get() in ["success", "fail"])
-        # Show the assembly content
-        await session.send_custom_message(
-            "toggleAssemblyContent", {"id": "mira-assembly-content", "visible": True}
-        )
-        # Enable the assembly button again
-        seq_run_id = session.ns("seq_run")
-        assembly_btn_id = session.ns("trigger_assembly_button")
-        await session.send_custom_message(
-            "disableAssemblyBtn", {"seq_run_id": seq_run_id, "assembly_btn_id": assembly_btn_id, "disabled": False}
-        )
-        # Update result files
-        selected_run = input.seq_run()
-        barcode_dist_file.set(f"{data_root}/{selected_run}/dash-json/barcode_distribution.json")
-        qc_statement_file.set(f"{data_root}/{selected_run}/dash-json/qc_statement.json")
-        quality_control_file.set(f"{data_root}/{selected_run}/dash-json/pass_fail_heatmap.json")
-        irma_summary_file.set(f"{data_root}/{selected_run}/dash-json/irma_summary.json")
-        coverage_heatmap_file.set(f"{data_root}/{selected_run}/dash-json/heatmap.json")
-        coverage_sample_file.set(f"{data_root}/{selected_run}/dash-json/reads.json")
-        mira_variants_file.set(f"{data_root}/{selected_run}/dash-json/dais_vars.json")
-        mira_snvs_file.set(f"{data_root}/{selected_run}/dash-json/alleles.json")
-        mira_indels_file.set(f"{data_root}/{selected_run}/dash-json/indels.json")
-        passed_nt_file.set(f"{data_root}/{selected_run}/amended_consensus.fasta")
-        passed_aa_file.set(f"{data_root}/{selected_run}/amino_acid_consensus.fasta")
-        failed_nt_file.set(f"{data_root}/{selected_run}/failed_amended_consensus.fasta")
-        failed_aa_file.set(f"{data_root}/{selected_run}/failed_amino_acid_consensus.fasta")
-        # Update message accordingly to success or fail
-        if irma_completion_status.get() == "success":
-            samplesheet_tbl_message.set("")
-        elif irma_completion_status.get() == "fail":
-            samplesheet_tbl_message.set("The sequencing run has failed or was canceled. Please re-run the assembly again. If the problem persists, please contact us at IDSeqsupport@cdc.gov!")
-        # Reset the completion status    
-        irma_completion_status.set("")
+    def check_mira_progress_task():
+        exit_code = start_assembly_task.result()
+        # Check exit code
+        if exit_code in [0, 1]:
+            nonlocal track_mira_progress
+            track_mira_progress = False 
+            # Update progress log
+            if os.path.exists(nextflow_mira_log):
+                with open(nextflow_mira_log, 'r') as file:
+                    lines = file.readlines()        
+                mira_progress_log.set("".join(lines))
+            # Return message base on exit code
+            if exit_code == 1:
+                mira_progress_message.set("<p class='error-message'>An error has occurred. Please see the logs below for more details.</p>")
+            elif exit_code  == 0:
+                mira_progress_message.set("<p class='success-message'>The update process has been completed. Please see logs below for additional details.</p>")
+    
+    # Get progress
+    @reactive.effect
+    def retrieve_mira_progress():
+        reactive.invalidate_later(1)
+        nonlocal track_mira_progress
+        if os.path.exists(nextflow_mira_log) and track_mira_progress == True:
+            with open(nextflow_mira_log, 'r') as file:
+                lines = file.readlines() 
+                print(lines)       
+            mira_progress_log.set("".join(lines))
+    
+    # Output delete error message 
+    @render.ui
+    def mira_progress():
+        req(mira_progress_log.get())
+        return ui.HTML(mira_progress_log.get())
   
     # Observe when start_assembly_button is clicked
     @reactive.effect
@@ -984,25 +828,23 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
     async def start_assembly_click():
         # Get inputs
         selected_run = input.seq_run()
-        selected_organism = input.seq_organism()
+        selected_seq_experiment_type = input.seq_experiment_type()
         selected_experiment_type = input.seq_experiment_type()
         selected_amplicon_library = input.seq_amplicon_library()
+        selected_parquet_files = input.parquet_files()
+        selected_run_nextclade = input.run_nextclade()
         ss_html_tbl = samplesheet_html_tbl.get()
         # Check seq_run
         if not selected_run:
             samplesheet_tbl_message.set("Please select a sequencing run to start the assembly!")
-            return
-        # Check seq_organism
-        if not selected_organism:
-            samplesheet_tbl_message.set("Please select an organism to start the assembly!")
             return
         # Check experiment types
         if not selected_experiment_type:
             samplesheet_tbl_message.set("Please select an experiment type to start the assembly!")
             return
         # Check amplicon library
-        if selected_organism in ["SC2-Spike-Only", "RSV"] and selected_experiment_type.upper() == "ILLUMINA" and not selected_amplicon_library:
-            samplesheet_tbl_message.set(f"For {selected_organism} {selected_experiment_type}, please select a Primer Schema to start the assembly!")
+        if selected_experiment_type in ["SC2-WholeGenome-Illumina", "RSV-Illumina"] and not selected_amplicon_library:
+            samplesheet_tbl_message.set(f"For {selected_experiment_type}, please select a Primer Schema to start the assembly!")
             return
         # Convert HTML table to DataFrame
         try:
@@ -1017,13 +859,6 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
         # Check if any cells contains NaN or empty string
         if ss_df.isnull().values.any() or ss_df.eq("").any().any():
             samplesheet_tbl_message.set("Samplesheet cannot contain any empty values")
-            return
-        # Check column names for each experiment type
-        if "ONT" in selected_experiment_type.upper() and any([col not in ss_df.columns for col in ont_ss_colnames]):
-            samplesheet_tbl_message.set(f"Invalid Samplesheet for a Nanopore run!! Please reload the Samplesheet with the required column names: {ont_ss_colnames}")
-            return
-        elif "ILLUMINA" in selected_experiment_type.upper() and any([col not in ss_df.columns for col in illumina_ss_colnames]):
-            samplesheet_tbl_message.set(f"Invalid Samplesheet for an Illumina run!! Please reload the Samplesheet with the required column names: {illumina_ss_colnames}")
             return
         # Check for duplicated
         if True in list(ss_df["sample_id"].duplicated(keep=False)):
@@ -1045,45 +880,18 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
             id_list = list(ss_df["sample_id"].loc[~ss_df["sample_type"].isin(sample_type_options)])
             samplesheet_tbl_message.set(f"Invalid sample_type for sample_id = {id_list}. Options are {sample_type_options}")
             return   
-        # Create place holder to check sample files
-        check_sample_files = []
-        # Check if sample id folder exists for ILLUMINA 
-        if "ILLUMINA" in selected_experiment_type.upper():
-            for id in ss_df["sample_id"]:
-               sample_file = glob(f"{data_root}/{selected_run}/fastq*/{id}*R[12]*fastq*")
-               if len(sample_file) < 2:
-                    check_sample_files.append(True)
-               else:
-                    check_sample_files.append(False)
-        # Check if barcode id folder exists for ONT 
-        elif "ONT" in selected_experiment_type.upper():
-            for id in ss_df["barcode"]:
-               sample_file = glob(f"{data_root}/{selected_run}/fastq_pass/{id}/*fastq*")
-               if len(sample_file) == 0:
-                    check_sample_files.append(True)
-               else:
-                    check_sample_files.append(False)
-        # Check sample files
-        if True in check_sample_files and "ILLUMINA" in selected_experiment_type.upper():
-              id_list = list(ss_df["sample_id"].loc[check_sample_files])
-              samplesheet_tbl_message.set(f"Cannot find {selected_experiment_type} fastq files for sample_id = {id_list}. Make sure fastq files have both R1 and R2 for paired-end run. Please check your run folder again!")
-              return 
-        elif True in check_sample_files and "ONT" in selected_experiment_type.upper():
-              id_list = list(ss_df["barcode"].loc[check_sample_files])
-              samplesheet_tbl_message.set(f"Cannot find {selected_experiment_type} fastq files for Barcoder # = {id_list}. Please check your run folder again!")
-              return    
         # Save the final validated samplesheet
         ss_df.to_csv(f"{data_root}/{selected_run}/samplesheet.csv", index=False)
         # Remove empty generated samplesheet. The real samplesheet is saved as samplesheet.csv
         if len(glob(f"{data_root}/{selected_run}/{selected_run}_samplesheet.xlsx")) > 0:
             os.remove(f"{data_root}/{selected_run}/{selected_run}_samplesheet.xlsx") 
         # Remove fastas from run folder to re-start and track the assembly process again
-        fasta_files = glob(f"{data_root}/{selected_run}/*amended_consensus.fasta") + glob(f"{data_root}/{selected_run}/*amino_acid_consensus.fasta")
+        fasta_files = glob(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/*amended_consensus.fasta") + glob(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/*amino_acid_consensus.fasta")
         if len(fasta_files) > 0:
             for i in fasta_files:
                 os.remove(i) 
         # Reset message and result files  
-        irma_progress_message.set("Preparing data files. Please wait...")
+        mira_progress_message.set("Preparing data files. Please wait...")
         samplesheet_tbl_message.set("")
         barcode_dist_file.set("")
         qc_statement_file.set("")
@@ -1112,8 +920,12 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
         await session.send_custom_message(
             "disableBtn", {"id": stop_btn_id, "disabled": True}
         )
+        
+        # Start track MIRA progress
+        nonlocal track_mira_progress
+        track_mira_progress = True
         # Start the assembly task as a background process
-        start_assembly_task(data_root=data_root, seq_run=selected_run, organism=selected_organism, experiment_type=selected_experiment_type, amplicon_library=selected_amplicon_library, spyne_command_type=spyne_command_type)
+        start_assembly_task(data_root=data_root, seq_run=selected_run, experiment_type=selected_experiment_type, amplicon_library=selected_amplicon_library, parquet_files= selected_parquet_files, nextclade=selected_run_nextclade, spyne_command_type=spyne_command_type)
         
     # Display barcode distribution plot
     @output
@@ -1346,7 +1158,7 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
         sample_id = input.coverage_sample_id()
         # Re-create widget if the input changes
         with reactive.isolate():
-            json_file = f"{data_root}/{seq_run}/dash-json/readsfig_{sample_id}.json"
+            json_file = f"{data_root}/{seq_run}/mira_results/aggregate_outputs/dash-json/readsfig_{sample_id}.json"
             # If file exists, read in the file
             if os.path.exists(json_file):
                 # Load json as dict
@@ -1373,7 +1185,7 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
         # Re-create widget if the input changes
         with reactive.isolate():
             y_axis_type = "linear"
-            json_file = f"{data_root}/{seq_run}/dash-json/coveragefig_{sample_id}_{y_axis_type}.json"
+            json_file = f"{data_root}/{seq_run}/mira_results/aggregate_outputs/dash-json/coveragefig_{sample_id}_{y_axis_type}.json"
             # If file exists, read in the file
             if os.path.exists(json_file):
                 # Load json as dict
@@ -1431,10 +1243,10 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
                 )
                 return
 
-    # Output minor alleles table
+    # Output minor vairants table
     @output
     @render_widget
-    async def minor_alleles_table():
+    async def minor_variants_table():
         # Get reactive input
         json_file = mira_snvs_file.get()
         # Re-create widget if the json file changes
@@ -1457,7 +1269,7 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
                         height = 250
                         tbl_height = str(height - 100) + "px"
                     # Update table height
-                    tbl_id = session.ns("minor_alleles_table")
+                    tbl_id = session.ns("minor_variants_table")
                     await session.send_custom_message(
                         "resizeITable", {"tbl_id": tbl_id, "height": height}
                     )
@@ -1589,6 +1401,3 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
         # Get inputs
         fasta_file = failed_aa_file.get()
         return fasta_file
-
-
-
