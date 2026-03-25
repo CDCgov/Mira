@@ -43,9 +43,9 @@ def mira_app(config):
         
     # Determine whether to run SPYNE using bash or a docker container
     if deploy == True:
-        spyne_command_type = "bash"
+        command_type = "bash"
     else:
-        spyne_command_type = "docker"
+        command_type = "docker"
     
     # Define page styling, description, and javascript dependencies
     page_dependencies = ui.tags.head(
@@ -229,7 +229,7 @@ def mira_app(config):
             samplesheet_html_tbl.set(value)
     
         # MIRA Server
-        mira.mira_server(id="mira", data_root=data_root, samplesheet_html_tbl=samplesheet_html_tbl, spyne_command_type=spyne_command_type)
+        mira.mira_server(id="mira", data_root=data_root, samplesheet_html_tbl=samplesheet_html_tbl, command_type=command_type)
     
     # Set up location of styling worksheet and static files
     www_dir = Path(__file__).parent / "www"
@@ -244,9 +244,9 @@ def mira_app(config):
 if __name__ == "__main__":
 
     """
-    Argument parser to setup and launch MIRA Dashboard
+    Argument parser to setup and launch Mira Dashboard
     """
-    parser = argparse.ArgumentParser(description="Launch MIRA Dashboard")
+    parser = argparse.ArgumentParser(description="Launch Mira Dashboard")
     parser.add_argument("--host",
         help="The address that the app should listen on. Default 127.0.0.1",
     	type=str,

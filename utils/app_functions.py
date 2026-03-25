@@ -220,25 +220,6 @@ def fill_irma_summary_tbl(df, n_bins=8, columns="all"):
     # Return df with styles
     return styled_df
   
-# Start IRMA assembly 
-async def start_irma_assembly(data_root, seq_run, organism, experiment_type, amplicon_library, spyne_command_type="bash"):
-    # Construct the command to run IRMA
-    if spyne_command_type == "docker":
-        docker_cmd = "docker exec spyne bash /spyne/MIRA.sh "
-    elif spyne_command_type == "bash":
-        docker_cmd = "bash /spyne/MIRA.sh "
-    docker_cmd += f"-s {seq_run}/samplesheet.csv "
-    docker_cmd += f"-r {seq_run} "
-    docker_cmd += f"-e {organism}-{experiment_type} "
-    docker_cmd += "-a "
-    if organism in ["SC2-Whole-Genome", "RSV"] and experiment_type == "Illumina":
-        docker_cmd += f"-p {amplicon_library} "
-    docker_cmd += f"-c CLEANUP-FOOTPRINT"
-    # Start subproccess to run IRMA
-    proc = await asyncio.create_subprocess_shell(docker_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    # Return the process
-    return proc    
-  
 # Stop IRMA process
 async def stop_irma_process(process):
     process.send_signal(signal.SIGINT)
@@ -253,6 +234,3 @@ async def kill_irma_process(process):
 async def force_kill_irma_process(process):
     os.kill(process.pid, signal.SIGKILL)
     await process.wait() 
-    
-    
-

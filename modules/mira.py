@@ -450,7 +450,7 @@ def mira_ui(data_root):
 
 # Define server logic
 @module.server
-def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_command_type):
+def mira_server(input, output, session, data_root, samplesheet_html_tbl, command_type):
   
     # Create local variable to store mira progress and its completion status
     track_mira_progress = None
@@ -752,38 +752,47 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
     # Start the assembly task when assembly button was clicked
     @ui.bind_task_button(button_id="start_assembly_button")
     @reactive.extended_task
-    async def start_assembly_task(data_root, seq_run, experiment_type, amplicon_library, parquet_files, nextclade, spyne_command_type):
-        # Construct the command to run IRMA
-        if spyne_command_type == "docker":
-            docker_cmd = "docker exec -it mira-nf bash /MIRA-NF/MIRA.sh "
-            docker_cmd += f"-f mira_nf_container "
-            docker_cmd += f"-i /data/{seq_run}/samplesheet.csv "
-            docker_cmd += f"-r /data/{seq_run} "
-            docker_cmd += f"-o /data/{seq_run}/mira_results "
-        elif spyne_command_type == "bash":
-            docker_cmd = "bash /MIRA-NF/MIRA.sh "
-            docker_cmd += f"-f mira_nf_container "
-            docker_cmd += f"-i {data_root}/{seq_run}/samplesheet.csv "
-            docker_cmd += f"-r {data_root}/{seq_run} "
-            docker_cmd += f"-o /data/{seq_run}/mira_results "            
-        docker_cmd += f"-e {experiment_type} "
-        docker_cmd += f"-a {parquet_files} "
-        docker_cmd += f"-n {nextclade} "
-        if experiment_type in ["SC2-Whole-Genome-Illumina", "RSV-Illumina"]:
-            docker_cmd += f"-p {amplicon_library} "
-        docker_cmd += f"> {nextflow_mira_log} 2>&1"
-        # Start subproccess to run IRMA
-        mira_assembly_task = await asyncio.create_subprocess_shell(docker_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    async def start_assembly_task(data_root, seq_run, experiment_type, amplicon_library, parquet_files, nextclade, command_type,nextflow_mira_log):
+        # Construct the command
+        command = f"python3 {os.path.dirname(os.path.realpath(__file__))}/../utils/run_mira_nf.py "
+        command += f"--data_root '{data_root}' "
+        command += f"--seq_run '{seq_run}' "
+        command += f"--experiment_type '{experiment_type}' "
+        command += f"--amplicon_library '{amplicon_library}' "
+        command += f"--parquet_files '{parquet_files}' "
+        command += f"--nextclade '{nextclade}' "
+        command += f"--command_type '{command_type}' "
+        command += f"--log_file '{nextflow_mira_log}'"
+        print(command)
+
+        # Start subprocess
+        mira_assembly_task = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
         print(f"Start the assembly task with PID: {mira_assembly_task.pid}")
 
-        # Wait for the mira_assembly_task to complete and capture output
-        stdout, stderr = await mira_assembly_task.communicate()
-        # Decode bytes to strings
-        stdout_str = stdout.decode().strip()
-        stderr_str = stderr.decode().strip()
-        print(stdout_str)
-        print(stderr_str)
-        # Return code
+        # Stream output instead of blocking communicate()
+        async def stream_output(stream, label):
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                decoded = line.decode().rstrip()
+                print(f"[{label}] {decoded}")
+
+        # Run both stdout + stderr streaming concurrently
+        await asyncio.gather(
+            stream_output(mira_assembly_task.stdout, "STDOUT"),
+            stream_output(mira_assembly_task.stderr, "STDERR"),
+        )
+
+        # Wait for process to finish
+        await mira_assembly_task.wait()
+
+        # Return exit code
         return mira_assembly_task.returncode
         
     # After start_assembly_task() is completed, return results
@@ -925,7 +934,7 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, spyne_c
         nonlocal track_mira_progress
         track_mira_progress = True
         # Start the assembly task as a background process
-        start_assembly_task(data_root=data_root, seq_run=selected_run, experiment_type=selected_experiment_type, amplicon_library=selected_amplicon_library, parquet_files= selected_parquet_files, nextclade=selected_run_nextclade, spyne_command_type=spyne_command_type)
+        start_assembly_task(data_root=data_root, seq_run=selected_run, experiment_type=selected_experiment_type, amplicon_library=selected_amplicon_library, parquet_files= selected_parquet_files, nextclade=selected_run_nextclade, command_type=command_type, nextflow_mira_log=nextflow_mira_log)
         
     # Display barcode distribution plot
     @output
