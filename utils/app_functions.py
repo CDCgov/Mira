@@ -190,35 +190,67 @@ def parse_samplesheet(samplesheet_file):
   
 # Create background color for IRMA summary table
 def fill_irma_summary_tbl(df, n_bins=8, columns="all"):
-    styled_df = df.copy().astype(str)
-    bounds = [i * (1.0 / n_bins) for i in range(n_bins + 1)]
-    if columns == "all":
-        if "id" in df:
-            df_numeric_columns = df.select_dtypes("number").drop(["id"], axis=1)
-        else:
-            df_numeric_columns = df.select_dtypes("number")
-    else:
-        df_noUndetermined = df[df["Sample"] != "Undetermined"]
-        df_numeric_columns = df_noUndetermined[columns]
-    styles = []
-    ranges = {}
-    for column in df_numeric_columns:
-        df_max = df_numeric_columns[column].max()
-        df_min = df_numeric_columns[column].min()
-        ranges[column] = [((df_max - df_min) * i) + df_min for i in bounds]
-        for i in range(1, len(bounds)):
-            min_bound = ranges[column][i - 1]
-            max_bound = ranges[column][i]
-            backgroundColor = colorlover.scales[str(n_bins)]["seq"]["PuBuGn"][i - 1]
-            color = "white" if i > len(bounds) / 2.0 else "inherit"
-            cols = df.columns.get_loc(column)
-            if i < (len(bounds) - 1):
-                rows = df.query(f'`{column}` >= {min_bound}').index.tolist()
+    try:
+        styled_df = df.copy().astype(str)
+        bounds = [i * (1.0 / n_bins) for i in range(n_bins + 1)]
+        
+        if columns == "all":
+            if "id" in df:
+                df_numeric_columns = df.select_dtypes("number").drop(["id"], axis=1)
             else:
-                rows = df.query(f'`{column}` >= {min_bound} and `{column}` < {max_bound}').index.tolist()
-            styled_df.iloc[rows, cols] = [f'<div style="width: 100%; color: {color}; background-color: {backgroundColor};">' + str(val) + '</div>' for val in df.iloc[rows, cols].tolist()]
-    # Return df with styles
-    return styled_df
+                df_numeric_columns = df.select_dtypes("number")
+        else:
+            df_noUndetermined = df[df["Sample"] != "Undetermined"]
+            df_numeric_columns = df_noUndetermined[columns]
+        
+        # Check if there are any numeric columns
+        if df_numeric_columns.empty:
+            print("WARNING fill_irma_summary_tbl: No numeric columns found")
+            return styled_df
+        
+        styles = []
+        ranges = {}
+        
+        for column in df_numeric_columns:
+            try:
+                df_max = df_numeric_columns[column].max()
+                df_min = df_numeric_columns[column].min()
+                
+                # Skip if max == min (avoid division by zero)
+                if df_max == df_min:
+                    print(f"WARNING fill_irma_summary_tbl: Column {column} has constant value, skipping")
+                    continue
+                
+                ranges[column] = [((df_max - df_min) * i) + df_min for i in bounds]
+                
+                for i in range(1, len(bounds)):
+                    min_bound = ranges[column][i - 1]
+                    max_bound = ranges[column][i]
+                    backgroundColor = colorlover.scales[str(n_bins)]["seq"]["PuBuGn"][i - 1]
+                    color = "white" if i > len(bounds) / 2.0 else "inherit"
+                    cols = df.columns.get_loc(column)
+                    
+                    if i < (len(bounds) - 1):
+                        rows = df.query(f'`{column}` >= {min_bound}').index.tolist()
+                    else:
+                        rows = df.query(f'`{column}` >= {min_bound} and `{column}` <= {max_bound}').index.tolist()
+                    
+                    if rows:  # Only apply styling if there are matching rows
+                        styled_df.iloc[rows, cols] = [f'<div style="width: 100%; color: {color}; background-color: {backgroundColor};">' + str(val) + '</div>' for val in df.iloc[rows, cols].tolist()]
+            except Exception as e:
+                print(f"ERROR fill_irma_summary_tbl: Error processing column {column}: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        # Return df with styles
+        return styled_df
+    except Exception as e:
+        print(f"ERROR fill_irma_summary_tbl: Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        # Return unstyled dataframe as fallback
+        return df.copy().astype(str)
   
 # Stop IRMA process
 async def stop_irma_process(process):

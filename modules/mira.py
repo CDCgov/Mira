@@ -477,41 +477,52 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
     # Reactive value to track if download is triggered
     orig_samplesheet_tbl = reactive.Value(pd.DataFrame())  
     
-    # Reactive value to store barcode assignment
-    barcode_dist_file = reactive.Value() 
-    
-    # Reactive value to QC statement
-    qc_statement_file = reactive.Value() 
-    
-    # Reactive value to store pass/fail samples
-    quality_control_file = reactive.Value() 
-    
-    # Reactive value to store summary
-    irma_summary_file = reactive.Value() 
-    
-    # Reactive value to store coverage table
-    coverage_heatmap_file = reactive.Value() 
-    
-    # Reactive value to store coverage table
-    coverage_sample_file = reactive.Value() 
-    
-    # Reactive value to store minor variants
-    mira_variants_file = reactive.Value() 
-            
-    # Reactive value to store single coverage lot
-    mira_snvs_file = reactive.Value() 
-
-    # Reactive value to store indels
-    mira_indels_file = reactive.Value() 
-    
-    # Reactive values to store fasta files
-    passed_nt_file = reactive.Value()
-    passed_aa_file = reactive.Value()
-    failed_nt_file = reactive.Value()
-    failed_aa_file = reactive.Value()
-
     # Log catching
     log_buffer = []
+    
+    # Reactive value to track assembly completion
+    assembly_completed = reactive.Value(0)
+    
+    # Add a reactive value to track if assembly is running
+    assembly_running = reactive.Value(False)
+    
+    # Store the last known file states to detect actual changes
+    last_file_states = reactive.Value({})
+    
+    # Reactive poll to check for file changes - only update when files actually change
+    @reactive.poll(
+        lambda: 2 if assembly_running.get() else 10,  # Poll every 2 sec during assembly, 10 sec otherwise
+        1
+    )
+    def check_files_exist():
+        selected_run = input.seq_run()
+        if not selected_run:
+            return {}
+        
+        current_states = {
+            'barcode': os.path.exists(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/barcode_distribution.json"),
+            'qc_statement': os.path.exists(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/qc_statement.json"),
+            'pass_fail': os.path.exists(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/pass_fail_heatmap.json"),
+            'irma_summary': os.path.exists(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/irma_summary.json"),
+            'heatmap': os.path.exists(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/heatmap.json"),
+            'reads': os.path.exists(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/reads.json"),
+            'variants': os.path.exists(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/dais_vars.json"),
+            'snvs': os.path.exists(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/minor_variants.json"),
+            'indels': os.path.exists(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/indels.json"),
+            'passed_nt': os.path.exists(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/mira_{selected_run}_amended_consensus.fasta"),
+            'passed_aa': os.path.exists(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/mira_{selected_run}_amino_acid_consensus.fasta"),
+            'failed_nt': os.path.exists(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/mira_{selected_run}_failed_amended_consensus.fasta"),
+            'failed_aa': os.path.exists(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/mira_{selected_run}_failed_amino_acid_consensus.fasta"),
+        }
+        
+        # Check if states have actually changed
+        last_states = last_file_states.get()
+        if current_states != last_states:
+            last_file_states.set(current_states)
+            return current_states
+        
+        # Return cached states if nothing changed
+        return last_states
         
     # Observe sequencing run selection
     @reactive.effect
@@ -557,20 +568,10 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
         start_assembly_counter.set("")
         # Reset assembly completion status
         mira_progress_log.set("")
-        # Update result files
-        barcode_dist_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/barcode_distribution.json")
-        qc_statement_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/qc_statement.json")
-        quality_control_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/pass_fail_heatmap.json")
-        irma_summary_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/irma_summary.json")
-        coverage_heatmap_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/heatmap.json")
-        coverage_sample_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/reads.json")
-        mira_variants_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/dais_vars.json")
-        mira_snvs_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/minor_variants.json")
-        mira_indels_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/indels.json")
-        passed_nt_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/mira_{selected_run}_amended_consensus.fasta")
-        passed_aa_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/mira_{selected_run}_amino_acid_consensus.fasta")
-        failed_nt_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/mira_{selected_run}_failed_amended_consensus.fasta")
-        failed_aa_file.set(f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/mira_{selected_run}_failed_amino_acid_consensus.fasta")
+        # Reset file states
+        last_file_states.set({})
+        # Trigger refresh of outputs
+        assembly_completed.set(assembly_completed.get() + 1)
   
     # Observe Exp Type selection
     @reactive.effect
@@ -751,7 +752,7 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
             await session.send_custom_message(
                 "triggerAssemblyBtn", {"assembly_btn_id": assembly_btn_id, "samplesheet_tbl_id": samplesheet_tbl_id}
             )
-    # ROUND 2 OFF ROADING
+    
     # Start the assembly task when assembly button was clicked
     @ui.bind_task_button(button_id="start_assembly_button")
     @reactive.extended_task
@@ -799,12 +800,14 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
         
     # After start_assembly_task() is completed, return results
     @reactive.effect
-    def check_mira_progress_task():
+    async def check_mira_progress_task():
         exit_code = start_assembly_task.result()
         # Check exit code
         if exit_code in [0, 1]:
             nonlocal track_mira_progress
             track_mira_progress = False 
+            assembly_running.set(False)  # Stop frequent polling
+            
             # Update progress log
             if os.path.exists(nextflow_mira_log):
                 with open(nextflow_mira_log, 'r') as file:
@@ -815,6 +818,27 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
                 mira_progress_message.set("<p class='error-message'>An error has occurred. Please see the logs below for more details.</p>")
             elif exit_code  == 0:
                 mira_progress_message.set("<p class='success-message'>The update process has been completed. Please see logs below for additional details.</p>")
+
+            # Re-enable buttons and show results
+            seq_run_id = session.ns("seq_run")
+            assembly_btn_id = session.ns("trigger_assembly_button")
+            await session.send_custom_message(
+                "disableAssemblyBtn", {"seq_run_id": seq_run_id, "assembly_btn_id": assembly_btn_id, "disabled": False}
+            )
+            
+            # Show assembly content
+            await session.send_custom_message(
+                "toggleAssemblyContent", {"id": "mira-assembly-content", "visible": True}
+            )
+            
+            # Force a final file check
+            last_file_states.set({})
+            
+            # Small delay to ensure files are written
+            await asyncio.sleep(1)
+            
+            # Trigger file updates
+            assembly_completed.set(assembly_completed.get() + 1)
     
     @reactive.effect
     def update_log_ui():
@@ -921,19 +945,6 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
         # Reset message and result files  
         mira_progress_message.set("Preparing data files. Please wait...")
         samplesheet_tbl_message.set("")
-        barcode_dist_file.set("")
-        qc_statement_file.set("")
-        quality_control_file.set("")
-        irma_summary_file.set("")
-        coverage_heatmap_file.set("")
-        coverage_sample_file.set("")
-        mira_variants_file.set("")
-        mira_snvs_file.set("")
-        mira_indels_file.set("")
-        passed_nt_file.set("")
-        passed_aa_file.set("")
-        failed_nt_file.set("")
-        failed_aa_file.set("")
         # Hide the assembly content 
         await session.send_custom_message(
             "toggleAssemblyContent", {"id": "mira-assembly-content", "visible": False}
@@ -952,6 +963,11 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
         # Start track MIRA progress
         nonlocal track_mira_progress
         track_mira_progress = True
+        assembly_running.set(True)  # Start frequent polling
+        
+        # Reset file states to force fresh check
+        last_file_states.set({})
+        
         # Start the assembly task as a background process
         start_assembly_task(data_root=data_root, seq_run=selected_run, experiment_type=selected_experiment_type, amplicon_library=selected_amplicon_library, parquet_files= selected_parquet_files, nextclade=selected_run_nextclade, command_type=command_type, nextflow_mira_log=nextflow_mira_log)
         
@@ -959,106 +975,140 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
     @output
     @render_widget
     async def demux_fig():
-        # Get reactive input
-        json_file = barcode_dist_file.get()
-        # Re-create widget if the json file changes
-        with reactive.isolate():        
-            # If file exists, read in the file
-            if os.path.exists(json_file):
-                await session.send_custom_message(
-                    "toggleContent", {"id": "barcode-container", "visible": True}
-                )
-                # Load json as dict
-                with open(json_file, 'r') as file:
-                    plot_data = json.load(file)
-                # Remove heatmapgl from plot data as heatmapgl is deprecated and no longer used in plotly
-                try:
-                    del plot_data["layout"]["template"]["data"]["heatmapgl"]
-                except KeyError:
-                    print("heatmapgl does not exist in plot data.")
-                # Convert dictionary to Plotly figure
-                fig = pio.from_json(pio.to_json(plot_data))
-                return fig
-            else:
-                await session.send_custom_message(
-                    "toggleContent", {"id": "barcode-container", "visible": False}
-                )
-                return 
+        # Check if file exists using the poll
+        files_status = check_files_exist()
+        selected_run = input.seq_run()
+        
+        json_file = f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/barcode_distribution.json"
+        
+        # If file exists, read in the file
+        if files_status.get('barcode', False) and os.path.exists(json_file):
+            await session.send_custom_message(
+                "toggleContent", {"id": "barcode-container", "visible": True}
+            )
+            # Load json as dict
+            with open(json_file, 'r') as file:
+                plot_data = json.load(file)
+            # Remove heatmapgl from plot data
+            try:
+                del plot_data["layout"]["template"]["data"]["heatmapgl"]
+            except KeyError:
+                pass
+            # Convert dictionary to Plotly figure
+            fig = pio.from_json(pio.to_json(plot_data))
+            return fig
+        else:
+            await session.send_custom_message(
+                "toggleContent", {"id": "barcode-container", "visible": False}
+            )
+            return 
 
     # Display IRMA negative statement
     @output
     @render.ui
     def irma_neg_statement():
-        # Get reactive input
-        json_file = qc_statement_file.get()
-        # Re-create widget if the json file changes
-        with reactive.isolate():
-            # Read in the file
-            if os.path.exists(json_file):
-                # Load json as dict
-                with open(json_file, "r") as file:
-                    qc_statement_dict = json.load(file)
-                # Create place holder to store statement
-                statement = []
-                # Check QC statement
-                for q in ["FAILS QC", "passes QC"]:
-                    for s, p in qc_statement_dict[q].items():
-                        if q == "FAILS QC":
-                            statement.extend([ui.HTML(f'<div>Your negative sample <strong class="text-danger">"{s}" FAILS QC</strong> with {p}% reads mapping to reference.</div>')])
-                        else:
-                            statement.extend([ui.HTML(f'<div>Your negative sample "{s}" passes QC with {p}% reads mapping to reference.</div>')])
-                # Return statement
-                return statement
+        # Check if file exists using the poll
+        files_status = check_files_exist()
+        selected_run = input.seq_run()
+        
+        json_file = f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/qc_statement.json"
+        
+        # Read in the file
+        if files_status.get('qc_statement', False) and os.path.exists(json_file):
+            # Load json as dict
+            with open(json_file, "r") as file:
+                qc_statement_dict = json.load(file)
+            # Create place holder to store statement
+            statement = []
+            # Check QC statement
+            for q in ["FAILS QC", "passes QC"]:
+                for s, p in qc_statement_dict[q].items():
+                    if q == "FAILS QC":
+                        statement.extend([ui.HTML(f'<div>Your negative sample <strong class="text-danger">"{s}" FAILS QC</strong> with {p}% reads mapping to reference.</div>')])
+                    else:
+                        statement.extend([ui.HTML(f'<div>Your negative sample "{s}" passes QC with {p}% reads mapping to reference.</div>')])
+            # Return statement
+            return statement
 
     # Display pass/fail heatmap
     @output
     @render_widget
     async def pass_fail_heatmap():
-        # Get reactive input
-        json_file = quality_control_file.get()
-        # Re-create widget if the json file changes
-        with reactive.isolate():
-            # If file exists, read in the file
-            if os.path.exists(json_file):
-                await session.send_custom_message(
-                    "toggleContent", {"id": "pass-fail-container", "visible": True}
-                )
-                # Load json as dict
-                with open(json_file, 'r') as file:
-                    plot_data = json.load(file)
-                # Remove heatmapgl from plot data as heatmapgl is deprecated and no longer used in plotly
-                try:
-                    del plot_data["layout"]["template"]["data"]["heatmapgl"]
-                except KeyError:
-                    print("heatmapgl does not exist in plot data.")
-                # Convert dictionary to Plotly figure
-                fig = pio.from_json(pio.to_json(plot_data))
-                return fig
-            else:
-                await session.send_custom_message(
-                    "toggleContent", {"id": "pass-fail-container", "visible": False}
-                )
-                return
+        # Check if file exists using the poll
+        files_status = check_files_exist()
+        selected_run = input.seq_run()
+        
+        json_file = f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/pass_fail_heatmap.json"
+        
+        # If file exists, read in the file
+        if files_status.get('pass_fail', False) and os.path.exists(json_file):
+            await session.send_custom_message(
+                "toggleContent", {"id": "pass-fail-container", "visible": True}
+            )
+            # Load json as dict
+            with open(json_file, 'r') as file:
+                plot_data = json.load(file)
+            # Remove heatmapgl from plot data
+            try:
+                del plot_data["layout"]["template"]["data"]["heatmapgl"]
+            except KeyError:
+                pass
+            # Convert dictionary to Plotly figure
+            fig = pio.from_json(pio.to_json(plot_data))
+            return fig
+        else:
+            await session.send_custom_message(
+                "toggleContent", {"id": "pass-fail-container", "visible": False}
+            )
+            return
 
     # Output irma summary table
     @output
     @render_widget
     async def irma_summary():
-        # Get reactive input
-        json_file = irma_summary_file.get()
-        # Re-create widget if the json file changes
-        with reactive.isolate():
+        try:
+            # Check if file exists using the poll
+            files_status = check_files_exist()
+            selected_run = input.seq_run()
+            
+            json_file = f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/irma_summary.json"
+            
+            print(f"DEBUG irma_summary: Checking file {json_file}")
+            print(f"DEBUG irma_summary: files_status['irma_summary']={files_status.get('irma_summary', False)}")
+            print(f"DEBUG irma_summary: os.path.exists={os.path.exists(json_file)}")
+            
             # Read in the file
-            if os.path.exists(json_file):
+            if files_status.get('irma_summary', False) and os.path.exists(json_file):
                 await session.send_custom_message(
                     "toggleContent", {"id": "irma-summary-container", "visible": True}
                 )
+                
                 # Load json as dict
-                df = pd.read_json(json_file, orient="split")
+                try:
+                    df = pd.read_json(json_file, orient="split")
+                    print(f"DEBUG irma_summary: Successfully loaded JSON, shape={df.shape}")
+                    print(f"DEBUG irma_summary: Columns={df.columns.tolist()}")
+                    print(f"DEBUG irma_summary: First few rows:\n{df.head()}")
+                except Exception as e:
+                    print(f"ERROR irma_summary: Failed to load JSON: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    df = pd.DataFrame([{"ERROR": f"Failed to load data: {str(e)}"}])
+                    return ITable(df, columnDefs=[{"targets":"_all", "className":"dt-center"}], showIndex=False, select=False, allow_html=True, style="width:100%;", scrollX=False, scrollY=False, scrollCollapse=False, paging=False, search=False)
+                
                 # Display df if not empty
                 if not df.empty:
-                    seq_run = input.seq_run()
-                    styled_df = fill_irma_summary_tbl(df=df, n_bins=8, columns="all")
+                    try:
+                        print(f"DEBUG irma_summary: Calling fill_irma_summary_tbl")
+                        styled_df = fill_irma_summary_tbl(df=df, n_bins=8, columns="all")
+                        print(f"DEBUG irma_summary: Successfully styled dataframe")
+                    except Exception as e:
+                        print(f"ERROR irma_summary: Failed to style dataframe: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        # Fall back to unstyled dataframe
+                        styled_df = df.astype(str)
+                    
                     # Determine the height of table based on number of rows
                     if df.shape[0] > 5:
                         height = 550;
@@ -1066,87 +1116,105 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
                     else:
                         height = 250
                         tbl_height = str(height - 100) + "px"
+                        
                     # Update table height
                     tbl_id = session.ns("irma_summary")
                     await session.send_custom_message(
                         "resizeITable", {"tbl_id": tbl_id, "height": height}
                     )
+                    
+                    print(f"DEBUG irma_summary: Returning ITable")
                     return ITable(
                         styled_df, classes="display nowrap compact",
                         columnDefs=[{"width":"auto", "targets":"_all"}],
-                        style="width:100%;", showIndex=False, allow_html=True, select=True, scrollX=True, scrollY=tbl_height, scrollCollapse=True, paging=False, search=True, buttons=[{"extend": "csvHtml5", "filename": f"{seq_run}_irma_summary"}, {"extend": "excelHtml5", "filename": f"{seq_run}_irma_summary"}])
+                        style="width:100%;", showIndex=False, allow_html=True, select=True, scrollX=True, scrollY=tbl_height, scrollCollapse=True, paging=False, search=True, buttons=[{"extend": "csvHtml5", "filename": f"{selected_run}_irma_summary"}, {"extend": "excelHtml5", "filename": f"{selected_run}_irma_summary"}])
                 else:
+                    print(f"DEBUG irma_summary: DataFrame is empty")
                     df = pd.DataFrame([{"WARNINGS": "Cannot found IRMA Summary for this sequencing run."}])
                     return ITable(df, columnDefs=[{"targets":"_all", "className":"dt-center"}], showIndex=False, select=False, allow_html=True, style="width:100%;", scrollX=False, scrollY=False, scrollCollapse=False, paging=False, search=False)
             else:
+                print(f"DEBUG irma_summary: File not found or not ready, hiding container")
                 await session.send_custom_message(
                     "toggleContent", {"id": "irma-summary-container", "visible": False}
                 )
                 return
+        except Exception as e:
+            print(f"ERROR irma_summary: Unexpected error in irma_summary: {e}")
+            import traceback
+            traceback.print_exc()
+            await session.send_custom_message(
+                "toggleContent", {"id": "irma-summary-container", "visible": True}
+            )
+            df = pd.DataFrame([{"ERROR": f"Unexpected error: {str(e)}"}])
+            return ITable(df, columnDefs=[{"targets":"_all", "className":"dt-center"}], showIndex=False, select=False, allow_html=True, style="width:100%;", scrollX=False, scrollY=False, scrollCollapse=False, paging=False, search=False)
 
     # Output coverage heatmap
     @output
     @render_widget
     async def coverage_heatmap():
-        # Get reactive input
-        json_file = coverage_heatmap_file.get()
-        # Re-create widget if the json file changes
-        with reactive.isolate():
-            # If file exists, read in the file
-            if os.path.exists(json_file):
-                await session.send_custom_message(
-                    "toggleContent", {"id": "coverage-heatmap-container", "visible": True}
-                )
-                # Load json as dict
-                with open(json_file, 'r') as file:
-                    plot_data = json.load(file)
-                # Remove heatmapgl from plot data as heatmapgl is deprecated and no longer used in plotly
-                try:
-                    del plot_data["layout"]["template"]["data"]["heatmapgl"]
-                except KeyError:
-                    print("heatmapgl does not exist in plot data.")
-                # Convert dictionary to Plotly figure
-                fig = pio.from_json(pio.to_json(plot_data))
-                return fig
-            else:
-                await session.send_custom_message(
-                    "toggleContent", {"id": "coverage-heatmap-container", "visible": False}
-                )
-                return
+        # Check if file exists using the poll
+        files_status = check_files_exist()
+        selected_run = input.seq_run()
+        
+        json_file = f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/heatmap.json"
+        
+        # If file exists, read in the file
+        if files_status.get('heatmap', False) and os.path.exists(json_file):
+            await session.send_custom_message(
+                "toggleContent", {"id": "coverage-heatmap-container", "visible": True}
+            )
+            # Load json as dict
+            with open(json_file, 'r') as file:
+                plot_data = json.load(file)
+            # Remove heatmapgl from plot data
+            try:
+                del plot_data["layout"]["template"]["data"]["heatmapgl"]
+            except KeyError:
+                pass
+            # Convert dictionary to Plotly figure
+            fig = pio.from_json(pio.to_json(plot_data))
+            return fig
+        else:
+            await session.send_custom_message(
+                "toggleContent", {"id": "coverage-heatmap-container", "visible": False}
+            )
+            return
 
     # Create coverage plot sample ids list
     @output
     @render.ui
     async def coverage_sample():
-        # Get reactive input
-        json_file = coverage_sample_file.get()
-        # Re-create widget if the json file changes
-        with reactive.isolate():
-            # If file exists, read in the file
-            if os.path.exists(json_file):
-                await session.send_custom_message(
-                    "toggleContent", {"id": "coverage-container", "visible": True}
-                )
-                # Load json as dict
-                df = pd.read_json(json_file, orient="split")
-                # Get sample ids
-                samples = df["Sample"].unique().tolist()
-                # Create dropdown boxes
-                return ui.input_selectize(
-                    id="coverage_sample_id",
-                    label=None,
-                    choices=samples,
-                    selected=None,
-                    multiple=False,
-                    width="100%",
-                    remove_button=None,
-                    options=None,
-                )
-            else:
-                await session.send_custom_message(
-                    "toggleContent", {"id": "coverage-container", "visible": False}
-                )
-                return
+        # Check if file exists using the poll
+        files_status = check_files_exist()
+        selected_run = input.seq_run()
+        
+        json_file = f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/reads.json"
+        
+        # If file exists, read in the file
+        if files_status.get('reads', False) and os.path.exists(json_file):
+            await session.send_custom_message(
+                "toggleContent", {"id": "coverage-container", "visible": True}
+            )
+            # Load json as dict
+            df = pd.read_json(json_file, orient="split")
+            # Get sample ids
+            samples = df["Sample"].unique().tolist()
+            # Create dropdown boxes
+            return ui.input_selectize(
+                id="coverage_sample_id",
+                label=None,
+                choices=samples,
+                selected=None,
+                multiple=False,
+                width="100%",
+                remove_button=None,
+                options=None,
+            )
+        else:
+            await session.send_custom_message(
+                "toggleContent", {"id": "coverage-container", "visible": False}
+            )
+            return
 
     # Observe when a sample id is selected
     @reactive.effect
@@ -1180,252 +1248,254 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
     # Display coverage read coverage for each sample id
     @output
     @render_widget
-    async def coverage_sample_sankeyfig():
+    def coverage_sample_sankeyfig():
         # Get reactive inputs
         seq_run = input.seq_run()
         sample_id = input.coverage_sample_id()
-        # Re-create widget if the input changes
-        with reactive.isolate():
-            json_file = f"{data_root}/{seq_run}/mira_results/aggregate_outputs/dash-json/readsfig_{sample_id}.json"
-            # If file exists, read in the file
-            if os.path.exists(json_file):
-                # Load json as dict
-                with open(json_file, 'r') as file:
-                    plot_data = json.load(file)
-                # Remove heatmapgl from plot data as heatmapgl is deprecated and no longer used in plotly
-                try:
-                    del plot_data["layout"]["template"]["data"]["heatmapgl"]
-                except KeyError:
-                    print("heatmapgl does not exist in plot data.")
-                # Convert dictionary to Plotly figure
-                fig = pio.from_json(pio.to_json(plot_data))
-                return fig
-            else:
-                return
+        
+        json_file = f"{data_root}/{seq_run}/mira_results/aggregate_outputs/dash-json/readsfig_{sample_id}.json"
+        # If file exists, read in the file
+        if os.path.exists(json_file):
+            # Load json as dict
+            with open(json_file, 'r') as file:
+                plot_data = json.load(file)
+            # Remove heatmapgl from plot data
+            try:
+                del plot_data["layout"]["template"]["data"]["heatmapgl"]
+            except KeyError:
+                pass
+            # Convert dictionary to Plotly figure
+            fig = pio.from_json(pio.to_json(plot_data))
+            return fig
+        else:
+            return
 
     # Display coverage plot for each sample id
     @output
     @render_widget
-    async def coverage_sample_fig():
+    def coverage_sample_fig():
         # Get reactive inputs
         seq_run = input.seq_run()
         sample_id = input.coverage_sample_id()
-        # Re-create widget if the input changes
-        with reactive.isolate():
-            y_axis_type = "linear"
-            json_file = f"{data_root}/{seq_run}/mira_results/aggregate_outputs/dash-json/coveragefig_{sample_id}_{y_axis_type}.json"
-            # If file exists, read in the file
-            if os.path.exists(json_file):
-                # Load json as dict
-                with open(json_file, 'r') as file:
-                    plot_data = json.load(file)
-                # Remove heatmapgl from plot data as heatmapgl is deprecated and no longer used in plotly
-                try:
-                    del plot_data["layout"]["template"]["data"]["heatmapgl"]
-                except KeyError:
-                    print("heatmapgl does not exist in plot data.")
-                # Convert dictionary to Plotly figure
-                fig = pio.from_json(pio.to_json(plot_data))
-                return fig
-            else:
-                return
+        
+        y_axis_type = "linear"
+        json_file = f"{data_root}/{seq_run}/mira_results/aggregate_outputs/dash-json/coveragefig_{sample_id}_{y_axis_type}.json"
+        # If file exists, read in the file
+        if os.path.exists(json_file):
+            # Load json as dict
+            with open(json_file, 'r') as file:
+                plot_data = json.load(file)
+            # Remove heatmapgl from plot data
+            try:
+                del plot_data["layout"]["template"]["data"]["heatmapgl"]
+            except KeyError:
+                pass
+            # Convert dictionary to Plotly figure
+            fig = pio.from_json(pio.to_json(plot_data))
+            return fig
+        else:
+            return
 
     # Output variants table
     @output
     @render_widget
     async def variants_table():
-        # Get reactive input
-        json_file = mira_variants_file.get()
-        # Re-create widget if the json file changes
-        with reactive.isolate():
-            # Read in the file
-            if os.path.exists(json_file):
-                await session.send_custom_message(
-                    "toggleContent", {"id": "variants-container", "visible": True}
-                )
-                # Load json as dict
-                df = pd.read_json(json_file, orient="split")
-                # Display df if not empty
-                if not df.empty:
-                    seq_run = input.seq_run()
-                    # Determine the height of table based on number of rows
-                    if df.shape[0] > 5:
-                        height = 550;
-                        tbl_height = str(height - 200) + "px"
-                    else:
-                        height = 250
-                        tbl_height = str(height - 100) + "px"
-                    # Update table height
-                    tbl_id = session.ns("variants_table")
-                    await session.send_custom_message(
-                        "resizeITable", {"tbl_id": tbl_id, "height": height}
-                    )
-                    # Return table
-                    return ITable(df, classes="display nowrap compact", columnDefs=[{"width":"auto", "targets":"_all"}], style="width:100%;", showIndex=False, allow_html=True, select=True, scrollX=True, scrollY=tbl_height, scrollCollapse=True, paging=False, search=True, buttons=[{"extend": "csvHtml5", "filename": f"{seq_run}_variants_tbl"}, {"extend": "excelHtml5", "filename": f"{seq_run}_variants_tbl"}])
+        # Check if file exists using the poll
+        files_status = check_files_exist()
+        selected_run = input.seq_run()
+        
+        json_file = f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/dais_vars.json"
+        
+        # Read in the file
+        if files_status.get('variants', False) and os.path.exists(json_file):
+            await session.send_custom_message(
+                "toggleContent", {"id": "variants-container", "visible": True}
+            )
+            # Load json as dict
+            df = pd.read_json(json_file, orient="split")
+            # Display df if not empty
+            if not df.empty:
+                # Determine the height of table based on number of rows
+                if df.shape[0] > 5:
+                    height = 550;
+                    tbl_height = str(height - 200) + "px"
                 else:
-                    df = pd.DataFrame([{"WARNINGS": "There are no AA Variants found for this sequencing run."}])
-                    return ITable(df, columnDefs=[{"targets":"_all", "className":"dt-center"}], showIndex=False, select=False, allow_html=True, style="width:100%;", scrollX=False, scrollY=False, scrollCollapse=False, paging=False, search=False)
-            else:
+                    height = 250
+                    tbl_height = str(height - 100) + "px"
+                # Update table height
+                tbl_id = session.ns("variants_table")
                 await session.send_custom_message(
-                    "toggleContent", {"id": "variants-container", "visible": False}
+                    "resizeITable", {"tbl_id": tbl_id, "height": height}
                 )
-                return
+                # Return table
+                return ITable(df, classes="display nowrap compact", columnDefs=[{"width":"auto", "targets":"_all"}], style="width:100%;", showIndex=False, allow_html=True, select=True, scrollX=True, scrollY=tbl_height, scrollCollapse=True, paging=False, search=True, buttons=[{"extend": "csvHtml5", "filename": f"{selected_run}_variants_tbl"}, {"extend": "excelHtml5", "filename": f"{selected_run}_variants_tbl"}])
+            else:
+                df = pd.DataFrame([{"WARNINGS": "There are no AA Variants found for this sequencing run."}])
+                return ITable(df, columnDefs=[{"targets":"_all", "className":"dt-center"}], showIndex=False, select=False, allow_html=True, style="width:100%;", scrollX=False, scrollY=False, scrollCollapse=False, paging=False, search=False)
+        else:
+            await session.send_custom_message(
+                "toggleContent", {"id": "variants-container", "visible": False}
+            )
+            return
 
     # Output minor vairants table
     @output
     @render_widget
     async def minor_variants_table():
-        # Get reactive input
-        json_file = mira_snvs_file.get()
-        # Re-create widget if the json file changes
-        with reactive.isolate():
-            # Read in the file
-            if os.path.exists(json_file):
-                await session.send_custom_message(
-                    "toggleContent", {"id": "snvs-container", "visible": True}
-                )
-                # Load json as dict
-                df = pd.read_json(json_file, orient="split")
-                # Display df if not empty
-                if not df.empty:
-                    seq_run = input.seq_run()
-                    # Determine the height of table based on number of rows
-                    if df.shape[0] > 5:
-                        height = 550
-                        tbl_height = str(height - 200) + "px"
-                    else:
-                        height = 250
-                        tbl_height = str(height - 100) + "px"
-                    # Update table height
-                    tbl_id = session.ns("minor_variants_table")
-                    await session.send_custom_message(
-                        "resizeITable", {"tbl_id": tbl_id, "height": height}
-                    )
-                    # Return table
-                    return ITable(df, classes="display nowrap compact", columnDefs=[{"width":"100%", "targets":"_all"}], style="width:100%; height:100%;", showIndex=False, allow_html=True, select=True, scrollX=True, scrollY=tbl_height, scrollCollapse=True, paging=False, search=True, buttons=[{"extend": "csvHtml5", "filename": f"{seq_run}_snvs_tbl"}, {"extend": "excelHtml5", "filename": f"{seq_run}_snvs_tbl"}])
+        # Check if file exists using the poll
+        files_status = check_files_exist()
+        selected_run = input.seq_run()
+        
+        json_file = f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/minor_variants.json"
+        
+        # Read in the file
+        if files_status.get('snvs', False) and os.path.exists(json_file):
+            await session.send_custom_message(
+                "toggleContent", {"id": "snvs-container", "visible": True}
+            )
+            # Load json as dict
+            df = pd.read_json(json_file, orient="split")
+            # Display df if not empty
+            if not df.empty:
+                # Determine the height of table based on number of rows
+                if df.shape[0] > 5:
+                    height = 550
+                    tbl_height = str(height - 200) + "px"
                 else:
-                    df = pd.DataFrame([{"WARNINGS": "There are no Minor SNVs found for this sequencing run."}])
-                    return ITable(df, columnDefs=[{"targets":"_all", "className":"dt-center"}], showIndex=False, select=False, allow_html=True, style="width:100%;", scrollX=False, scrollY=False, scrollCollapse=False, paging=False, search=False)
-            else:
+                    height = 250
+                    tbl_height = str(height - 100) + "px"
+                # Update table height
+                tbl_id = session.ns("minor_variants_table")
                 await session.send_custom_message(
-                    "toggleContent", {"id": "snvs-container", "visible": False}
+                    "resizeITable", {"tbl_id": tbl_id, "height": height}
                 )
+                # Return table
+                return ITable(df, classes="display nowrap compact", columnDefs=[{"width":"100%", "targets":"_all"}], style="width:100%; height:100%;", showIndex=False, allow_html=True, select=True, scrollX=True, scrollY=tbl_height, scrollCollapse=True, paging=False, search=True, buttons=[{"extend": "csvHtml5", "filename": f"{selected_run}_snvs_tbl"}, {"extend": "excelHtml5", "filename": f"{selected_run}_snvs_tbl"}])
+            else:
+                df = pd.DataFrame([{"WARNINGS": "There are no Minor SNVs found for this sequencing run."}])
+                return ITable(df, columnDefs=[{"targets":"_all", "className":"dt-center"}], showIndex=False, select=False, allow_html=True, style="width:100%;", scrollX=False, scrollY=False, scrollCollapse=False, paging=False, search=False)
+        else:
+            await session.send_custom_message(
+                "toggleContent", {"id": "snvs-container", "visible": False}
+            )
             return
 
     # Output indels table
     @output
     @render_widget
     async def indels_table():
-        # Get reactive input
-        json_file = mira_indels_file.get()
-        # Re-create widget if the json file changes
-        with reactive.isolate():
-            # Read in the file
-            if os.path.exists(json_file):
-                await session.send_custom_message(
-                    "toggleContent", {"id": "indels-container", "visible": True}
-                )
-                # Load json as dict
-                df = pd.read_json(json_file, orient="split")
-                # Display df if not empty
-                if not df.empty:
-                    seq_run = input.seq_run()
-                    # Determine the height of table based on number of rows
-                    if df.shape[0] > 5:
-                        height = 550;
-                        tbl_height = str(height - 200) + "px"
-                    else:
-                        height = 250
-                        tbl_height = str(height - 100) + "px"
-                    # Update table height
-                    tbl_id = session.ns("indels_table")
-                    await session.send_custom_message(
-                        "resizeITable", {"tbl_id": tbl_id, "height": height}
-                    )
-                    # Return table
-                    return ITable(df, classes="display nowrap compact", columnDefs=[{"width":"auto", "targets":"_all"}], style="width: 100%; height:100%;", showIndex=False, allow_html=True, select=True, scrollX=False, scrollY=tbl_height, scrollCollapse=True, paging=False, search=True, buttons=[{"extend": "csvHtml5", "filename": f"{seq_run}_indels_tbl"}, {"extend": "excelHtml5", "filename": f"{seq_run}_indels_tbl"}])
+        # Check if file exists using the poll
+        files_status = check_files_exist()
+        selected_run = input.seq_run()
+        
+        json_file = f"{data_root}/{selected_run}/mira_results/aggregate_outputs/dash-json/indels.json"
+        
+        # Read in the file
+        if files_status.get('indels', False) and os.path.exists(json_file):
+            await session.send_custom_message(
+                "toggleContent", {"id": "indels-container", "visible": True}
+            )
+            # Load json as dict
+            df = pd.read_json(json_file, orient="split")
+            # Display df if not empty
+            if not df.empty:
+                # Determine the height of table based on number of rows
+                if df.shape[0] > 5:
+                    height = 550;
+                    tbl_height = str(height - 200) + "px"
                 else:
-                    df = pd.DataFrame([{"WARNINGS": "There are no <span class='fw-bold text-primary'>Minor Indels and Deletions</span> found for this sequencing run."}])
-                    return ITable(df, columnDefs=[{"targets":"_all", "className":"dt-center"}], showIndex=False, select=False, allow_html=True, style="width: 100%;", scrollX=False, scrollY=False, scrollCollapse=False, paging=False, search=False)
-            else:
+                    height = 250
+                    tbl_height = str(height - 100) + "px"
+                # Update table height
+                tbl_id = session.ns("indels_table")
                 await session.send_custom_message(
-                    "toggleContent", {"id": "indels-container", "visible": False}
+                    "resizeITable", {"tbl_id": tbl_id, "height": height}
                 )
-                return
-
-    # Check fasta files
+                # Return table
+                return ITable(df, classes="display nowrap compact", columnDefs=[{"width":"auto", "targets":"_all"}], style="width: 100%; height:100%;", showIndex=False, allow_html=True, select=True, scrollX=False, scrollY=tbl_height, scrollCollapse=True, paging=False, search=True, buttons=[{"extend": "csvHtml5", "filename": f"{selected_run}_indels_tbl"}, {"extend": "excelHtml5", "filename": f"{selected_run}_indels_tbl"}])
+            else:
+                df = pd.DataFrame([{"WARNINGS": "There are no <span class='fw-bold text-primary'>Minor Indels and Deletions</span> found for this sequencing run."}])
+                return ITable(df, columnDefs=[{"targets":"_all", "className":"dt-center"}], showIndex=False, select=False, allow_html=True, style="width: 100%;", scrollX=False, scrollY=False, scrollCollapse=False, paging=False, search=False)
+        else:
+            await session.send_custom_message(
+                "toggleContent", {"id": "indels-container", "visible": False}
+            )
+            return
+    
+    # Check fasta files and update visibility
     @reactive.effect
     async def check_fasta_files():
-        # Get inputs
-        passed_nt_fasta = passed_nt_file.get()
-        passed_aa_fasta = passed_aa_file.get()
-        failed_nt_fasta = failed_nt_file.get()
-        failed_aa_fasta = failed_aa_file.get()
+        # Check if file exists using the poll
+        files_status = check_files_exist()
+        
         # Check passed fastas
-        if not os.path.exists(passed_nt_fasta) and not os.path.exists(passed_aa_fasta):
-            await session.send_custom_message(
-                "toggleContent", {"id": "download-passed-fasta-container", "visible": False}
-            )
-        else:
+        if files_status.get('passed_nt', False) or files_status.get('passed_aa', False):
             await session.send_custom_message(
                 "toggleContent", {"id": "download-passed-fasta-container", "visible": True}
             )
-            if not os.path.exists(passed_nt_fasta):
-                # Enable assembly button again
+            if not files_status.get('passed_nt', False):
                 btn_id = session.ns("download_passed_nt_fasta")
                 await session.send_custom_message(
                     "toggleContent", {"id": btn_id, "visible": False}
                 )
-            if not os.path.exists(passed_aa_fasta):
+            if not files_status.get('passed_aa', False):
                 btn_id = session.ns("download_passed_aa_fasta")
                 await session.send_custom_message(
                     "toggleContent", {"id": btn_id, "visible": False}
                 )
-        # Check failed fastas
-        if not os.path.exists(failed_nt_fasta) and not os.path.exists(failed_aa_fasta) :
-            await session.send_custom_message(
-                "toggleContent", {"id": "download-failed-fasta-container", "visible": False}
-            )
         else:
+            await session.send_custom_message(
+                "toggleContent", {"id": "download-passed-fasta-container", "visible": False}
+            )
+            
+        # Check failed fastas
+        if files_status.get('failed_nt', False) or files_status.get('failed_aa', False):
             await session.send_custom_message(
                 "toggleContent", {"id": "download-failed-fasta-container", "visible": True}
             )
-            if not os.path.exists(failed_nt_fasta):
-                # Enable assembly button again
+            if not files_status.get('failed_nt', False):
                 btn_id = session.ns("download_failed_nt_fasta")
                 await session.send_custom_message(
                     "toggleContent", {"id": btn_id, "visible": False}
                 )
-            if not os.path.exists(failed_aa_fasta):
+            if not files_status.get('failed_aa', False):
                 btn_id = session.ns("download_failed_aa_fasta")
                 await session.send_custom_message(
                     "toggleContent", {"id": btn_id, "visible": False}
                 )
+        else:
+            await session.send_custom_message(
+                "toggleContent", {"id": "download-failed-fasta-container", "visible": False}
+            )
 
     # Download passed nt fasta
     @render.download
     def download_passed_nt_fasta():
         # Get inputs
-        fasta_file = passed_nt_file.get()
+        selected_run = input.seq_run()
+        fasta_file = f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/mira_{selected_run}_amended_consensus.fasta"
         return fasta_file
 
     # Download passed aa fasta
     @render.download
     def download_passed_aa_fasta():
         # Get inputs
-        fasta_file = passed_aa_file.get()
+        selected_run = input.seq_run()
+        fasta_file = f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/mira_{selected_run}_amino_acid_consensus.fasta"
         return fasta_file
 
     # Download failed nt fasta
     @render.download
     def download_failed_nt_fasta():
         # Get inputs
-        fasta_file = failed_nt_file.get()
+        selected_run = input.seq_run()
+        fasta_file = f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/mira_{selected_run}_failed_amended_consensus.fasta"
         return fasta_file
 
     # Download failed aa fasta
     @render.download
     def download_failed_aa_fasta():
         # Get inputs
-        fasta_file = failed_aa_file.get()
+        selected_run = input.seq_run()
+        fasta_file = f"{data_root}/{selected_run}/mira_results/aggregate_outputs/mira-reports/mira_{selected_run}_failed_amino_acid_consensus.fasta"
         return fasta_file
