@@ -221,6 +221,20 @@ def mira_ui(data_root):
                 class_="boolean-option-types-container content-container"
             ),
             ui.row(
+                ui.column(6, 
+                    ui.input_numeric(
+                        id="subsample_reads",
+                        label=ui.HTML("<span style='color:red'>*</span>Subsample Reads:"),
+                        value=None,
+                        min=0,
+                        max=None,
+                        step=1,
+                        width="100%",
+                    ),
+                ),
+                class_="numeric-input-container content-container"
+            ),
+            ui.row(
                 ui.column(12, 
                     ui.tags.h3("Samplesheet", id="samplesheet_head"),
                     class_="samplesheet-title-container content-container",
@@ -756,7 +770,7 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
     # Start the assembly task when assembly button was clicked
     @ui.bind_task_button(button_id="start_assembly_button")
     @reactive.extended_task
-    async def start_assembly_task(data_root, seq_run, experiment_type, amplicon_library, parquet_files, nextclade, command_type,nextflow_mira_log):
+    async def start_assembly_task(data_root, seq_run, experiment_type, amplicon_library, parquet_files, nextclade, subsample_reads, command_type,nextflow_mira_log):
         # Construct the command
         command = f"python3 -u {os.path.dirname(os.path.realpath(__file__))}/../utils/run_mira_nf.py "
         command += f"--data_root '{data_root}' "
@@ -765,6 +779,7 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
         command += f"--amplicon_library '{amplicon_library}' "
         command += f"--parquet_files '{parquet_files}' "
         command += f"--nextclade '{nextclade}' "
+        command += f"--subsample_reads '{subsample_reads}' "
         command += f"--command_type '{command_type}' "
         command += f"--log_file '{nextflow_mira_log}'"
         print(command)
@@ -885,6 +900,9 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
         selected_amplicon_library = input.seq_amplicon_library()
         selected_parquet_files = input.parquet_files()
         selected_run_nextclade = input.run_nextclade()
+        selected_subsample_reads = input.subsample_reads()
+        if selected_subsample_reads is None:
+            selected_subsample_reads = 0
         ss_html_tbl = samplesheet_html_tbl.get()
         # Check seq_run
         if not selected_run:
@@ -969,7 +987,7 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
         last_file_states.set({})
         
         # Start the assembly task as a background process
-        start_assembly_task(data_root=data_root, seq_run=selected_run, experiment_type=selected_experiment_type, amplicon_library=selected_amplicon_library, parquet_files= selected_parquet_files, nextclade=selected_run_nextclade, command_type=command_type, nextflow_mira_log=nextflow_mira_log)
+        start_assembly_task(data_root=data_root, seq_run=selected_run, experiment_type=selected_experiment_type, amplicon_library=selected_amplicon_library, parquet_files= selected_parquet_files, nextclade=selected_run_nextclade, subsample_reads=selected_subsample_reads, command_type=command_type, nextflow_mira_log=nextflow_mira_log)
         
     # Display barcode distribution plot
     @output

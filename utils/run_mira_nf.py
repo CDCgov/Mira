@@ -63,6 +63,7 @@ async def mira_nf_kickoff(
     amplicon_library,
     parquet_files,
     nextclade,
+    subsample_reads,
     command_type
 ):
     # Construct command
@@ -91,6 +92,9 @@ async def mira_nf_kickoff(
     cmd += f"--e {experiment_type} "
     cmd += f"--parquet_files {parquet_files} "
     cmd += f"--nextclade {nextclade} "
+    # Only add subsample_reads if it's greater than 0
+    if subsample_reads > 0:
+        cmd += f"--subsample_reads {subsample_reads} "
     if experiment_type in ["SC2-Whole-Genome-Illumina", "RSV-Illumina"]:
         cmd += f"-p {amplicon_library} "
 
@@ -141,6 +145,7 @@ if __name__ == "__main__":
     parser.add_argument("--amplicon_library", type=str, default=None)
     parser.add_argument("--nextclade", type=str, default=False)
     parser.add_argument("--parquet_files", type=str, default=False)
+    parser.add_argument("--subsample_reads", type=int, default=0)
 
     parser.add_argument("--log_file", type=str, required=True)
 
@@ -165,6 +170,7 @@ if __name__ == "__main__":
                 amplicon_library=args.amplicon_library,
                 parquet_files=args.parquet_files,
                 nextclade=args.nextclade,
+                subsample_reads=args.subsample_reads,
                 command_type=args.command_type
             )
         )
@@ -179,6 +185,7 @@ if __name__ == "__main__":
                 amplicon_library=args.amplicon_library,
                 parquet_files=args.parquet_files,
                 nextclade=args.nextclade,
+                subsample_reads=args.subsample_reads,
                 command_type=args.command_type
             )
         )
