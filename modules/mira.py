@@ -210,7 +210,7 @@ def mira_ui(data_root):
                     ui.input_selectize(
                         id="run_nextclade",
                         label=ui.HTML("<span style='color:red'>*</span>Run Nextclade:"),
-                        choices={"False": False, "True": True},
+                        choices={ "True": True, "False": False},
                         selected=False,
                         multiple=False,
                         width="100%",
@@ -460,7 +460,7 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
     open(nextflow_mira_log, "w").close()
   
     # Create reative value to store status of mira
-    mira_progress_log = reactive.value()
+    mira_progress_log = reactive.Value("")
     
     # Create reative value to store error message
     start_assembly_counter = reactive.value()
@@ -469,7 +469,7 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
     samplesheet_tbl_message = reactive.value()
     
     # Reactive value to store indels
-    mira_progress_message = reactive.Value() 
+    mira_progress_message = reactive.Value("") 
     
     # Create reative value to store error message
     coverage_error_message = reactive.value() 
@@ -509,6 +509,9 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
     passed_aa_file = reactive.Value()
     failed_nt_file = reactive.Value()
     failed_aa_file = reactive.Value()
+
+    # Log catching
+    log_buffer = []
         
     # Observe sequencing run selection
     @reactive.effect
@@ -754,7 +757,7 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
     @reactive.extended_task
     async def start_assembly_task(data_root, seq_run, experiment_type, amplicon_library, parquet_files, nextclade, command_type,nextflow_mira_log):
         # Construct the command
-        command = f"python3 {os.path.dirname(os.path.realpath(__file__))}/../utils/run_mira_nf.py "
+        command = f"python3 -u {os.path.dirname(os.path.realpath(__file__))}/../utils/run_mira_nf.py "
         command += f"--data_root '{data_root}' "
         command += f"--seq_run '{seq_run}' "
         command += f"--experiment_type '{experiment_type}' "
@@ -780,8 +783,7 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
                 line = await stream.readline()
                 if not line:
                     break
-                decoded = line.decode().rstrip()
-                print(f"[{label}] {decoded}")
+                log_buffer.append(line.decode(errors="ignore"))
 
         # Run both stdout + stderr streaming concurrently
         await asyncio.gather(
@@ -814,22 +816,39 @@ def mira_server(input, output, session, data_root, samplesheet_html_tbl, command
             elif exit_code  == 0:
                 mira_progress_message.set("<p class='success-message'>The update process has been completed. Please see logs below for additional details.</p>")
     
-    # Get progress
     @reactive.effect
-    def retrieve_mira_progress():
-        reactive.invalidate_later(1)
-        nonlocal track_mira_progress
-        if os.path.exists(nextflow_mira_log) and track_mira_progress == True:
-            with open(nextflow_mira_log, 'r') as file:
-                lines = file.readlines() 
-                print(lines)       
-            mira_progress_log.set("".join(lines))
-    
+    def update_log_ui():
+        reactive.invalidate_later(0.5)
+
+        _ = mira_progress_log.get()
+
+        if log_buffer:
+            current = mira_progress_log.get()
+            new_text = "".join(log_buffer)
+
+            log_buffer.clear()
+
+            mira_progress_log.set(current + new_text)
+
     # Output delete error message 
+    @output
     @render.ui
     def mira_progress():
-        req(mira_progress_log.get())
-        return ui.HTML(mira_progress_log.get())
+        return ui.tags.pre(
+            mira_progress_log.get(),
+            style="""
+                background-color: #ffffff;
+                color: #333333;
+                padding: 12px;
+                height: 500px;
+                overflow-y: auto;
+                font-family: monospace;
+                font-size: 13px;
+                white-space: pre-wrap;
+                border: 1px solid #e0e0e0;
+                border-radius: 6px;
+            """
+        )
   
     # Observe when start_assembly_button is clicked
     @reactive.effect

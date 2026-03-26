@@ -65,10 +65,11 @@ async def mira_nf_kickoff(
     nextclade,
     command_type
 ):
-    # Base command
+    # Construct command
     if command_type == "docker":
         cmd = (
             "docker exec mira-nf nextflow run /MIRA-NF/main.nf "
+            f"-ansi-log false "
             f"-profile mira_nf_container "
             f"--input /data/{seq_run}/samplesheet.csv "
             f"--runpath /data/{seq_run} "
@@ -77,6 +78,7 @@ async def mira_nf_kickoff(
     elif command_type == "bash":
         cmd = (
             "nextflow run /MIRA-NF/main.nf "
+            f"-ansi-log false "
             f"-profile mira_nf_container "
             f"--input /data/{seq_run}/samplesheet.csv "
             f"--runpath /data/{seq_run} "
@@ -85,48 +87,43 @@ async def mira_nf_kickoff(
     else:
         raise ValueError(f"Invalid command_type: {command_type}")
 
-    # Append other flags
+    # Append flags
     cmd += f"--e {experiment_type} "
     cmd += f"--parquet_files {parquet_files} "
     cmd += f"--nextclade {nextclade} "
-
     if experiment_type in ["SC2-Whole-Genome-Illumina", "RSV-Illumina"]:
         cmd += f"-p {amplicon_library} "
 
-    logger.info(f"Running command: {cmd}")
+    print(f"Running command: {cmd}", flush=True)
 
     # Launch subprocess
     proc = await asyncio.create_subprocess_shell(
         cmd,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
+        stderr=asyncio.subprocess.PIPE,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"}
     )
 
-    # Stream output live to logger
-    async def stream_output(stream, log_func):
-        lines = []
+    # Stream stdout/stderr live to Shiny
+    async def stream_output(stream):
         while True:
             line = await stream.readline()
             if not line:
                 break
-            text = line.decode(errors="ignore").rstrip()
-            log_func(text)
-            lines.append(text)
-        return "\n".join(lines)
+            print(line.decode(errors="ignore").rstrip(), flush=True)
 
-    stdout, stderr = await asyncio.gather(
-        stream_output(proc.stdout, logger.info),
-        stream_output(proc.stderr, logger.error),
+    # Run stdout + stderr streaming concurrently
+    await asyncio.gather(
+        stream_output(proc.stdout),
+        stream_output(proc.stderr),
     )
 
     await proc.wait()
 
     if proc.returncode != 0:
-        logger.error(f"MIRA-NF failed with return code {proc.returncode}")
-        raise RuntimeError(f"MIRA-NF failed with return code {proc.returncode}\n{stderr}")
+        raise RuntimeError(f"MIRA-NF failed with return code {proc.returncode}")
 
-    logger.info(f"MIRA-NF finished successfully with return code {proc.returncode}")
-    return proc.returncode, stdout, stderr
+    return proc.returncode
 
 
 # ----------------------------
