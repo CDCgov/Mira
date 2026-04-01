@@ -148,26 +148,45 @@ th, tr, td {
 
 .watch-progress-widget-container {
   width: 100%;
-  /*border: 1px solid blue;*/
-}
-
-.watch-progress-widget-container > .col-sm-12 > .form-group {
-  width: 100%;
   display: flex;
-  justify-content: center;
+  flex-wrap: nowrap;
   align-items: center;
   /*border: 1px solid blue;*/
 }
 
-.sequencing-run-container {
+.watch-progress-widget-container > [class^="col-"] {
   display: flex;
-  justify-content: center;  
+  align-items: center;
+}
+
+.watch-progress-switch {
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.watch-progress-switch > .form-group,
+.watch-progress-refresh > .btn,
+.watch-progress-refresh > .btn-group {
+  display: flex;
+  align-items: center;
+  /*border: 1px solid blue;*/
+}
+
+.watch-progress-refresh {
+  justify-content: flex-start;
   align-items: center;
 }
 
 .refresh-btn {
   border-radius: 5px;
-  padding: 10px;
+  padding: 4px 10px;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  height: 32px;
+}
+
+.sequencing-run-container {
+  /*border: 1px solid red;*/
 }
 
 .samplesheet-download-btn-container {
