@@ -110,12 +110,39 @@ Key features:
 
 ## Test your MIRA Setup
     
-- [Click here to download tiny test data from ONT Influenza genome and SARS-CoV-2-spike - 40Mb](https://centersfordiseasecontrol.sharefile.com/d-s839d7319e9b04e2baba07b4d328f02c2)
-- [Click here for the above data set + full genomes of Influenza and SARS-CoV-2 from Illumina MiSeqs - 1Gb](https://centersfordiseasecontrol.sharefile.com/d-s3c52c0b25c2243078f506d60bd787c62)
-- unzip the file and find two folders:
-    1. `tiny_test_run_flu`
-    2. `tiny_test_run_sc2`
-- move these folders into `MIRA_NGS`
-  - if you cannot find the MIRA_NGS folder in your Linux section of file explorer, look in <br> Linux --> home --> your username
+
+### Download + format with Docker (recommended)
+
+```bash
+# Linux / macOS
+docker run --rm -v "$PWD:/data" cdcgov/mira-test-data:0.0.1
+```
+
+Output appears in `./mira_run/`
+
+### Download + format without Docker (copy/paste)
+
+Requires [`sra-tools`](https://github.com/ncbi/sra-tools) (`conda install -c bioconda sra-tools`).
+
+```bash
+mkdir -p mira_run/fastqs && cd mira_run && echo "sample_id,sample_type" > samplesheet.csv
+for p in SRR37675411:f58cd412 SRR37675412:f133a406 SRR37675413:e91ea59e SRR37675414:d969e179 SRR37675415:ba21bd1f SRR37675416:ad336cc2 SRR37675417:89bb6967 SRR37675418:81ae9ee5 SRR37675419:73ceed0e SRR37675420:6796f13d SRR37675421:314ac5ba SRR37675422:240aa994 SRR37675423:239e44e6 SRR37675424:0dca4b84 SRR37675425:046435d3 SRR37675426:03b02807; do
+    srr=${p%:*}; sid=${p#*:}
+    prefetch $srr -O sra && \
+    fasterq-dump sra/$srr --split-files -O fastqs && \
+    gzip fastqs/${srr}_1.fastq fastqs/${srr}_2.fastq && \
+    mv fastqs/${srr}_1.fastq.gz fastqs/${sid}_R1.fastq.gz && \
+    mv fastqs/${srr}_2.fastq.gz fastqs/${sid}_R2.fastq.gz && \
+    echo "$sid,Test" >> samplesheet.csv
+done && rm -rf sra
+```
+
+Resulting `mira_run/`:
+
+```
+mira_run/
+├── fastqs/          # {hash}_R1.fastq.gz + {hash}_R2.fastq.gz per isolate
+└── samplesheet.csv  # sample_id,sample_type
+```
 
 
