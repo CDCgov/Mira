@@ -1,0 +1,112 @@
+# 
+
+## Running MIRA through Docker Desktop.
+
+### [Install Docker Desktop](https://www.docker.com/products/docker-desktop/)
+
+Docker allows you to run software inside an isolated “container image”
+on your computer with all of that application’s needed dependencies.
+Make sure to install the version for your operating system.
+
+- [Windows](https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe?utm_source=docker&utm_medium=webreferral&utm_campaign=dd-smartbutton&utm_location=header)
+- [Mac-Intel](https://desktop.docker.com/mac/main/amd64/Docker.dmg?utm_source=docker&utm_medium=webreferral&utm_campaign=dd-smartbutton&utm_location=module)
+- [Mac-AppleChip](https://desktop.docker.com/mac/main/arm64/Docker.dmg?utm_source=docker&utm_medium=webreferral&utm_campaign=dd-smartbutton&utm_location=module)
+- [Linux](https://docs.docker.com/desktop/linux/install/)
+
+After installing Docker Desktop, double click on the app to open it. If
+it is your first time using Docker Desktop, you will be asked to agree
+to the terms of use.
+
+### Setting Up Docker Desktop using PC
+
+When setting up the configuration for a Windows computer, we recommend
+using WSL 2 on the back-end and adding shortcuts to you desktop.
+
+![](images/docker-default-settings.png)
+
+------------------------------------------------------------------------
+
+### Setting Up Docker Desktop using Mac
+
+When setting up the configuration for a Windows computer, we recommend
+using the default settings that allow Docker Desktop to automatically
+set the necessary configuration.
+
+![](images/mac-docker-default-settings.png)
+
+------------------------------------------------------------------------
+
+### Pull MIRA Image within Docker Desktop
+
+- In the search bar at the top of the Docker Desktop App type in
+  cdcgov/mira. Once the image has come up, check that the tag is set to
+  latest and click the ‘pull’ button.
+
+![](images/pulled-mira-single-img.png)
+
+- MIRA’s single image is about 2 GB and will take a couple of minutes to
+  pull to the images area. Once docker has finished downloading the
+  image, you should see it under your images tab.
+
+![](images/run-mira-single-container-image.png)
+
+------------------------------------------------------------------------
+
+### Install MIRA Container
+
+- On your computer, create a folder named “MIRA_NGS”. This is where you
+  will put the data that you would like to analyze with MIRA. We will be
+  mounting the container to this folder.
+
+![](images/mira_dd_run_directory_structure.png)
+
+- In Docker Desktop, navigate to the images tab and press the run
+  button.
+
+![](images/run-mira-single-container-image.png)
+
+#### Provide the Settings for the Container
+
+- Open the ‘Optional settings’ section. The container settings should be
+  filled out as seen in the screenshot below.
+
+  ![](images/mira-dd-container-settings.png)
+
+- You will need to provide a name for the container. “MIRA” is the
+  obvious choice!
+
+- Set the “Host Port” to 8020
+
+- Under Volumes click the “Host Path” box and find and select your
+  “MIRA_NGS” folder. ![](images/select_folders_with_runs.png)
+
+**If you would like your “Host Path” to be a folder within your linux
+environment, use the drop down in your file browser to find it. See the
+screenshot below for an example.**
+
+![](images/mira-dd-mount-to-unbuntu.png)
+
+- Under Volumes you will make the “Container Path” type in ‘/data’.
+
+### Test your MIRA Setup
+
+- [Click here to download tiny test data from ONT Influenza genome and
+  SARS-CoV-2-spike -
+  40Mb](https://centersfordiseasecontrol.sharefile.com/d-s839d7319e9b04e2baba07b4d328f02c2)
+- [Click here for the above data set + full genomes of Influenza and
+  SARS-CoV-2 from Illumina MiSeqs -
+  1Gb](https://centersfordiseasecontrol.sharefile.com/d-s3c52c0b25c2243078f506d60bd787c62)
+- unzip the file and find two folders:
+  1.  `tiny_test_run_flu`
+  2.  `tiny_test_run_sc2`
+- move these folders into `MIRA_NGS`
+  - if you cannot find the MIRA_NGS folder in your Linux section of file
+    explorer, look in Linux–\>home–\>your username
+
+### Next Steps
+
+[Run MIRA in Docker Desktop with Illumina
+Data](https://cdcgov.github.io/MIRA/articles/running-mira-dd-illumina.md)
+
+[Run MIRA in Docker Desktop with Oxford Nanopore
+Data](https://cdcgov.github.io/MIRA/articles/running-mira-dd-ont.md)

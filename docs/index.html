@@ -6,16 +6,15 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <title>Documentation • MIRA</title>
-<!-- favicons --><link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
-<link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
-<link rel="apple-touch-icon" type="image/png" sizes="180x180" href="apple-touch-icon.png">
-<link rel="apple-touch-icon" type="image/png" sizes="120x120" href="apple-touch-icon-120x120.png">
-<link rel="apple-touch-icon" type="image/png" sizes="76x76" href="apple-touch-icon-76x76.png">
-<link rel="apple-touch-icon" type="image/png" sizes="60x60" href="apple-touch-icon-60x60.png">
+<!-- favicons --><link rel="icon" type="image/png" sizes="96x96" href="favicon-96x96.png">
+<link rel="icon" type="”image/svg+xml”" href="favicon.svg">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="icon" sizes="any" href="favicon.ico">
+<link rel="manifest" href="site.webmanifest">
 <script src="lightswitch.js"></script><script src="deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-<link href="deps/bootstrap-5.3.1/bootstrap.min.css" rel="stylesheet">
-<script src="deps/bootstrap-5.3.1/bootstrap.bundle.min.js"></script><link href="deps/font-awesome-6.4.2/css/all.min.css" rel="stylesheet">
-<link href="deps/font-awesome-6.4.2/css/v4-shims.min.css" rel="stylesheet">
+<link href="deps/bootstrap-5.3.8/bootstrap.min.css" rel="stylesheet">
+<script src="deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="deps/font-awesome-6.5.2/css/all.min.css" rel="stylesheet">
+<link href="deps/font-awesome-6.5.2/css/v4-shims.min.css" rel="stylesheet">
 <script src="deps/headroom-0.11.0/headroom.min.js"></script><script src="deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="deps/search-1.0.0/fuse.min.js"></script><script src="deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="pkgdown.js"></script><meta property="og:title" content="Documentation">
 <meta name="description" content="MIRA is an interactive dashboard created using Dash, a python framework written on the top of Flask, Plotly.js and React.js. The Dash dashboard allows users to interactively create a metadata and config file for Influenza , SARS-COV-2 and RSV Assembly. Subsequently, it generates files necessary to upload via FTP to NCBI’s databases Genbank, BioSample, and SRA, as well as, GISAID.">
 <meta property="og:description" content="MIRA is an interactive dashboard created using Dash, a python framework written on the top of Flask, Plotly.js and React.js. The Dash dashboard allows users to interactively create a metadata and config file for Influenza , SARS-COV-2 and RSV Assembly. Subsequently, it generates files necessary to upload via FTP to NCBI’s databases Genbank, BioSample, and SRA, as well as, GISAID.">
@@ -231,21 +230,32 @@
 <div class="section level2">
 <h2 id="test-your-mira-setup">Test your MIRA Setup<a class="anchor" aria-label="anchor" href="#test-your-mira-setup"></a>
 </h2>
-<ul>
-<li><a href="https://centersfordiseasecontrol.sharefile.com/d-s839d7319e9b04e2baba07b4d328f02c2" class="external-link">Click here to download tiny test data from ONT Influenza genome and SARS-CoV-2-spike - 40Mb</a></li>
-<li><a href="https://centersfordiseasecontrol.sharefile.com/d-s3c52c0b25c2243078f506d60bd787c62" class="external-link">Click here for the above data set + full genomes of Influenza and SARS-CoV-2 from Illumina MiSeqs - 1Gb</a></li>
-<li>unzip the file and find two folders:
-<ol style="list-style-type: decimal">
-<li><code>tiny_test_run_flu</code></li>
-<li><code>tiny_test_run_sc2</code></li>
-</ol>
-</li>
-<li>move these folders into <code>MIRA_NGS</code>
-<ul>
-<li>if you cannot find the MIRA_NGS folder in your Linux section of file explorer, look in <br> Linux –&gt; home –&gt; your username</li>
-</ul>
-</li>
-</ul>
+<div class="section level3">
+<h3 id="download--format-with-docker-recommended">Download + format with Docker (recommended)<a class="anchor" aria-label="anchor" href="#download--format-with-docker-recommended"></a>
+</h3>
+<div class="sourceCode" id="cb1"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="co"># Linux / macOS</span></span>
+<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a><span class="ex">docker</span> run <span class="at">--rm</span> <span class="at">-v</span> <span class="st">"</span><span class="va">$PWD</span><span class="st">:/data"</span> cdcgov/mira-test-data:0.0.1</span></code></pre></div>
+<p>Output appears in <code>./mira_run/</code></p>
+</div>
+<div class="section level3">
+<h3 id="download--format-without-docker-copypaste">Download + format without Docker (copy/paste)<a class="anchor" aria-label="anchor" href="#download--format-without-docker-copypaste"></a>
+</h3>
+<p>Requires <a href="https://github.com/ncbi/sra-tools" class="external-link"><code>sra-tools</code></a> (<code>conda install -c bioconda sra-tools</code>).</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> mira_run/fastqs <span class="kw">&amp;&amp;</span> <span class="bu">cd</span> mira_run <span class="kw">&amp;&amp;</span> <span class="bu">echo</span> <span class="st">"sample_id,sample_type"</span> <span class="op">&gt;</span> samplesheet.csv</span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a><span class="cf">for</span> p <span class="kw">in</span> SRR37675411:f58cd412 SRR37675412:f133a406 SRR37675413:e91ea59e SRR37675414:d969e179 SRR37675415:ba21bd1f SRR37675416:ad336cc2 SRR37675417:89bb6967 SRR37675418:81ae9ee5 SRR37675419:73ceed0e SRR37675420:6796f13d SRR37675421:314ac5ba SRR37675422:240aa994 SRR37675423:239e44e6 SRR37675424:0dca4b84 SRR37675425:046435d3 SRR37675426:03b02807<span class="kw">;</span> <span class="cf">do</span></span>
+<span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a>    <span class="va">srr</span><span class="op">=</span><span class="va">${p</span><span class="op">%</span>:<span class="pp">*</span><span class="va">}</span><span class="kw">;</span> <span class="va">sid</span><span class="op">=</span><span class="va">${p</span><span class="op">#</span><span class="pp">*</span>:<span class="va">}</span></span>
+<span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a>    <span class="ex">prefetch</span> <span class="va">$srr</span> <span class="at">-O</span> sra <span class="kw">&amp;&amp;</span> <span class="dt">\</span></span>
+<span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a>    <span class="ex">fasterq-dump</span> sra/<span class="va">$srr</span> <span class="at">--split-files</span> <span class="at">-O</span> fastqs <span class="kw">&amp;&amp;</span> <span class="dt">\</span></span>
+<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a>    <span class="fu">gzip</span> fastqs/<span class="va">${srr}</span>_1.fastq fastqs/<span class="va">${srr}</span>_2.fastq <span class="kw">&amp;&amp;</span> <span class="dt">\</span></span>
+<span id="cb2-7"><a href="#cb2-7" tabindex="-1"></a>    <span class="fu">mv</span> fastqs/<span class="va">${srr}</span>_1.fastq.gz fastqs/<span class="va">${sid}</span>_R1.fastq.gz <span class="kw">&amp;&amp;</span> <span class="dt">\</span></span>
+<span id="cb2-8"><a href="#cb2-8" tabindex="-1"></a>    <span class="fu">mv</span> fastqs/<span class="va">${srr}</span>_2.fastq.gz fastqs/<span class="va">${sid}</span>_R2.fastq.gz <span class="kw">&amp;&amp;</span> <span class="dt">\</span></span>
+<span id="cb2-9"><a href="#cb2-9" tabindex="-1"></a>    <span class="bu">echo</span> <span class="st">"</span><span class="va">$sid</span><span class="st">,Test"</span> <span class="op">&gt;&gt;</span> samplesheet.csv</span>
+<span id="cb2-10"><a href="#cb2-10" tabindex="-1"></a><span class="cf">done</span> <span class="kw">&amp;&amp;</span> <span class="fu">rm</span> <span class="at">-rf</span> sra</span></code></pre></div>
+<p>Resulting <code>mira_run/</code>:</p>
+<pre><code>mira_run/
+├── fastqs/          # {hash}_R1.fastq.gz + {hash}_R2.fastq.gz per isolate
+└── samplesheet.csv  # sample_id,sample_type</code></pre>
+</div>
 </div>
 </div>
 
@@ -269,13 +279,13 @@
 <h2 data-toc-skip>Developers</h2>
 <ul class="list-unstyled">
 <li>
-<a href="https://github.com/kristinelacek" class="external-link">Kristine Lacek</a> <br><small class="roles"> Maintainer, author </small> <a href="https://orcid.org/0000-0002-6247-5082" target="orcid.widget" aria-label="ORCID" class="external-link"><span class="fab fa-orcid orcid" aria-hidden="true"></span></a> </li>
+<a href="https://github.com/kristinelacek" class="external-link">Kristine Lacek</a> <br><small class="roles"> Maintainer, author </small> <a href="https://orcid.org/0000-0002-6247-5082" target="orcid.widget" aria-label="ORCID" class="external-link"><span class="fab fa-orcid orcid" aria-hidden="true"></span></a>  </li>
 <li>
-<a href="https://github.com/rchau88" class="external-link">Reina Chau</a> <br><small class="roles"> Author </small> <a href="https://orcid.org/0000-0003-3012-1404" target="orcid.widget" aria-label="ORCID" class="external-link"><span class="fab fa-orcid orcid" aria-hidden="true"></span></a> </li>
+<a href="https://github.com/rchau88" class="external-link">Reina Chau</a> <br><small class="roles"> Author </small> <a href="https://orcid.org/0000-0003-3012-1404" target="orcid.widget" aria-label="ORCID" class="external-link"><span class="fab fa-orcid orcid" aria-hidden="true"></span></a>  </li>
 <li>
-<a href="https://github.com/mandysulli" class="external-link">Amanda Sullivan</a> <br><small class="roles"> Author </small> <a href="https://orcid.org/0000-0003-2007-4210" target="orcid.widget" aria-label="ORCID" class="external-link"><span class="fab fa-orcid orcid" aria-hidden="true"></span></a> </li>
+<a href="https://github.com/mandysulli" class="external-link">Amanda Sullivan</a> <br><small class="roles"> Author </small> <a href="https://orcid.org/0000-0003-2007-4210" target="orcid.widget" aria-label="ORCID" class="external-link"><span class="fab fa-orcid orcid" aria-hidden="true"></span></a>  </li>
 <li>
-<a href="https://github.com/nbx0" class="external-link">Ben Rambo-Martin</a> <br><small class="roles"> Lead, author </small> <a href="https://orcid.org/0000-0002-8591-3954" target="orcid.widget" aria-label="ORCID" class="external-link"><span class="fab fa-orcid orcid" aria-hidden="true"></span></a> </li>
+<a href="https://github.com/nbx0" class="external-link">Ben Rambo-Martin</a> <br><small class="roles"> Lead, author </small> <a href="https://orcid.org/0000-0002-8591-3954" target="orcid.widget" aria-label="ORCID" class="external-link"><span class="fab fa-orcid orcid" aria-hidden="true"></span></a>  </li>
 </ul>
 </div>
 
@@ -295,7 +305,7 @@
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.1.1.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.1.</p>
 </div>
 
     </footer>

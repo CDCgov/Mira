@@ -6,16 +6,15 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <title> • MIRA</title>
-<!-- favicons --><link rel="icon" type="image/png" sizes="16x16" href="../favicon-16x16.png">
-<link rel="icon" type="image/png" sizes="32x32" href="../favicon-32x32.png">
-<link rel="apple-touch-icon" type="image/png" sizes="180x180" href="../apple-touch-icon.png">
-<link rel="apple-touch-icon" type="image/png" sizes="120x120" href="../apple-touch-icon-120x120.png">
-<link rel="apple-touch-icon" type="image/png" sizes="76x76" href="../apple-touch-icon-76x76.png">
-<link rel="apple-touch-icon" type="image/png" sizes="60x60" href="../apple-touch-icon-60x60.png">
+<!-- favicons --><link rel="icon" type="image/png" sizes="96x96" href="../favicon-96x96.png">
+<link rel="icon" type="”image/svg+xml”" href="../favicon.svg">
+<link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
+<link rel="icon" sizes="any" href="../favicon.ico">
+<link rel="manifest" href="../site.webmanifest">
 <script src="../lightswitch.js"></script><script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-<link href="../deps/bootstrap-5.3.1/bootstrap.min.css" rel="stylesheet">
-<script src="../deps/bootstrap-5.3.1/bootstrap.bundle.min.js"></script><link href="../deps/font-awesome-6.4.2/css/all.min.css" rel="stylesheet">
-<link href="../deps/font-awesome-6.4.2/css/v4-shims.min.css" rel="stylesheet">
+<link href="../deps/bootstrap-5.3.8/bootstrap.min.css" rel="stylesheet">
+<script src="../deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="../deps/font-awesome-6.5.2/css/all.min.css" rel="stylesheet">
+<link href="../deps/font-awesome-6.5.2/css/v4-shims.min.css" rel="stylesheet">
 <script src="../deps/headroom-0.11.0/headroom.min.js"></script><script src="../deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="../deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="../deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="../deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="../deps/search-1.0.0/fuse.min.js"></script><script src="../deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="../pkgdown.js"></script><meta property="og:title" content="">
 <link rel="stylesheet" type="text/css" href="https://...">
 </head>
@@ -140,7 +139,7 @@
 <div class="section level2">
 <h2 id="running-mira-cli-with-oxford-nanopore-data">Running MIRA-CLI with Oxford Nanopore Data<a class="anchor" aria-label="anchor" href="#running-mira-cli-with-oxford-nanopore-data"></a>
 </h2>
-<p><img src="images%2Fmira-logo-midjourney_20230526_rmbkgnd.png"></p>
+<p><img src="images/mira-logo-midjourney_20230526_rmbkgnd.png"></p>
 <p><em>This documentation assumes you have the four required Docker
 containers (<strong>IRMA</strong>, <strong>DAIS-Ribosome</strong>,
 <strong>spyne</strong>, and <strong>MIRA</strong>) already running. If
@@ -159,7 +158,7 @@ as “YEAR-MONTH-DATE-FLOWCELL_ID”, ie. 2022-11-13-ABC1234.</li>
 </ul>
 <p><strong><em>DO NOT PUT SPACES OR SLASHES IN YOU RUN FOLDER
 NAMES!</em></strong></p>
-<p><img src="images%2Fmira_run_directory_structure.png"></p>
+<p><img src="images/mira_run_directory_structure.png"></p>
 <ul>
 <li>Copy the run’s demultiplexed fastqs into the RUN-FOLDER.
 <ul>
@@ -172,7 +171,7 @@ instrument during the run.</li>
 </ul>
 </li>
 </ul>
-<p><img src="images%2Fmira_run_directory_structure_fastq.png"></p>
+<p><img src="images/mira_run_directory_structure_fastq.png"></p>
 <p><br><strong>This screenshot shows “Ubuntu-18.04” but many users just
 see “Ubuntu”. This can vary, particularly if you happen to have multiple
 Ubuntu versions installed. If you have multiple Ubunut distributions
@@ -208,7 +207,7 @@ run each of them:
 <p>Run MIRA by clicking the blue link “8020:8050”. This will open
 MIRA into your default internet browser. You can “bookmark” this site in
 your browser.</p>
-<p><img src="images%2Fmira_docker_rolleddown.png"></p>
+<p><img src="images/mira_docker_rolleddown.png"></p>
 </li>
 </ul>
 </div>
@@ -219,17 +218,17 @@ your browser.</p>
 <li>
 <p>Click the <code>REFRESH RUN LISTING</code> button and select your
 run from the dropdown box.</p>
-<p><img src="images%2Fmira_run_selection.png"></p>
+<p><img src="images/mira_run_selection.png"></p>
 <ul>
 <li>Next, click the box that say “What kind of data is this” and select
 Flu-ONT, SC2-Whole-Genome-ONT, or SC2-Spike-Only-ONT</li>
 </ul>
-<p><img src="images%2Fmira_whatkindofdata_ont.PNG"></p>
+<p><img src="images/mira_whatkindofdata_ont.PNG"></p>
 </li>
 <li>
 <p>Next, click <code>DOWNLOAD SAMPLESHEET TEMPLATE</code> and open
 the resulting Excel spreadsheet</p>
-<p><img src="images%2Fmira_samplesheet_barcode_entry.png"></p>
+<p><img src="images/mira_samplesheet_barcode_entry.png"></p>
 </li>
 <li>
 <p>Your <code>Barcode numbers</code> column will be inferred from
@@ -256,7 +255,7 @@ are test samples, so each row defaults to <code>test</code>, but select
 <code>- control</code> or <code>+ control</code> for your
 <strong>negative</strong> and <strong>positive</strong> controls
 respectively.</p>
-<p><img src="images%2Fmira_samplesheet_fill.png"></p>
+<p><img src="images/mira_samplesheet_fill.png"></p>
 </li>
 <li><p>Save your samplesheet with changes in Excel</p></li>
 <li>
@@ -265,7 +264,7 @@ select your filled-in samplesheet.</p>
 <ul>
 <li>A table in the application should now appear with your samples!</li>
 </ul>
-<p><img src="images%2Fmira_dash_table.PNG"></p>
+<p><img src="images/mira_dash_table.PNG"></p>
 </li>
 </ul>
 </div>
@@ -281,7 +280,7 @@ coffee.</p>
 <li>Click on the toggle button <code>Watch IRMA Progress</code>.
 Assembly will take some time, how long exactly is dependent on your
 sample number, the number of raw sequencing reads, and the power of your
-computer. <img src="images%2Fmira_run_status.png">
+computer. <img src="images/mira_run_status.png">
 </li>
 <li>as IRMA completes assembly on each sample, they will be listed at
 the top of the progress indicator</li>
@@ -290,7 +289,7 @@ the top of the progress indicator</li>
 <li>
 <p>When IRMA has finished, it will say “IRMA is finished” and you
 can now click on “DISPLAY IRMA RESULTS”.</p>
-<p><img src="images%2Fmira_display_results.png"></p>
+<p><img src="images/mira_display_results.png"></p>
 </li>
 </ul>
 <hr>
@@ -308,7 +307,7 @@ per sample. Samples with a low proportion of reads may indicate higher
 Ct of starting material or less performant PCR during library
 preparation. What is most important for sequencing assembly is raw count
 of reads and their quality.</p>
-<p><img src="images%2Fmira_barcode_distribution.png"></p>
+<p><img src="images/mira_barcode_distribution.png"></p>
 </li>
 <li>
 <p>Review the “Automatic Quality Control Decisions” heatmap. In
@@ -329,12 +328,12 @@ figure to see individual results.</p>
 </colgroup>
 <tbody>
 <tr class="odd">
-<td><img src="images%2Fmira_auto_qc_heatmap_paleyellow.png" alt="Light yellow"></td>
-<td><img src="images%2Fmira_auto_qc_heatmap_yellow.png" alt="Yellow"></td>
+<td><img src="images/mira_auto_qc_heatmap_paleyellow.png" alt="Light yellow"></td>
+<td><img src="images/mira_auto_qc_heatmap_yellow.png" alt="Yellow"></td>
 </tr>
 <tr class="even">
-<td><img src="images%2Fmira_auto_qc_heatmap_orange.png" alt="Orange"></td>
-<td><img src="images%2Fmira_auto_qc_heatmap_red.png" alt="Red"></td>
+<td><img src="images/mira_auto_qc_heatmap_orange.png" alt="Orange"></td>
+<td><img src="images/mira_auto_qc_heatmap_red.png" alt="Red"></td>
 </tr>
 <tr class="odd">
 <td>–</td>
@@ -349,7 +348,7 @@ information, as well as detailed read assignment to specific referencs,
 in a table. Columns can be sorted and filtered, ie.
 <code>&gt;1000</code>. Click <code>Export</code> to save this as an
 Excel file.</p>
-<p><img src="images%2Fmira_irma_summary.png"></p>
+<p><img src="images/mira_irma_summary.png"></p>
 </li>
 <li>
 <p>Review genome coverage depth. The heatmap summarizes the mean
@@ -365,12 +364,12 @@ complete coverage per gene. Try toggling the
 reset the view by clicking the gray button in the top right that looks
 like an X inside of a box. You can also try panning and zooming the
 plot.</p>
-<p><img src="images%2Fmira_coverage_heatmap.png"><img src="images%2Fmira_coverage.png"><img src="images%2Fmira_coverage_zooming.png"><img src="images%2Fmira_coverage_zoomed.png"></p>
+<p><img src="images/mira_coverage_heatmap.png"><img src="images/mira_coverage.png"><img src="images/mira_coverage_zooming.png"><img src="images/mira_coverage_zoomed.png"></p>
 </li>
 <li>
 <p>Inspect amino acid variants against popular reference
 sequences.</p>
-<p><img src="images%2Fmira_aa_vars.png"></p>
+<p><img src="images/mira_aa_vars.png"></p>
 </li>
 </ol>
 <p>Here, you may see some mutations that do not match Amino Acid
@@ -443,7 +442,7 @@ deletions <em>relative to the sample’s generated consensus
 sequence.</em> These tables are for your own usage and not necessary to
 review in detail. They can be sorted and filtered and exported to excel
 sheets for further analyses.</p>
-<p><img src="images%2Fmira_minor_vars.png"></p>
+<p><img src="images/mira_minor_vars.png"></p>
 <ul>
 <li>Minor variants greater than 5% frequency are shown</li>
 <li>Indels greater than 20% frequency are shown</li>
@@ -461,14 +460,14 @@ sheets for further analyses.</p>
 <p>Export IRMA’s <em>amended consensus</em> nucleotide sequences and
 amino acid fasta files. This includes only those passing MIRA’s QC
 criteria and are ready for submission to public databases!</p>
-<p><img src="images%2Fmira_fasta_dl.png"></p>
+<p><img src="images/mira_fasta_dl.png"></p>
 <ul>
 <li><p>The <code>DOWNLOAD FASTAS</code> button will only return passing
 samples. To investigate failed sequences, click the
 <code>DOWNLOAD FAILED FASTAS</code> button. Do not submit failed samples
 to public repositories!</p></li>
 <li><p>You can open and view these Amino Acid and Nucleotide fastas in
-any sequence viewing application <img src="images%2Fmira_fastas.png"></p></li>
+any sequence viewing application <img src="images/mira_fastas.png"></p></li>
 </ul>
 </li>
 </ul>
@@ -502,7 +501,7 @@ your own data!<a class="anchor" aria-label="anchor" href="#wow-you-are-doing-suc
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.1.1.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.1.</p>
 </div>
 
     </footer>

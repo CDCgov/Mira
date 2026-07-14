@@ -1,5 +1,5 @@
-pandoc: 3.1.11
-pkgdown: 2.1.1
+pandoc: 3.8.3
+pkgdown: 2.2.1
 pkgdown_sha: ~
 articles:
   automated-rna-extraction: automated-rna-extraction.html
@@ -39,7 +39,7 @@ articles:
   upgrading-mira-cli: upgrading-mira-cli.html
   upgrading-mira-dd: upgrading-mira-dd.html
   upgrading-mira: upgrading-mira.html
-last_built: 2024-10-30T14:45Z
+last_built: 2026-07-14T19:32Z
 urls:
   reference: https://cdcgov.github.io/MIRA/reference
   article: https://cdcgov.github.io/MIRA/articles

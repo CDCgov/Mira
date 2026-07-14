@@ -6,16 +6,15 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <title> • MIRA</title>
-<!-- favicons --><link rel="icon" type="image/png" sizes="16x16" href="../favicon-16x16.png">
-<link rel="icon" type="image/png" sizes="32x32" href="../favicon-32x32.png">
-<link rel="apple-touch-icon" type="image/png" sizes="180x180" href="../apple-touch-icon.png">
-<link rel="apple-touch-icon" type="image/png" sizes="120x120" href="../apple-touch-icon-120x120.png">
-<link rel="apple-touch-icon" type="image/png" sizes="76x76" href="../apple-touch-icon-76x76.png">
-<link rel="apple-touch-icon" type="image/png" sizes="60x60" href="../apple-touch-icon-60x60.png">
+<!-- favicons --><link rel="icon" type="image/png" sizes="96x96" href="../favicon-96x96.png">
+<link rel="icon" type="”image/svg+xml”" href="../favicon.svg">
+<link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
+<link rel="icon" sizes="any" href="../favicon.ico">
+<link rel="manifest" href="../site.webmanifest">
 <script src="../lightswitch.js"></script><script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-<link href="../deps/bootstrap-5.3.1/bootstrap.min.css" rel="stylesheet">
-<script src="../deps/bootstrap-5.3.1/bootstrap.bundle.min.js"></script><link href="../deps/font-awesome-6.4.2/css/all.min.css" rel="stylesheet">
-<link href="../deps/font-awesome-6.4.2/css/v4-shims.min.css" rel="stylesheet">
+<link href="../deps/bootstrap-5.3.8/bootstrap.min.css" rel="stylesheet">
+<script src="../deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="../deps/font-awesome-6.5.2/css/all.min.css" rel="stylesheet">
+<link href="../deps/font-awesome-6.5.2/css/v4-shims.min.css" rel="stylesheet">
 <script src="../deps/headroom-0.11.0/headroom.min.js"></script><script src="../deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="../deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="../deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="../deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="../deps/search-1.0.0/fuse.min.js"></script><script src="../deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="../pkgdown.js"></script><meta property="og:title" content="">
 <link rel="stylesheet" type="text/css" href="https://...">
 </head>
@@ -170,7 +169,7 @@ represented by a “~” character. You can specifically filter for
 instances of “~” by searching in the final column. Here, I searched for
 “NA” in my protein column and “~” in my AA Variants column to see 4
 samples in my run with the frameshift at NA amino acid position 44.</p>
-<p><img src="images%2Fsearch_frameshifts_MIRA.PNG"></p>
+<p><img src="images/search_frameshifts_MIRA.PNG"></p>
 <p></p>
 <p><strong>2. In Nextclade output</strong></p>
 <p>If you loaded all of your NA samples to Nextclade, any sequences with
@@ -181,7 +180,7 @@ for these 4 NA samples (which I called aa, bb, hh, and mm):</p>
 </li>
 <li>Make sure you select H3N2 NA as your pathogen</li>
 </ul>
-<p><img src="images%2Fnextclade_NA_1.PNG"></p>
+<p><img src="images/nextclade_NA_1.PNG"></p>
 <p></p>
 <ul>
 <li>After you select or input your N2 sequences, if the results show an
@@ -189,26 +188,26 @@ orange “F” in th QC column, 1 or more in the Gaps column, and a big red
 bar in the gene section at the far right, then you have a
 frameshift</li>
 </ul>
-<p><img src="images%2Fnextclade_NA_2.PNG"></p>
+<p><img src="images/nextclade_NA_2.PNG"></p>
 <p><strong>3. Fixing the frameshift with JalView</strong></p>
 <ul>
 <li>Select the download button in the top right corner of Nextclade’s
 output, and choose the <strong>nextclade.aligned.fasta</strong>
 </li>
 </ul>
-<p><img src="images%2Fnextclade_NA_3.PNG"></p>
+<p><img src="images/nextclade_NA_3.PNG"></p>
 <ul>
 <li>Open the downloaded .fasta and scroll to the position with the
 frameshift (if you hover over Gaps in Nextclade, it tells us for these
 samples, the gap is at nucleotide position 140)</li>
 </ul>
-<p><img src="images%2Fgaps.PNG"></p>
+<p><img src="images/gaps.PNG"></p>
 <ul>
 <li>Since we downloaded the aligned .fasta, we should see a “-”
 character at position 140 in JalView. Notice all the Cs there? That is
 our homopolymer:</li>
 </ul>
-<p><img src="images%2Fpos_140.PNG"></p>
+<p><img src="images/pos_140.PNG"></p>
 <ul>
 <li><p>TIP: Is your JalView nucleotide size too small and difficult to
 read? Click Format –&gt; Font –&gt; Size to make it bigger</p></li>
@@ -221,7 +220,7 @@ character.</p></li>
 around it. Right click then choose Selection, Edit, then Edit
 Sequence</p></li>
 </ul>
-<p><img src="images%2Fedit_sequence_jalview.PNG"></p>
+<p><img src="images/edit_sequence_jalview.PNG"></p>
 <ul>
 <li><p>A text box will appear. Replace the “-” with an uppercase “N” and
 then click OK</p></li>
@@ -234,7 +233,7 @@ into your MIRA multifasta Jalview window and save.</p></li>
 <li><p>Now, when you run Nextclade on the “fixed” sequences, you will
 see 0 gaps and 0 frameshifts:</p></li>
 </ul>
-<p><img src="images%2Fnextclade_NA_4.PNG"></p>
+<p><img src="images/nextclade_NA_4.PNG"></p>
 </div>
 </div>
 </div>
@@ -249,7 +248,7 @@ see 0 gaps and 0 frameshifts:</p></li>
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.1.1.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.1.</p>
 </div>
 
     </footer>

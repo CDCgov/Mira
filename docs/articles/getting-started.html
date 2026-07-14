@@ -6,16 +6,15 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <title> • MIRA</title>
-<!-- favicons --><link rel="icon" type="image/png" sizes="16x16" href="../favicon-16x16.png">
-<link rel="icon" type="image/png" sizes="32x32" href="../favicon-32x32.png">
-<link rel="apple-touch-icon" type="image/png" sizes="180x180" href="../apple-touch-icon.png">
-<link rel="apple-touch-icon" type="image/png" sizes="120x120" href="../apple-touch-icon-120x120.png">
-<link rel="apple-touch-icon" type="image/png" sizes="76x76" href="../apple-touch-icon-76x76.png">
-<link rel="apple-touch-icon" type="image/png" sizes="60x60" href="../apple-touch-icon-60x60.png">
+<!-- favicons --><link rel="icon" type="image/png" sizes="96x96" href="../favicon-96x96.png">
+<link rel="icon" type="”image/svg+xml”" href="../favicon.svg">
+<link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
+<link rel="icon" sizes="any" href="../favicon.ico">
+<link rel="manifest" href="../site.webmanifest">
 <script src="../lightswitch.js"></script><script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-<link href="../deps/bootstrap-5.3.1/bootstrap.min.css" rel="stylesheet">
-<script src="../deps/bootstrap-5.3.1/bootstrap.bundle.min.js"></script><link href="../deps/font-awesome-6.4.2/css/all.min.css" rel="stylesheet">
-<link href="../deps/font-awesome-6.4.2/css/v4-shims.min.css" rel="stylesheet">
+<link href="../deps/bootstrap-5.3.8/bootstrap.min.css" rel="stylesheet">
+<script src="../deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="../deps/font-awesome-6.5.2/css/all.min.css" rel="stylesheet">
+<link href="../deps/font-awesome-6.5.2/css/v4-shims.min.css" rel="stylesheet">
 <script src="../deps/headroom-0.11.0/headroom.min.js"></script><script src="../deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="../deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="../deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="../deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="../deps/search-1.0.0/fuse.min.js"></script><script src="../deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="../pkgdown.js"></script><meta property="og:title" content="">
 <link rel="stylesheet" type="text/css" href="https://...">
 </head>
@@ -168,14 +167,14 @@ powershell <strong>as administrator</strong></a></li>
 <div class="sourceCode" id="cb3"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a><span class="ex">wsl</span> <span class="at">--install</span> <span class="at">-d</span> Ubuntu-20.04</span></code></pre></div>
 <p>If either of these commands errors out, try <a href="./troubleshooting.html#wsl-install-error">troubleshooting</a></p>
 <p>Following successful installation, an Ubuntu terminal should pop up
-that looks like: <img src="images%2Fubuntu_setub_1.png" alt="alt text"></p>
+that looks like: <img src="images/ubuntu_setub_1.png" alt="alt text"></p>
 <ol start="7" style="list-style-type: decimal">
 <li>Enter a username that will be exclusive for WSL. Press
 <code>Enter</code> and then enter a password. <strong><em>It is very
 important</em></strong>, <em>to choose a memorable password. If you
 forget your password you will need to reinstall Ubuntu</em>.</li>
 </ol>
-<p>A “prompt” will then appear in the screen like: <img src="images%2Fcommandprompt_wsl.png" alt="alt text"> with
+<p>A “prompt” will then appear in the screen like: <img src="images/commandprompt_wsl.png" alt="alt text"> with
 <code>nbx0</code> replaced by your entered username and
 <code>L349232</code> replaced with your computer’s name.</p>
 <ol start="8" style="list-style-type: decimal">
@@ -194,7 +193,7 @@ Microsoft’s website here: <a href="https://docs.microsoft.com/en-us/windows/ws
 automatically mount Linux. If you have “Linux” in your
 <code>File Explorer</code>, you are good to go and do not need to
 perform this step.</em></p>
-<p><img src="images%2Flinux_file_explorer.png"></p>
+<p><img src="images/linux_file_explorer.png"></p>
 <p>If you do not see this, you need to <a href="./troubleshooting.html#map-network-drive">“map the WSL
 drive”</a></p>
 </div>
@@ -216,7 +215,7 @@ system.</p>
 <p>If you get an error related to Docker user groups, go to “Edit local
 users and groups” from your Windows search bar Click Groups –&gt;
 docker-users –&gt; Add… –&gt; then enter your username</p>
-<p><img src="images%2Fdockerusers.png"></p>
+<p><img src="images/dockerusers.png"></p>
 </div>
 <div class="section level2">
 <h2 id="install-docker-cli-command-line-interface-in-wsl2">
@@ -297,7 +296,7 @@ Aliview</a></li>
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.1.1.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.1.</p>
 </div>
 
     </footer>

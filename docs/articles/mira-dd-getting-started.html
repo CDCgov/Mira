@@ -6,16 +6,15 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <title> • MIRA</title>
-<!-- favicons --><link rel="icon" type="image/png" sizes="16x16" href="../favicon-16x16.png">
-<link rel="icon" type="image/png" sizes="32x32" href="../favicon-32x32.png">
-<link rel="apple-touch-icon" type="image/png" sizes="180x180" href="../apple-touch-icon.png">
-<link rel="apple-touch-icon" type="image/png" sizes="120x120" href="../apple-touch-icon-120x120.png">
-<link rel="apple-touch-icon" type="image/png" sizes="76x76" href="../apple-touch-icon-76x76.png">
-<link rel="apple-touch-icon" type="image/png" sizes="60x60" href="../apple-touch-icon-60x60.png">
+<!-- favicons --><link rel="icon" type="image/png" sizes="96x96" href="../favicon-96x96.png">
+<link rel="icon" type="”image/svg+xml”" href="../favicon.svg">
+<link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
+<link rel="icon" sizes="any" href="../favicon.ico">
+<link rel="manifest" href="../site.webmanifest">
 <script src="../lightswitch.js"></script><script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-<link href="../deps/bootstrap-5.3.1/bootstrap.min.css" rel="stylesheet">
-<script src="../deps/bootstrap-5.3.1/bootstrap.bundle.min.js"></script><link href="../deps/font-awesome-6.4.2/css/all.min.css" rel="stylesheet">
-<link href="../deps/font-awesome-6.4.2/css/v4-shims.min.css" rel="stylesheet">
+<link href="../deps/bootstrap-5.3.8/bootstrap.min.css" rel="stylesheet">
+<script src="../deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="../deps/font-awesome-6.5.2/css/all.min.css" rel="stylesheet">
+<link href="../deps/font-awesome-6.5.2/css/v4-shims.min.css" rel="stylesheet">
 <script src="../deps/headroom-0.11.0/headroom.min.js"></script><script src="../deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="../deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="../deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="../deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="../deps/search-1.0.0/fuse.min.js"></script><script src="../deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="../pkgdown.js"></script><meta property="og:title" content="">
 <link rel="stylesheet" type="text/css" href="https://...">
 </head>
@@ -165,7 +164,7 @@ agree to the terms of use.</p>
 <p>When setting up the configuration for a Windows computer, we
 recommend using WSL 2 on the back-end and adding shortcuts to you
 desktop.</p>
-<img src="images%2Fdocker-default-settings.png"><hr>
+<img src="images/docker-default-settings.png"><hr>
 </div>
 <div class="section level3">
 <h3 id="setting-up-docker-desktop-using-mac">Setting Up Docker Desktop using Mac<a class="anchor" aria-label="anchor" href="#setting-up-docker-desktop-using-mac"></a>
@@ -173,7 +172,7 @@ desktop.</p>
 <p>When setting up the configuration for a Windows computer, we
 recommend using the default settings that allow Docker Desktop to
 automatically set the necessary configuration.</p>
-<p><img src="images%2Fmac-docker-default-settings.png"></p>
+<p><img src="images/mac-docker-default-settings.png"></p>
 <hr>
 </div>
 <div class="section level3">
@@ -184,13 +183,13 @@ automatically set the necessary configuration.</p>
 cdcgov/mira. Once the image has come up, check that the tag is set to
 latest and click the ‘pull’ button.</li>
 </ul>
-<p><img src="images%2Fpulled-mira-single-img.png"></p>
+<p><img src="images/pulled-mira-single-img.png"></p>
 <ul>
 <li>MIRA’s single image is about 2 GB and will take a couple of minutes
 to pull to the images area. Once docker has finished downloading the
 image, you should see it under your images tab.</li>
 </ul>
-<img src="images%2Frun-mira-single-container-image.png"><hr>
+<img src="images/run-mira-single-container-image.png"><hr>
 </div>
 <div class="section level3">
 <h3 id="install-mira-container">Install MIRA Container<a class="anchor" aria-label="anchor" href="#install-mira-container"></a>
@@ -200,12 +199,12 @@ image, you should see it under your images tab.</li>
 you will put the data that you would like to analyze with MIRA. We will
 be mounting the container to this folder.</li>
 </ul>
-<p><img src="images%2Fmira_dd_run_directory_structure.png"></p>
+<p><img src="images/mira_dd_run_directory_structure.png"></p>
 <ul>
 <li>In Docker Desktop, navigate to the images tab and press the run
 button.</li>
 </ul>
-<p><img src="images%2Frun-mira-single-container-image.png"></p>
+<p><img src="images/run-mira-single-container-image.png"></p>
 <div class="section level4">
 <h4 id="provide-the-settings-for-the-container">Provide the Settings for the Container<a class="anchor" aria-label="anchor" href="#provide-the-settings-for-the-container"></a>
 </h4>
@@ -213,18 +212,18 @@ button.</li>
 <li>
 <p>Open the ‘Optional settings’ section. The container settings
 should be filled out as seen in the screenshot below.</p>
-<p><img src="images%2Fmira-dd-container-settings.png"></p>
+<p><img src="images/mira-dd-container-settings.png"></p>
 </li>
 <li><p>You will need to provide a name for the container. “MIRA” is the
 obvious choice!</p></li>
 <li><p>Set the “Host Port” to 8020</p></li>
 <li><p>Under Volumes click the “Host Path” box and find and select your
-“MIRA_NGS” folder. <img src="images%2Fselect_folders_with_runs.png"></p></li>
+“MIRA_NGS” folder. <img src="images/select_folders_with_runs.png"></p></li>
 </ul>
 <p><strong>If you would like your “Host Path” to be a folder within your
 linux environment, use the drop down in your file browser to find it.
 See the screenshot below for an example.</strong></p>
-<p><img src="images%2Fmira-dd-mount-to-unbuntu.png"></p>
+<p><img src="images/mira-dd-mount-to-unbuntu.png"></p>
 <ul>
 <li>Under Volumes you will make the “Container Path” type in
 ‘/data’.</li>
@@ -275,7 +274,7 @@ Oxford Nanopore Data</a></p>
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.1.1.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.1.</p>
 </div>
 
     </footer>
