@@ -101,15 +101,15 @@ The React app will be available at `http://localhost:5175`.
 cd MIRA
 ```
 
-### Edit `docker-compose.yml` file
+### Edit `docker-compose-dockerhub.yml` file
 
 - Change `mira-nf-image` to a specific MIRA-NF image that you want to use to run MIRA
-- Change `/path/to/data` to a directory on your machine that you would like to store outputs from the app
+- Change `data-storage-path` to a directory on your machine that you would like to store outputs from the app
 
 ### Launch MIRA backend and frontend
 
 ```bash
-docker compose up -d
+docker compose -f docker-compose-dockerhub.yml up -d
 ```
 
 After deployment ran successfully, 
