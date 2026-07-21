@@ -17,12 +17,6 @@ services:
   mira-backend:
     container_name: mira-backend
     image: rchau88/mira-backend:latest
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-      args:
-        UBUNTU_IMAGE: ubuntu:24.04
-        MICROMAMBA_IMAGE: mambaorg/micromamba:2.8.0
     depends_on:
       - mira-nf
     ports:
@@ -42,9 +36,6 @@ services:
   mira-frontend:
     container_name: mira-frontend
     image: rchau88/mira-frontend:latest
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
     depends_on:
       - mira-nf
       - mira-backend
