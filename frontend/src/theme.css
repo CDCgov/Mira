@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* ── Light mode ────────────────────────────────────────────────────────
+     Palette:  #0057B7  #032659  #3382CF  #5796D9  #87B5E3  #B8D4ED  #DBE8F7  #ECF5FF
+  ─────────────────────────────────────────────────────────────────────── */
+  :root {
+    --background:            212 100% 96%;  /* #ECF5FF — near-white blue tint    */
+    --foreground:            216  93% 18%;  /* #032659 — deep navy text           */
+
+    --card:                    0   0% 100%; /* white cards on tinted background   */
+    --card-foreground:       216  93% 18%;  /* #032659                            */
+    --popover:                 0   0% 100%;
+    --popover-foreground:    216  93% 18%;
+
+    --primary:               211 100% 36%;  /* #0057B7 — brand deep blue          */
+    --primary-foreground:      0   0% 100%;
+
+    --secondary:             212  64% 91%;  /* #DBE8F7 — soft blue                */
+    --secondary-foreground:  216  93% 18%;
+
+    --muted:                 212  64% 91%;  /* #DBE8F7                            */
+    --muted-foreground:      210  62% 51%;  /* #3382CF — mid blue for subtle text */
+
+    --accent:                210  62% 51%;  /* #3382CF — mid blue accent          */
+    --accent-foreground:       0   0% 100%;
+
+    --info:                  211  63% 60%;  /* #5796D9 — sky blue (gradient end)  */
+    --info-foreground:         0   0% 100%;
+
+    --destructive:             0  84%  60%;
+    --destructive-foreground:  0   0% 100%;
+
+    --border:                208  60% 83%;  /* #B8D4ED — pale blue border         */
+    --input:                 208  60% 83%;
+    --ring:                  211 100% 36%;  /* #0057B7                            */
+    --radius: 0.5rem;
+  }
+
+  /* ── Dark mode ─────────────────────────────────────────────────────── */
+  .dark {
+    --background:            216  93% 18%;  /* #032659 — deep navy                */
+    --foreground:            212 100% 96%;  /* #ECF5FF                            */
+
+    --card:                  216  80% 22%;  /* slightly lighter navy              */
+    --card-foreground:       212 100% 96%;
+    --popover:               216  93% 18%;
+    --popover-foreground:    212 100% 96%;
+
+    --primary:               210  62% 51%;  /* #3382CF — lighter blue for dark bg */
+    --primary-foreground:      0   0% 100%;
+
+    --secondary:             211 100% 36%;  /* #0057B7 — used as secondary        */
+    --secondary-foreground:  212 100% 96%;
+
+    --muted:                 216  60% 25%;  /* dark muted panel                   */
+    --muted-foreground:      210  62% 71%;  /* #87B5E3 — light blue muted text    */
+
+    --accent:                211  63% 60%;  /* #5796D9                            */
+    --accent-foreground:       0   0% 100%;
+
+    --info:                  210  62% 71%;  /* #87B5E3 — soft blue gradient end   */
+    --info-foreground:       216  93% 18%;
+
+    --destructive:             0  63%  41%;
+    --destructive-foreground:  0   0% 100%;
+
+    --border:                216  60% 28%;  /* dark border                        */
+    --input:                 216  60% 28%;
+    --ring:                  210  62% 51%;  /* #3382CF                            */
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+    font-family: system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}

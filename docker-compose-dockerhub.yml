@@ -1,0 +1,55 @@
+
+x-mira-nf-image:
+  &mira-nf-image
+  cdcgov/mira-nf:v2.1.1
+
+x-data-storage-path:
+  &data-storage-path
+  /home/snu3/FLU_SC2_SEQUENCING
+
+services:
+  mira-nf:
+    container_name: mira-nf
+    image: *mira-nf-image
+    restart: always
+    command: ["tail", "-f", "/dev/null"]  # Keep the container running
+      
+  mira-backend:
+    container_name: mira-backend
+    image: rchau88/mira-backend:latest
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        UBUNTU_IMAGE: ubuntu:24.04
+        MICROMAMBA_IMAGE: mambaorg/micromamba:2.8.0
+    depends_on:
+      - mira-nf
+    ports:
+      - 8080:8080
+    restart: always
+    environment:
+      HOST_MIRA_NF_IMAGE: *mira-nf-image
+      HOST_DATA_STORAGE_PATH: *data-storage-path
+    volumes:
+      - type: bind
+        source: *data-storage-path
+        target: /MIRA-backend/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    working_dir: /MIRA-backend
+    entrypoint: ["/bin/bash", "-c", "/MIRA-backend/api-kickoff"]
+
+  mira-frontend:
+    container_name: mira-frontend
+    image: rchau88/mira-frontend:latest
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    depends_on:
+      - mira-nf
+      - mira-backend
+    ports:
+      - 5175:5175
+    restart: always
+    working_dir: /MIRA-frontend
+    entrypoint: ["/bin/sh", "-c", "npm install && npm run dev -- --host 0.0.0.0 --port 5175"]

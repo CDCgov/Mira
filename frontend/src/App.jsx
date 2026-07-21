@@ -1,0 +1,3317 @@
+import { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense } from "react";
+const Plot = lazy(() => import("react-plotly.js"));
+import {
+  Dna,
+  Home,
+  Send,
+  BookOpen,
+  Settings,
+  Bell,
+  ChevronDown,
+  ChevronRight,
+  ChevronLeft,
+  Users,
+  LogOut,
+  User,
+  Sun,
+  Moon,
+  Check,
+  Upload,
+  Cpu,
+  ShieldCheck,
+  Tag,
+  BarChart3,
+  ClipboardList,
+  Play,
+  RefreshCw,
+  Save,
+  Download,
+  FolderOpen,
+  PlusCircle,
+  Info,
+  Database,
+  FlaskConical,
+  Rocket,
+  Copy,
+  Terminal,
+  FileStack,
+  Globe,
+  ExternalLink,
+  FileSearch,
+  AlertCircle,
+  Network,
+  Package,
+  GitFork,
+  Mail,
+  Link,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
+  MessageSquare,
+  X,
+  Square,
+  Trash2,
+} from "lucide-react";
+
+/* ── utility ─────────────────────────────────────── */
+function cn(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
+
+/* ── API endpoints ───────────────────────────────── */
+const API_BASE = "http://localhost:8080";
+const API = {
+  listRuns:         `${API_BASE}/list/runs`,
+  retrieveRun:      `${API_BASE}/retrieve/run`,
+  createRun:        `${API_BASE}/create/run`,
+  deleteSample:     `${API_BASE}/delete/sample`,
+  uploadFastqs:     `${API_BASE}/upload/fastqs`,
+  validateRun:      `${API_BASE}/validate/run`,
+  runMIRA:          `${API_BASE}/run/MIRA`,
+  miraDAG:           `${API_BASE}/MIRA/DAG`,
+  miraStatus:        `${API_BASE}/MIRA/status`,
+  miraCancel:        `${API_BASE}/cancel/MIRA`,
+  retrieveBarcodeAssignment:    `${API_BASE}/retrieve/barcode_assignment`,
+  retrieveQcStatement:          `${API_BASE}/retrieve/qc_statement`,
+  retrieveQcDecisions:          `${API_BASE}/retrieve/quality_control_decisions`,
+  retrieveCoverageHeatmap:      `${API_BASE}/retrieve/coverage_heatmap`,  
+  retrieveMiraSummary:          `${API_BASE}/retrieve/mira_summary`,
+  retrieveSampleCoverageList:   `${API_BASE}/retrieve/sample_coverage_list`,
+  retrieveSampleCoverageSankey: `${API_BASE}/retrieve/sample_coverage_sankeyfig`,
+  retrieveSampleCoveragePlot:   `${API_BASE}/retrieve/sample_coverage_plot`,
+  retrieveVariants:             `${API_BASE}/retrieve/variants`,
+  retrieveMinorSnvs:            `${API_BASE}/retrieve/minor_snvs`,
+  retrieveIndels:               `${API_BASE}/retrieve/indels`,
+  retrieveNtPassedFasta:    `${API_BASE}/retrieve/passed_amended_consensus`,
+  retrieveNtFailedFasta:    `${API_BASE}/retrieve/failed_amended_consensus`,
+  retrieveAaPassedFasta:    `${API_BASE}/retrieve/passed_amino_acid_consensus`,
+  retrieveAaFailedFasta:    `${API_BASE}/retrieve/failed_amino_acid_consensus`,
+  retrieveNextcladeFasta:   `${API_BASE}/retrieve/nextclade_aligned_fasta`,
+  downloadNtPassedFasta:    `${API_BASE}/download/nt_passed_fasta`,
+  downloadNtFailedFasta:    `${API_BASE}/download/nt_failed_fasta`,
+  downloadAaPassedFasta:    `${API_BASE}/download/aa_passed_fasta`,
+  downloadAaFailedFasta:    `${API_BASE}/download/aa_failed_fasta`,
+  downloadNextcladeFasta:   `${API_BASE}/download/nextclade_fasta`,
+  downloadMiraReports:      `${API_BASE}/download/mira_reports`,
+};
+
+/* ── simple dropdown hook ────────────────────────── */
+function useDropdown() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  return { open, setOpen, ref };
+}
+
+/* ── Dropdown wrapper ────────────────────────────── */
+function Dropdown({ trigger, children }) {
+  const { open, setOpen, ref } = useDropdown();
+  return (
+    <div ref={ref} className="relative">
+      <div onClick={() => setOpen((v) => !v)}>{trigger}</div>
+      {open && (
+        <div className="absolute right-0 mt-2 w-48 rounded-md border border-border bg-popover shadow-lg z-50 py-1">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DropdownItem({ onClick, icon: Icon, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors"
+    >
+      {Icon && <Icon size={14} />}
+      {children}
+    </button>
+  );
+}
+
+/* ── Tab definitions ─────────────────────────────── */
+const TABS = [
+  { id: "home",       label: "Home",       icon: Home },
+  { id: "assembly",   label: "MIRA",   icon: Dna },
+  { id: "seqsender",  label: "SeqSender",  icon: Send },
+  { id: "resources",  label: "Resources",  icon: BookOpen },
+];
+
+/* ── Home Tab ────────────────────────────────────── */
+const STATS = [
+  { label: "Sequencing Runs",          value: "1,284",  sub: "successfully completed",  icon: Cpu,        color: "text-primary"     },
+  { label: "Sequences to NCBI",        value: "48,312", sub: "GenBank + SRA combined",  icon: Database,   color: "text-sky-600"     },
+  { label: "Sequences to GISAID",      value: "31,047", sub: "EpiFlu + EpiCoV",         icon: Globe,      color: "text-emerald-600" },
+  { label: "Pathogens Supported",      value: "6",      sub: "FLU · COV · RSV · more",  icon: FlaskConical, color: "text-violet-600" },
+];
+
+const FEATURES = [
+  { icon: Cpu,          title: "IRMA Assembly",     desc: "Iterative refinement meta-assembler for influenza, SARS-CoV-2 and RSV consensus genome assembly from FASTQ reads." },
+  { icon: ShieldCheck,  title: "QC & Clade Assignment", desc: "Automated quality control metrics per segment and Nextclade-powered clade/lineage assignment for all supported pathogens." },
+  { icon: Send,         title: "SeqSender",          desc: "One-click submission pipeline to NCBI BioSample, SRA, GenBank, and GISAID with configurable metadata and validation." },
+  { icon: Network,      title: "Nextclade Integration", desc: "Build pre-configured Nextclade Web URLs to visualize clade assignments, mutations, and phylogenetic placement." },
+];
+
+function HomeTab() {
+  const [runCount, setRunCount] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(API.listRuns)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        const runs = Array.isArray(data?.run_info) ? data.run_info : [];
+        setRunCount(runs.filter((r) => r.assembly_status === "COMPLETED").length);
+      })
+      .catch(() => { if (!cancelled) setRunCount(0); });
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <div className="h-full flex flex-col overflow-hidden">
+
+      {/* ── Hero ─────────────────────────────────── */}
+      <div className="shrink-0 bg-gradient-to-br from-primary/10 via-background to-background border-b border-border px-6 py-4">
+        <div className="flex items-center gap-5">
+          <img src="/mira-logo.png" alt="MIRA" className="h-14 w-14 object-contain drop-shadow-md rounded-full ring-2 ring-primary/20 shrink-0" />
+          <div>
+            <div className="flex items-baseline gap-2 mb-0.5">
+              <h1 className="text-2xl font-bold text-foreground" style={{ fontFamily: "'Cinzel', serif" }}>MIRA</h1>
+              <span className="text-xs font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded-full">v2.0.0</span>
+              <span className="text-sm font-semibold text-foreground">— Multisegment Influenza Read Assembly</span>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed max-w-3xl">
+              End-to-end CDC respiratory virus genomics platform: FASTQ assembly → QC → clade annotation → multi-database submission.
+            </p>
+            <p className="text-xs text-muted-foreground leading-relaxed max-w-3xl">
+              Supports <strong>Influenza A/B</strong>, <strong>SARS-CoV-2</strong>, <strong>RSV</strong>, poxvirus, and arbovirus workflows.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Body grid ────────────────────────────── */}
+      <div className="flex-1 overflow-hidden p-4 grid grid-cols-2 grid-rows-[auto_1fr] gap-4">
+
+        {/* ── Stats row — spans both columns ─────── */}
+        <div className="col-span-2 grid grid-cols-4 gap-3">
+          {STATS.map(({ label, value, sub, icon: Icon, color }) => {
+            const displayValue = label === "Sequencing Runs"
+              ? (runCount === null ? "…" : runCount.toLocaleString())
+              : value;
+            return (
+              <div key={label} className="rounded-xl border border-border bg-card px-4 py-3 flex items-center gap-3">
+                <Icon size={22} className={`${color} shrink-0`} />
+                <div>
+                  <p className={`text-xl font-bold leading-none ${color}`}>{displayValue}</p>
+                  <p className="text-xs font-semibold text-foreground mt-0.5">{label}</p>
+                  <p className="text-xs text-muted-foreground">{sub}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── Features ─────────────────────────── */}
+        <div className="rounded-xl border border-border bg-card overflow-hidden flex flex-col">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-muted/20 shrink-0">
+            <div className="flex items-center justify-center h-7 w-7 rounded-lg bg-primary/10 text-primary">
+              <Cpu size={15} />
+            </div>
+            <h3 className="text-sm font-bold tracking-wide text-foreground">Core Capabilities</h3>
+          </div>
+          <div className="flex-1 overflow-auto p-3 flex flex-col gap-2">
+            {FEATURES.map(({ icon: Icon, title, desc }) => (
+              <div key={title} className="flex items-start gap-3 p-3 rounded-xl border border-border hover:bg-muted/10 transition-colors">
+                <div className="flex items-center justify-center h-7 w-7 rounded-lg bg-primary/10 text-primary shrink-0">
+                  <Icon size={14} />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-foreground">{title}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Quick Start ──────────────────────── */}
+        <div className="rounded-xl border border-border bg-card overflow-hidden flex flex-col">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-muted/20 shrink-0">
+            <div className="flex items-center justify-center h-7 w-7 rounded-lg bg-primary/10 text-primary">
+              <Play size={15} />
+            </div>
+            <h3 className="text-sm font-bold tracking-wide text-foreground">Quick Start</h3>
+          </div>
+          <div className="flex-1 overflow-auto divide-y divide-border">
+            {[
+              { step: "1", tab: "Assembly",    desc: "Upload FASTQ files, select your pathogen, and run the IRMA assembly pipeline." },
+              { step: "2", tab: "Assembly",    desc: "Review QC metrics per segment and run Nextclade clade assignment." },
+              { step: "3", tab: "SeqSender",   desc: "Configure submission targets (BioSample, SRA, GenBank, GISAID) and submit." },
+              { step: "4", tab: "Resources",   desc: "Consult documentation, GitHub repos, and contact information." },
+            ].map(({ step, tab, desc }) => (
+              <div key={step} className="flex items-start gap-4 px-5 py-3">
+                <span className="flex items-center justify-center h-6 w-6 rounded-full bg-primary text-primary-foreground text-xs font-bold shrink-0 mt-0.5">{step}</span>
+                <div>
+                  <span className="text-xs font-semibold text-primary mr-2">[{tab}]</span>
+                  <span className="text-sm text-foreground">{desc}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="shrink-0 px-5 py-2 border-t border-border bg-muted/10">
+            <p className="text-xs text-muted-foreground">* Stats are illustrative placeholders — connect a backend API for live run data.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+/* ── Assembly Tab ────────────────────────────────── */
+const ASSEMBLY_STEPS = [
+  { id: "setup",    title: "STEP 1: MIRA SETUP",  subtitle: "Define run, configure sample sheet, and set assembly parameters", icon: Upload },
+  { id: "progress", title: "STEP 2: PROCESSING",  subtitle: "Monitor assembly progress and stage status",                    icon: RefreshCw },
+  { id: "results",  title: "STEP 3: RESULTS",     subtitle: "Assembly statistics, QC decisions, and coverage plots",                          icon: BarChart3 },
+  { id: "export",   title: "STEP 4: EXPORT",      subtitle: "Download FASTA outputs from the assembly run",                  icon: Download },
+];
+
+function StepHeader({ icon: Icon, title, subtitle, open }) {
+  return (
+    <div className="flex items-center gap-3 w-full">
+      <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-primary/10 text-primary shrink-0">
+        <Icon size={16} />
+      </div>
+      <div className="flex-1 text-left">
+        <p className="text-xs font-bold tracking-wider text-primary">{title}</p>
+        <p className="text-xs text-muted-foreground">{subtitle}</p>
+      </div>
+      <ChevronRight size={15} className={cn("text-muted-foreground transition-transform shrink-0", open && "rotate-90")} />
+    </div>
+  );
+}
+
+function StepPanel({ children }) {
+  return <div className="px-4 pb-4 pt-2 space-y-4">{children}</div>;
+}
+
+function FieldLabel({ children }) {
+  return <p className="text-xs font-semibold text-foreground mb-1">{children}</p>;
+}
+
+/* ── Shared Plotly modebar config ───────────────── */
+const PLOT_CONFIG = {
+  responsive: true,
+  displayModeBar: 'hover',
+  modeBarButtonsToRemove: [
+    'select2d', 'lasso2d',
+    'hoverClosestCartesian', 'hoverCompareCartesian',
+    'toggleSpikelines',
+  ],
+  toImageButtonOptions: { format: 'png', scale: 2, filename: 'mira_plot' },
+  modeBarButtonsToAdd: [{
+    name: 'Download JPEG',
+    title: 'Download plot as JPEG',
+    icon: {
+      width: 500,
+      height: 500,
+      path: 'M240 60 L340 60 L340 240 L420 240 L250 420 L80 240 L160 240 L160 60 Z M60 440 L440 440 L440 500 L60 500 Z',
+    },
+    click: (gd) => window.Plotly?.downloadImage(gd, {
+      format: 'jpeg',
+      scale: 2,
+      filename: (typeof gd.layout?.title === 'string' ? gd.layout.title : gd.layout?.title?.text || 'mira_plot').replace(/\s+/g, '_'),
+    }),
+  }],
+};
+
+/* ── Reusable paginated + sortable result table ──── */
+const N_BINS = 8;
+const PUBUGN_8 = ['#fff7fb','#ece2f0','#d0d1e6','#a6bddb','#67a9cf','#3690c0','#02818a','#016450'];
+
+function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colorize = false }) {
+  const [sortCol, setSortCol] = useState(null);
+  const [sortDir, setSortDir] = useState("asc");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Normalise: accept a list of row-dicts OR a pandas split-format {columns, data}
+  const data = Array.isArray(rawData)
+    ? rawData
+    : (rawData?.columns && rawData?.data)
+      ? rawData.data.map(row => Object.fromEntries(rawData.columns.map((c, i) => [c, row[i]])))
+      : [];
+
+  const cols = data.length > 0 && data[0] ? Object.keys(data[0]) : [];
+
+  // Precompute numeric column min/max for heatmap coloring (fill_irma_summary_tbl logic)
+  const colRanges = useMemo(() => {
+    if (!colorize || data.length === 0) return {};
+    const ranges = {};
+    (data[0] ? Object.keys(data[0]) : []).forEach(c => {
+      const nums = [];
+      data.forEach(r => {
+        const v = r[c];
+        if (v !== null && v !== "" && v !== undefined) {
+          const n = Number(v);
+          if (!isNaN(n)) nums.push(n);
+        }
+      });
+      if (nums.length > 0) ranges[c] = { min: Math.min(...nums), max: Math.max(...nums) };
+    });
+    return ranges;
+  }, [colorize, data]);
+
+  const getCellStyle = (col, val) => {
+    if (!colorize || val == null || val === "") return {};
+    const range = colRanges[col];
+    if (!range) return {};
+    const num = Number(val);
+    if (isNaN(num)) return {};
+    const { min, max } = range;
+    const bin = max === min ? 0 : Math.min(Math.floor(((num - min) / (max - min)) * N_BINS), N_BINS - 1);
+    return { backgroundColor: PUBUGN_8[bin], color: bin >= N_BINS / 2 ? '#fff' : 'inherit' };
+  };
+
+  const handleSort = (col) => {
+    if (sortCol === col) {
+      setSortDir(d => d === "asc" ? "desc" : "asc");
+    } else {
+      setSortCol(col);
+      setSortDir("asc");
+    }
+    setPage(0);
+  };
+
+  const handleSearch = (q) => {
+    setSearchQuery(q);
+    setPage(0);
+  };
+
+  // 1. filter
+  const q = searchQuery.trim().toLowerCase();
+  const filtered = q
+    ? data.filter(row => cols.some(c => (row[c] == null ? "" : String(row[c])).toLowerCase().includes(q)))
+    : data;
+
+  // 2. sort
+  const sorted = sortCol
+    ? [...filtered].sort((a, b) => {
+        const va = a[sortCol], vb = b[sortCol];
+        const na = Number(va), nb = Number(vb);
+        if (va !== null && vb !== null && va !== "" && vb !== "" && !isNaN(na) && !isNaN(nb))
+          return sortDir === "asc" ? na - nb : nb - na;
+        const sa = String(va ?? "").toLowerCase(), sb = String(vb ?? "").toLowerCase();
+        return sortDir === "asc" ? sa.localeCompare(sb) : sb.localeCompare(sa);
+      })
+    : filtered;
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const pageStart = page * pageSize;
+  const pageRows = sorted.slice(pageStart, pageStart + pageSize);
+  const fname = title.replace(/\s+/g, "_");
+
+  const downloadCSV = () => {
+    const rows = [cols.map(c => `"${c.replace(/"/g, '""')}"`).join(","),
+      ...sorted.map(row => cols.map(c => { const v = row[c] == null ? "" : String(row[c]); return `"${v.replace(/"/g, '""')}"`; }).join(","))
+    ].join("\n");
+    const blob = new Blob([rows], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `${fname}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadExcel = () => {
+    const html = `<html><head><meta charset="utf-8"></head><body><table><tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr>${sorted.map(row => `<tr>${cols.map(c => `<td>${row[c] == null ? "" : String(row[c])}</td>`).join("")}</tr>`).join("")}</table></body></html>`;
+    const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `${fname}.xls`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="rounded-xl border border-border overflow-hidden">
+      {/* header bar */}
+      <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
+        <div className="flex items-center gap-2">
+          <button onClick={downloadCSV} className="flex items-center gap-1 px-2 py-0.5 rounded text-xs border border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors">
+            <Download size={11} /> CSV
+          </button>
+          <button onClick={downloadExcel} className="flex items-center gap-1 px-2 py-0.5 rounded text-xs border border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors">
+            <Download size={11} /> Excel
+          </button>
+          <p className="text-xs font-bold text-foreground uppercase tracking-wider">{title}</p>
+        </div>
+        <span className="text-xs text-muted-foreground">{data.length.toLocaleString()} total rows</span>
+      </div>
+      {/* search bar */}
+      <div className="px-3 py-2 border-b border-border bg-muted/10">
+        <div className="relative">
+          <FileSearch size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => handleSearch(e.target.value)}
+            placeholder={`Search ${title}…`}
+            className="w-full h-7 pl-7 pr-7 rounded-md border border-border bg-background text-xs font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+          {searchQuery && (
+            <button onClick={() => handleSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
+              <X size={11} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* colorize bin legend */}
+      {colorize && (
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/10">
+          <span className="text-xs text-muted-foreground shrink-0">Percentile:</span>
+          <div className="flex overflow-hidden rounded border border-border shrink-0">
+            {PUBUGN_8.map((color, i) => {
+              const lo = Math.round((i / N_BINS) * 100);
+              const hi = Math.round(((i + 1) / N_BINS) * 100);
+              return (
+                <div key={i} className="flex flex-col items-center">
+                  <span
+                    title={`${lo}–${hi} percentile`}
+                    className="h-4 w-14 block"
+                    style={{ backgroundColor: color }}
+                  />
+                  <span className="text-[10px] leading-none text-muted-foreground mt-0.5">{lo}–{hi}%</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* table */}
+      <div className="overflow-auto max-h-[360px]">
+        <table className="w-full text-xs">
+          <thead className="bg-muted sticky top-0 z-10">
+            <tr>
+              {cols.map(c => (
+                <th key={c} onClick={() => handleSort(c)} className="px-3 py-2 text-left font-semibold text-muted-foreground font-mono whitespace-nowrap cursor-pointer select-none hover:text-foreground transition-colors">
+                  <span className="flex items-center gap-1">
+                    {c}
+                    {sortCol === c
+                      ? sortDir === "asc" ? <ArrowUp size={9} className="text-primary shrink-0" /> : <ArrowDown size={9} className="text-primary shrink-0" />
+                      : <ArrowUpDown size={9} className="opacity-30 shrink-0" />}
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {pageRows.length === 0 ? (
+              <tr className="border-t border-border">
+                <td colSpan={cols.length} className="px-3 py-4 text-center text-muted-foreground">
+                  No rows match your search.
+                </td>
+              </tr>
+            ) : pageRows.map((row, i) => (
+              <tr key={pageStart + i} className="border-t border-border hover:bg-muted/10">
+                {cols.map(c => {
+                  const cellStyle = getCellStyle(c, row[c]);
+                  return (
+                    <td key={c} className={cn("px-3 py-1.5 font-mono whitespace-nowrap", !cellStyle.backgroundColor && "text-foreground")} style={cellStyle}>
+                      {row[c] == null ? <span className="text-muted-foreground/50">—</span> : String(row[c])}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {/* pagination footer */}
+      <div className="flex items-center justify-between px-3 py-2 border-t border-border bg-muted/10">
+        <span className="text-xs text-muted-foreground">
+          {q ? `${sorted.length.toLocaleString()} of ${data.length.toLocaleString()} rows` : `${sorted.length.toLocaleString()} rows`}
+          {sorted.length > 0 && <span className="ml-1">· showing {pageStart + 1}–{Math.min(pageStart + pageSize, sorted.length)}</span>}
+          {sortCol && <span className="ml-2 opacity-60">(sorted by <span className="font-mono">{sortCol}</span> {sortDir})</span>}
+        </span>
+        <div className="flex items-center gap-1">
+          <button onClick={() => setPage(0)} disabled={page === 0} className="px-2 py-0.5 rounded text-xs border border-border disabled:opacity-40 hover:bg-muted/40 transition-colors">«</button>
+          <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="px-2 py-0.5 rounded text-xs border border-border disabled:opacity-40 hover:bg-muted/40 transition-colors">‹</button>
+          <span className="px-2 text-xs text-muted-foreground">{page + 1} / {totalPages}</span>
+          <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="px-2 py-0.5 rounded text-xs border border-border disabled:opacity-40 hover:bg-muted/40 transition-colors">›</button>
+          <button onClick={() => setPage(totalPages - 1)} disabled={page >= totalPages - 1} className="px-2 py-0.5 rounded text-xs border border-border disabled:opacity-40 hover:bg-muted/40 transition-colors">»</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AssemblyTab() {
+  const [openStep, setOpenStep]               = useState(() => new Set(ASSEMBLY_STEPS.map((s) => s.id)));
+  const [runName, setRunName]                 = useState("");
+  const [experimentType, setExperimentType]   = useState("");
+  const [primer, setPrimer]                   = useState("");
+  const [subSample, setSubSample]             = useState("0");
+  const [createParquet, setCreateParquet]     = useState(false);
+  const [nextclade, setNextclade]             = useState(true);
+  const [exportFmt, setExportFmt]             = useState("fasta");
+  const [assembled, setAssembled]             = useState(false);
+  const [rightWidth, setRightWidth]           = useState(260);
+  const [sampleSearch, setSampleSearch]       = useState("");
+  const [sortConfig, setSortConfig]           = useState({ key: null, dir: "asc" });
+  const [submitting, setSubmitting]           = useState(false);
+  const [submitError, setSubmitError]         = useState(null);
+  const [submitSuccess, setSubmitSuccess]     = useState(null);
+  const [submitProcessId, setSubmitProcessId] = useState(null);
+  const [loadRunModal, setLoadRunModal]       = useState(false);
+  const [loadRunLoading, setLoadRunLoading]   = useState(false);
+  const [loadRunError, setLoadRunError]       = useState(null);
+  const [availableRuns, setAvailableRuns]     = useState([]);
+  const [selectedRun, setSelectedRun]         = useState(null);
+  const [runSearch, setRunSearch]             = useState("");
+  const [uploadedOntFileObjects, setUploadedOntFileObjects]           = useState({}); // ONT filename → File object
+  const [uploadedIlluminaFileObjects, setUploadedIlluminaFileObjects] = useState({}); // Illumina filename → File object
+
+  // ── Export Run modal state ────────────────
+  const [exportRunModal, setExportRunModal]           = useState(false);
+  const [exportRunSearch, setExportRunSearch]         = useState("");
+  const [exportSelectedRun, setExportSelectedRun]     = useState(null);
+  const [exportRunLoading, setExportRunLoading]       = useState(false);
+  const [exportRunError, setExportRunError]           = useState(null);
+  const [exportDownloading, setExportDownloading]     = useState(false);
+  const [cancelRun, setCancelRun]                     = useState(false);    // whether the run has been cancelled
+  const [isNewRun, setIsNewRun]                       = useState(true);   // true = new run, false = loaded existing run
+  const [confirmRemoveIdx, setConfirmRemoveIdx]       = useState(null); // index of sample row pending removal confirmation
+  const [uploadOntFastq, setUploadOntFastq]           = useState([]);      // list of sanitized ONT fastq filenames uploaded this session
+  const [uploadOntError, setUploadOntError]           = useState(null);   // file-naming validation errors for ONT uploads
+  const [uploadIlluminaFastq, setUploadIlluminaFastq] = useState([]); // list of sanitized Illumina fastq filenames uploaded this session
+  const [uploadIlluminaError, setUploadIlluminaError] = useState(null); // file-naming validation errors for Illumina uploads
+  const [showDAG, setShowDAG]                         = useState(false);  // whether to show the DAG view
+  const [pipelineDAG, setPipelineDAG]                 = useState(null);     // pipeline DAG from /pipeline/status
+  const [pipelinePolling, setPipelinePolling]         = useState(false);    // whether polling is active
+
+  // ── Result section state ──────────────────────
+  const [resultBarcodeAssignments, setResultBarcodeAssignments]       = useState(null);
+  const [resultQcStatement, setResultQcStatement]                     = useState(null);
+  const [resultQcDecisions, setResultQcDecisions]                     = useState(null);  // Plotly pass/fail heatmap
+  const [resultCoverageHeatmap, setResultCoverageHeatmap]             = useState(null);
+  const [resultMiraSummary, setResultMiraSummary]                     = useState(null);
+  const [resultSampleCoverageList, setResultSampleCoverageList]       = useState(null);
+  const [resultSampleCoverageSankey, setResultSampleCoverageSankey]   = useState(null); // {sample_id: plotly_figure}
+  const [resultSampleCoveragePlot, setResultSampleCoveragePlot]       = useState(null); // {sample_id: plotly_figure}
+  const [selectedSampleForCoverage, setSelectedSampleForCoverage]     = useState("");   // selected sample in dropdown
+  const [resultVariants, setResultVariants]                           = useState(null);
+  const [resultMinorSnvs, setResultMinorSnvs]                         = useState(null);
+  const [resultIndels, setResultIndels]                               = useState(null);
+  const [resultNtPassedFasta, setResultNtPassedFasta]                 = useState(null);
+  const [resultNtFailedFasta, setResultNtFailedFasta]                 = useState(null);
+  const [resultAaPassedFasta, setResultAaPassedFasta]                 = useState(null);
+  const [resultAaFailedFasta, setResultAaFailedFasta]                 = useState(null);
+  const [resultNextcladeFasta, setResultNextcladeFasta]               = useState(null);
+  const [indelsPage, setIndelsPage]                                   = useState(0);    // current indels table page (0-indexed)
+  const [variantsPage, setVariantsPage]                               = useState(0);    // current variants table page (0-indexed)
+  const [minorSnvsPage, setMinorSnvsPage]                             = useState(0);    // current minor SNVs table page (0-indexed)
+  const [miraSummaryPage, setMiraSummaryPage]                         = useState(0);    // current MIRA summary table page (0-indexed)
+
+  // ── Poll /pipeline/status every 5 s while run is active ──────
+  useEffect(() => {
+    if (!pipelinePolling) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+
+        if (submitProcessId && cancelRun === false) {
+          const statusRes = await fetch(`${API.miraStatus}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}&pid=${submitProcessId}`);
+          if (!statusRes.ok) { await statusRes.body?.cancel?.(); }
+        }
+
+        const dagRes = await fetch(`${API.miraDAG}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`);
+        if (!dagRes.ok) { await dagRes.body?.cancel?.(); return; }
+        const data = await dagRes.json();
+
+        if (!cancelled) {
+          setPipelineDAG(data);
+          const done = data?.workflows?.status === "COMPLETED" || data?.workflows?.status === "FAILED" || data?.workflows?.status === "CANCELED" || data?.workflows?.status === "UNKNOWN";
+          if (done || cancelRun === true) { 
+
+            // Fetch all result tables and plots
+            const barcodeRes = await fetch(
+              `${API.retrieveBarcodeAssignment}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+            );
+            const barcodeData = await barcodeRes.json();
+            setResultBarcodeAssignments(barcodeRes.ok && barcodeData && typeof barcodeData === "object" ? barcodeData : null);
+
+            const indelsRes = await fetch(
+              `${API.retrieveIndels}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+            );
+            const indelsData = await indelsRes.json();
+            if (!indelsRes.ok) throw new Error(indelsData.detail || "Failed to load indels");
+            setResultIndels(Array.isArray(indelsData) ? indelsData : null);
+            setIndelsPage(0);
+
+            const minorSnvsRes = await fetch(
+              `${API.retrieveMinorSnvs}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+            );
+            const minorSnvsData = await minorSnvsRes.json();
+            if (!minorSnvsRes.ok) throw new Error(minorSnvsData.detail || "Failed to load minor SNVs");
+            setResultMinorSnvs(Array.isArray(minorSnvsData) ? minorSnvsData : null);
+            setMinorSnvsPage(0);
+
+            const variantsData = await fetch(
+              `${API.retrieveVariants}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+            );
+            const variantsJson = await variantsData.json();
+            if (!variantsData.ok) throw new Error(variantsJson.detail || "Failed to load variants");
+            setResultVariants(Array.isArray(variantsJson) ? variantsJson : null);
+            setVariantsPage(0);
+
+            const heatmapRes = await fetch(
+              `${API.retrieveCoverageHeatmap}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+            );
+            const heatmapData = await heatmapRes.json();
+            setResultCoverageHeatmap(heatmapRes.ok && heatmapData && typeof heatmapData === "object" ? heatmapData : null);
+
+            const qcDecisionsRes = await fetch(
+              `${API.retrieveQcDecisions}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+            );
+            const qcDecisionsData = await qcDecisionsRes.json();
+            setResultQcDecisions(qcDecisionsRes.ok && qcDecisionsData && typeof qcDecisionsData === "object" ? qcDecisionsData : null);
+
+            const qcStatementRes = await fetch(
+              `${API.retrieveQcStatement}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+            );
+            const qcStatementData = await qcStatementRes.json();
+            setResultQcStatement(qcStatementRes.ok && qcStatementData && typeof qcStatementData === "object" ? qcStatementData : null);
+
+            const sampleCoverageListRes = await fetch(
+              `${API.retrieveSampleCoverageList}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+            );
+            const sampleCoverageListData = await sampleCoverageListRes.json();
+            setResultSampleCoverageList(sampleCoverageListRes.ok ? sampleCoverageListData : null);
+
+            // Fetch sankey for the first available sample
+            const _sankeyInitSamples = sampleCoverageListData?.columns && sampleCoverageListData?.data
+              ? [...new Set(sampleCoverageListData.data.map(r => r[sampleCoverageListData.columns.indexOf("Sample")]))].sort()
+              : [];
+            const _sankeyFirst = _sankeyInitSamples[0] ?? null;
+            if (_sankeyFirst) {
+              const sampleCoverageSankeyRes = await fetch(
+                `${API.retrieveSampleCoverageSankey}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}&sample_id=${encodeURIComponent(_sankeyFirst)}`
+              );
+              const sampleCoverageSankeyData = await sampleCoverageSankeyRes.json();
+              if (sampleCoverageSankeyRes.ok && sampleCoverageSankeyData) {
+                setResultSampleCoverageSankey({ [_sankeyFirst]: sampleCoverageSankeyData });
+                setSelectedSampleForCoverage(_sankeyFirst);
+              }
+            }
+
+            // Also fetch linear coverage plot for the first sample
+            if (_sankeyFirst) {
+              const coveragePlotRes = await fetch(
+                `${API.retrieveSampleCoveragePlot}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}&sample_id=${encodeURIComponent(_sankeyFirst)}`
+              );
+              const coveragePlotData = await coveragePlotRes.json();
+              if (coveragePlotRes.ok && coveragePlotData) {
+                setResultSampleCoveragePlot({ [_sankeyFirst]: coveragePlotData });
+              }
+            }
+
+            const miraSummaryRes = await fetch(
+              `${API.retrieveMiraSummary}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+            );
+            const miraSummaryData = await miraSummaryRes.json();
+            if (!miraSummaryRes.ok) throw new Error(miraSummaryData.detail || "Failed to load MIRA summary");
+            setResultMiraSummary(miraSummaryData ?? null);
+
+            // Populate downloadable fasta files (if they exist)
+            const ntPassedRes = await fetch(
+              `${API.retrieveNtPassedFasta}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+            );
+            const ntPassedData = await ntPassedRes.json();
+            if (!ntPassedRes.ok) throw new Error(ntPassedData.detail || "Failed to load NT passed fasta");
+            setResultNtPassedFasta(ntPassedData?.location ?? null);
+
+            const ntFailedRes = await fetch(
+              `${API.retrieveNtFailedFasta}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+            );
+            const ntFailedData = await ntFailedRes.json();
+            if (!ntFailedRes.ok) throw new Error(ntFailedData.detail || "Failed to load NT failed fasta");
+            setResultNtFailedFasta(ntFailedData?.location ?? null);
+
+            const aaPassedRes = await fetch(
+              `${API.retrieveAaPassedFasta}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+            );
+            const aaPassedData = await aaPassedRes.json();
+            if (!aaPassedRes.ok) throw new Error(aaPassedData.detail || "Failed to load AA passed fasta");
+            setResultAaPassedFasta(aaPassedData?.location ?? null);
+
+            const aaFailedRes = await fetch(
+              `${API.retrieveAaFailedFasta}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+            );
+            const aaFailedData = await aaFailedRes.json();
+            if (!aaFailedRes.ok) throw new Error(aaFailedData.detail || "Failed to load AA failed fasta");
+            setResultAaFailedFasta(aaFailedData?.location ?? null);
+
+            const nextcladeRes = await fetch(
+              `${API.retrieveNextcladeFasta}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+            );
+            const nextcladeData = await nextcladeRes.json();
+            if (!nextcladeRes.ok) throw new Error(nextcladeData.detail || "Failed to load Nextclade fasta");
+            setResultNextcladeFasta(nextcladeData?.location ?? null);
+
+            // If the run is done, stop polling and fetch results
+            setPipelinePolling(false); 
+            setSubmitting(false); 
+            setAssembled(true);
+            setSubmitSuccess(null);
+
+          }
+        }
+      } catch (_) { /* network error — keep polling */ }
+    };
+    poll(); // immediate first fetch
+    const timer = setInterval(poll, 5000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [pipelinePolling, submitProcessId, selectedRun, cancelRun]);
+
+  // Sync fastq_location in rows whenever runName changes
+  const SAMPLE_TYPES = ["- Control", "+ Control", "Test"];
+  const [ontSampleRows, setOntSampleRows]           = useState([]);
+  const [illuminaSampleRows, setIlluminaSampleRows] = useState([]);
+  const toggleSampleStatus = (idx) => {
+    if (experimentType.toLowerCase().endsWith("ont")) {
+      setOntSampleRows((prev) => prev.map((r, i) => i === idx ? { ...r, status: r.status === "Keep" ? "Exclude" : "Keep" } : r));
+    } else {
+      setIlluminaSampleRows((prev) => prev.map((r, i) => i === idx ? { ...r, status: r.status === "Keep" ? "Exclude" : "Keep" } : r));
+    }
+  };
+
+  // Perform the actual removal: client-side only for new runs, deletes from the
+  // database first for already-loaded runs.
+  const performRemoveSample = async (idx) => {
+    const isOnt = experimentType.toLowerCase().endsWith("ont");
+    const rows = isOnt ? ontSampleRows : illuminaSampleRows;
+    const sample = rows[idx];
+    if (!sample) return;
+
+    // New run: samplesheet only exists in local state, simply remove it
+    if (isNewRun) {
+      if (isOnt) setOntSampleRows((prev) => prev.filter((_, i) => i !== idx));
+      else setIlluminaSampleRows((prev) => prev.filter((_, i) => i !== idx));
+      return;
+    }
+
+    // Loaded run: sample is already persisted, delete it from the database first
+    try {
+      const res = await fetch(API.deleteSample, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          run_name: runName,
+          experiment_type: experimentType,
+          sample_id: sample.sample_id,
+          fastq: isOnt ? sample.fastq : null,
+          fastq_1: isOnt ? null : sample.fastq_1,
+          fastq_2: isOnt ? null : sample.fastq_2,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
+      if (isOnt) setOntSampleRows((prev) => prev.filter((_, i) => i !== idx));
+      else setIlluminaSampleRows((prev) => prev.filter((_, i) => i !== idx));
+    } catch (err) {
+      setSubmitError({ title: "Remove Sample Error", items: [err.message || "Failed to remove sample from the database."], missing: null });
+    }
+  };
+
+  // Ask for confirmation before removing a sample row
+  const removeSample = (idx) => setConfirmRemoveIdx(idx);
+
+  // User confirmed removal — run the actual removal and close the modal
+  const confirmRemoveSample = () => {
+    if (confirmRemoveIdx !== null) performRemoveSample(confirmRemoveIdx);
+    setConfirmRemoveIdx(null);
+  };
+
+  // Export the sample sheet in CSV or Excel format
+  const exportSampleSheet = (format) => {
+    const isOnt = experimentType.toLowerCase().endsWith("ont");
+    const activeRows = isOnt ? ontSampleRows : illuminaSampleRows;
+    const headers = isOnt
+      ? ["barcode", "sample_id", "sample_type", "single_end", "fastq", "status"]
+      : ["sample_id", "sample_type", "single_end", "fastq_1", "fastq_2", "status"];
+    const data = activeRows.map(row => isOnt
+      ? [row.barcode, row.sample_id, row.sample_type, row.single_end, row.fastq, row.status]
+      : [row.sample_id, row.sample_type, row.single_end, row.fastq_1, row.fastq_2, row.status]
+    );
+    const fname = selectedRun?.run_name || "samplesheet";
+    if (format === "csv") {
+      const csv = [headers, ...data]
+        .map(r => r.map(v => `"${(v ?? "").toString().replace(/"/g, '""')}"`).join(","))
+        .join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `${fname}.csv`; a.click();
+      URL.revokeObjectURL(url);
+    } else {
+      const html = `<html><head><meta charset="utf-8"></head><body><table>${
+        [headers, ...data].map(r => `<tr>${r.map(v => `<td>${(v ?? "").toString()}</td>`).join("")}</tr>`).join("")
+      }</table></body></html>`;
+      const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `${fname}.xls`; a.click();
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  // Ref to track whether the user is currently dragging the right panel for resizing
+  const dragging = useRef(false);
+
+  // Define experiment types options for the dropdowns
+  const EXPERIMENT_TYPES = [
+    'Flu-ONT',
+    'Flu-Illumina',
+    'SC2-Spike-Only-ONT',
+    'SC2-Whole-Genome-ONT',
+    'SC2-Whole-Genome-Illumina',
+    'RSV-Illumina',
+    'RSV-ONT'
+  ];
+
+  // Define SC2 primers options for the dropdowns
+  const SC2_PRIMERS = [
+    { value: "",            label: "None" },
+    { value: "articv3",     label: "Artic V3" },
+    { value: "articv4",     label: "Artic V4" },
+    { value: "articv4.1",   label: "Artic V4.1" },
+    { value: "articv5.3.2", label: "Artic V5.3.2" },
+    { value: "qiagen",      label: "Qiagen QIAseq" },
+    { value: "swift",       label: "xGen\u2122 SARS-CoV-2 Amplicon Panel" },
+    { value: "swift_211206",label: "xGen\u2122 SARS-CoV-2 Amplicon Panel (CDC customized)" },
+    { value: "varSkip",     label: "VarSkip" },
+  ];
+
+  // Define RSV primers options for the dropdowns
+  const RSV_PRIMERS = [
+    { value: "RSV_CDC_8amplicon_230901", label: "RSV CDC 8 amplicon 230901" },
+    { value: "dong_et_al",               label: "Dong et al. 230312" },
+    { value: "davina_nunez_wgs",         label: "Davina-Nunez et al. - WG pools" },
+  ];
+
+  // Handle mouse down event for resizing the right panel
+  const onMouseDown = useCallback(() => {
+    dragging.current = true;
+    const onMove = (e) => {
+      if (!dragging.current) return;
+      const newW = document.body.clientWidth - e.clientX;
+      setRightWidth(Math.max(200, Math.min(420, newW)));
+    };
+    const onUp = () => { dragging.current = false; window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, []);
+
+  // 
+  const toggle = (id) => setOpenStep((prev) => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  // Fetch the sankey figure for a specific sample (lazy-loads, caches in resultSampleCoverageSankey)
+  const fetchSankeyForSample = useCallback(async (sampleId) => {
+    setSelectedSampleForCoverage(sampleId);
+    if (!selectedRun || !sampleId) return;
+    const fetchPromises = [];
+    if (!resultSampleCoverageSankey?.[sampleId]) {
+      fetchPromises.push(
+        fetch(`${API.retrieveSampleCoverageSankey}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&sample_id=${encodeURIComponent(sampleId)}`)
+          .then(r => r.ok ? r.json() : null)
+          .then(d => { if (d) setResultSampleCoverageSankey(prev => ({ ...(prev ?? {}), [sampleId]: d })); })
+          .catch(() => {})
+      );
+    }
+    if (!resultSampleCoveragePlot?.[sampleId]) {
+      fetchPromises.push(
+        fetch(`${API.retrieveSampleCoveragePlot}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&sample_id=${encodeURIComponent(sampleId)}`)
+          .then(r => r.ok ? r.json() : null)
+          .then(d => { if (d) setResultSampleCoveragePlot(prev => ({ ...(prev ?? {}), [sampleId]: d })); })
+          .catch(() => {})
+      );
+    }
+    await Promise.all(fetchPromises);
+  }, [selectedRun, resultSampleCoverageSankey, resultSampleCoveragePlot]);
+
+  const resetRun = useCallback(() => {
+
+    // Cancel any ongoing run if submitProcessId exists
+    if (submitProcessId && selectedRun) {
+      fetch(`${API.cancelRun}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&pid=${submitProcessId}`)
+        .catch(() => {});
+    }
+
+    // Reset all state variables to their initial values
+    setRunName("");
+    setExperimentType("");
+    setPrimer("");
+    setSubSample("0");
+    setCreateParquet(false);
+    setNextclade(true);
+    setExportFmt("fasta");
+    setAssembled(false);
+    setSortConfig({ key: null, dir: "asc" });
+    setSampleSearch("");
+    setUploadedOntFileObjects({});
+    setUploadedIlluminaFileObjects({});
+    setSubmitting(false);
+    setSubmitError(null);
+    setSubmitSuccess(null);
+    setSubmitProcessId(null);
+    setIsNewRun(true);
+    setLoadRunModal(false);
+    setAvailableRuns([]);
+    setLoadRunLoading(false);
+    setLoadRunError(null);
+    setSelectedRun(null);
+    setRunSearch("");
+    setExportRunModal(false);
+    setExportRunSearch("");
+    setExportSelectedRun(null);
+    setExportRunLoading(false);
+    setExportRunError(null);
+    setExportDownloading(false);
+    setShowDAG(false);
+    setUploadOntError(null);
+    setUploadIlluminaError(null);
+    setUploadOntFastq([]);
+    setUploadIlluminaFastq([]);
+    setPipelineDAG(null);
+    setPipelinePolling(false);
+    setCancelRun(false);
+    setOntSampleRows([]);
+    setIlluminaSampleRows([]);
+    setResultBarcodeAssignments(null);
+    setResultQcStatement(null);
+    setResultQcDecisions(null);
+    setResultVariants(null);
+    setResultMinorSnvs(null);
+    setResultIndels(null);
+    setResultSampleCoverageList(null);
+    setResultSampleCoverageSankey(null);
+    setResultSampleCoveragePlot(null);
+    setSelectedSampleForCoverage("");
+    setResultCoverageHeatmap(null);
+    setResultNtPassedFasta(null);
+    setResultNtFailedFasta(null);
+    setResultAaPassedFasta(null);
+    setResultAaFailedFasta(null);
+    setResultNextcladeFasta(null);
+    setIndelsPage(0);
+    setVariantsPage(0);
+    setMinorSnvsPage(0);
+    setResultMiraSummary(null);
+    setMiraSummaryPage(0);
+    setOpenStep(new Set(ASSEMBLY_STEPS.map((s) => s.id)));
+  }, []);
+
+  const openLoadRunModal = useCallback(async () => {
+    setLoadRunModal(true);
+    setLoadRunLoading(true);
+    setLoadRunError(null);
+    setSelectedRun(null);
+    setRunSearch("");
+    try {
+      const res = await fetch(`${API.listRuns}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to fetch runs");
+      setAvailableRuns(data.run_info ?? []);
+    } catch (err) {
+      if (err.name !== "AbortError") setLoadRunError(err.message);
+    } finally {
+      setLoadRunLoading(false);
+    }
+  }, []);
+
+  const openExportRunModal = useCallback(async () => {
+    setExportRunModal(true);
+    setExportRunLoading(true);
+    setExportRunError(null);
+    setExportSelectedRun(null);
+    setExportRunSearch("");
+    try {
+      const res = await fetch(`${API.listRuns}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to fetch runs");
+      setAvailableRuns(data.run_info ?? []);
+    } catch (err) {
+      if (err.name !== "AbortError") setExportRunError(err.message);
+    } finally {
+      setExportRunLoading(false);
+    }
+  }, []);
+
+  const handleExportDownload = useCallback(() => {
+    if (!exportSelectedRun) return;
+    setExportDownloading(true);
+    const a = document.createElement("a");
+    a.href = `${API.downloadMiraReports}?run_name=${encodeURIComponent(exportSelectedRun.run_name)}&experiment_type=${encodeURIComponent(exportSelectedRun.experiment_type)}`;
+    a.download = `${exportSelectedRun.run_name}_mira_reports.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => setExportDownloading(false), 2000);
+  }, [exportSelectedRun]);
+
+  const handleLoadRun = useCallback(async (runOverride) => {
+    const run = runOverride ?? selectedRun;
+    if (!run) return;
+    setLoadRunLoading(true);
+    setLoadRunError(null);
+    try {
+
+      // Cancel any ongoing run if submitProcessId exists
+      if (submitProcessId && selectedRun) {
+        fetch(`${API.cancelRun}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&pid=${submitProcessId}`)
+          .catch(() => {});
+      }
+
+      // Fetch run info and samplesheet from backend API
+      const res = await fetch(
+        `${API.retrieveRun}?run_name=${encodeURIComponent(run.run_name)}&experiment_type=${encodeURIComponent(run.experiment_type)}`
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to load run");
+
+      // run_info comes back as a list; take the first row
+      const info = Array.isArray(data.run_info) ? data.run_info[0] : data.run_info;
+      setRunName(info.run_name ?? "");
+      setExperimentType(info.experiment_type ?? "");
+      setPrimer(info.sc2_primer || info.rsv_primer || "");
+      setSubSample(String(info.subsample ?? 0));
+      setCreateParquet(info.parquet_files ?? false);
+      setNextclade(info.run_nextclade ?? true);
+      const isOnt = (info.experiment_type ?? "").toLowerCase().endsWith("ont");
+      const rows = Array.isArray(data.samplesheet) ? data.samplesheet : [];
+      if (isOnt) {
+        setOntSampleRows(rows.map(r => ({
+          barcode:     r.barcode    ?? "",
+          sample_id:   r.sample_id  ?? "",
+          sample_type: r.sample_type ?? "Test",
+          single_end:  r.single_end ? "true" : "false",
+          fastq:       r.fastq      ?? "",
+          status:      (r.status ?? "Keep").toLowerCase() === "keep" ? "Keep" : "Exclude",
+        })));
+        setIlluminaSampleRows([]);
+      } else {
+        setIlluminaSampleRows(rows.map(r => ({
+          sample_id:   r.sample_id  ?? "",
+          sample_type: r.sample_type ?? "Test",
+          single_end:  r.fastq_1 && r.fastq_2 ? "false" : "true",
+          fastq_1:     r.fastq_1    ?? "",
+          fastq_2:     r.fastq_2    ?? "",
+          status:      (r.status ?? "Keep").toLowerCase() === "keep" ? "Keep" : "Exclude",
+        })));
+        setOntSampleRows([]);
+      }
+
+      // Reset the uploaded file objects to null, since we are loading an existing run
+      setUploadedOntFileObjects({});
+      setUploadedIlluminaFileObjects({});
+
+      // Update state to reflect loaded run
+      setSubmitSuccess(null);
+      setSubmitError(null);
+      setIsNewRun(false);
+      setAssembled(true);
+      setCancelRun(true);
+
+      // Start polling the pipeline status and show the DAG view
+      setPipelinePolling(true);
+      setShowDAG(true);
+
+      // Close the modal
+      setLoadRunModal(false);
+
+    } catch (err) {
+      setLoadRunError(err.message);
+    } finally {
+      setLoadRunLoading(false);
+    }
+  }, [selectedRun]);
+
+  // ── Submit assembly to backend API ─────────────
+  const submitAssembly = useCallback(async () => {
+
+    // Trim leading/trailing whitespace from run nam
+    if (!runName) {
+      setSubmitError({ title: "Assembly Error", items: ["Run Name is required."], missing: null });
+      return;
+    }
+
+    // Validate experiment type
+    if (!experimentType) {
+      setSubmitError({ title: "Assembly Error", items: ["Experiment Type is required."], missing: null });
+      return;
+    }
+
+    // Validate primer selection for SC2 experiments
+    if (experimentType.includes("SC2") && !primer) {
+      setSubmitError({ title: "Assembly Error", items: ["SC2 experiments require a primer selection."], missing: null });
+      return;
+    }
+
+    // Validate primer selection for RSV experiments
+    if (experimentType.includes("RSV") && !primer) {
+      setSubmitError({ title: "Assembly Error", items: ["RSV experiments require a primer selection."], missing: null });
+      return;
+    }
+
+    // Validate subsample value
+    if (!subSample || isNaN(parseInt(subSample)) || parseInt(subSample) < 0) {
+      setSubmitError({ title: "Assembly Error", items: ["Subsample must be a non-negative integer."], missing: null });
+      return;
+    }
+
+    // Make sure at least one sample exists and with "Keep" status in the samplesheet
+    const isOnt = experimentType.toLowerCase().endsWith("ont");
+    const samplesheet = (isOnt ? ontSampleRows : illuminaSampleRows)
+    
+    // Filter out samples with empty sample_id or fastq fields
+    if (samplesheet.length == 0) {
+      setSubmitError({ title: "Assembly Error", items: ["Sample sheet cannot be empty — please upload a list of FASTQ files to auto-populate the samplesheet"], missing: null });
+      return;
+    } else if (samplesheet.filter(r => r.status === "Keep").length === 0) {
+      setSubmitError({ title: "Assembly Error", items: ["Please mark at least one sample as 'Keep' in the sample sheet to start the assembly."], missing: null });
+      return;
+    }
+
+    // Validate Illumina samples: must have both fastq_1 and fastq_2, and single_end must be "false"
+    if (!isOnt) {
+      const badRows = samplesheet.filter(r => !r.fastq_1 || !r.fastq_2 || r.single_end !== "false");
+      if (badRows.length > 0) {
+        const ids = badRows.map(r => r.sample_id).join(", ");
+        const missingR1 = badRows.filter(r => !r.fastq_1).map(r => `${r.sample_id}: missing fastq_1`);
+        const missingR2 = badRows.filter(r => !r.fastq_2).map(r => `${r.sample_id}: missing fastq_2`);
+        setSubmitError({ title: "Validation Error", items: [`Illumina samples require both fastq_1 and fastq_2 (paired-end).`, "Please upload the missing FASTQ files."], missing: { title: "Missing Samples", samples: [...missingR1, ...missingR2] } });
+        return;
+      }
+    }else{
+      const badRows = samplesheet.filter(r => !r.fastq || r.single_end !== "true");
+      if (badRows.length > 0) {
+        const missingFastq = badRows.map(r => `${r.sample_id}: missing fastq`);
+        setSubmitError({ title: "Validation Error", items: [`ONT samples require a single-end fastq file.`], missing: { title: "Missing Samples", samples: missingFastq } });
+        return;
+      }
+    }
+
+    // Construct the samplesheet for submission
+    const formattedSamplesheet = samplesheet.map(r => isOnt ? {
+      barcode:       r.barcode,
+      sample_id:     r.sample_id,
+      sample_type:   r.sample_type,
+      single_end:    r.single_end,
+      fastq:         r.fastq,
+      status:        r.status,
+    } : {
+      sample_id:     r.sample_id,
+      sample_type:   r.sample_type,
+      single_end:    r.single_end,
+      fastq_1:       r.fastq_1,
+      fastq_2:       r.fastq_2,
+      status:        r.status,
+    });
+
+    // Construct the request body for the API
+    const body = {
+      run_name:           runName,
+      experiment_type:    experimentType,
+      subsample:          parseInt(subSample) || 0,
+      sc2_primer:         experimentType.includes("SC2") ? (primer || "") : "",
+      rsv_primer:         experimentType.includes("RSV") ? (primer || "") : "",
+      parquet_files:      createParquet,
+      run_nextclade:      nextclade,
+      irma_module:        "",
+      custom_irma_config: "",
+      custom_qc_settings: "",
+      assembly_status:    "SUBMITTED",
+      samplesheet:        formattedSamplesheet,
+    };
+
+    // Check if the run name already exists in the database (for new runs only)
+    if (isNewRun) {
+      const checkRes = await fetch(`${API.retrieveRun}?run_name=${encodeURIComponent(runName)}&experiment_type=${encodeURIComponent(experimentType)}`);
+      const checkData = await checkRes.json();
+      if (!checkRes.ok) throw new Error(checkData.detail || "Failed to check run name");
+      const duplicate = Array.isArray(checkData.run_info) && checkData.run_info.find(r => r.run_name === runName);
+      if (duplicate) {
+        setSubmitError({ title: "Assembly Error", items: [`Run name "${runName}" already exists. Please enter a different name or use "Load Run" on the right menu to reload it.`], missing: null });
+        return;
+      }
+    }   
+
+    // Run the submission in a try/catch block to handle errors
+    try {
+      
+      // ── Step 1: register the run in the database ──
+      const res = await fetch(API.createRun, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
+      
+      // Set the run as not new, since we are submitting it now
+      setIsNewRun(false);
+
+      // ── Step 2: upload FASTQ files the user provided via the file picker ──
+      const filesToUpload = samplesheet.flatMap(r => {
+        if (isOnt) {
+          const f = r.fastq && uploadedOntFileObjects[r.fastq];
+          return f ? [f] : [];
+        } else {
+          return [
+            r.fastq_1 && uploadedIlluminaFileObjects[r.fastq_1],
+            r.fastq_2 && uploadedIlluminaFileObjects[r.fastq_2],
+          ].filter(Boolean);
+        }
+      });
+      if (filesToUpload.length > 0) {
+        const form = new FormData();
+        form.append("run_name", runName);
+        form.append("experiment_type", experimentType);
+        filesToUpload.forEach(f => form.append("fastq_files", f));
+        const upRes = await fetch(API.uploadFastqs, { method: "POST", body: form });
+        if (!upRes.ok) {
+          const upErr = await upRes.json().catch(() => ({}));
+          throw new Error(upErr.detail || `File upload failed (HTTP ${upRes.status})`);
+        }
+      }
+
+      // ── Step 3: Validate samplesheet and fastq files exist for each sample ──
+      const valRes = await fetch(`${API.validateRun}?run_name=${encodeURIComponent(runName)}&experiment_type=${encodeURIComponent(experimentType)}`);
+      const valData = await valRes.json();
+      if (!valRes.ok) throw new Error(valData.detail || "Validation failed");
+      if (valData.validation_status !== "passed") {
+        const valItems = Array.isArray(valData.message) ? valData.message : [valData.message || valData.validation_status];
+        setSubmitError({ title: "Validation Error", items: valItems, missing: valData.missing_fastq_files?.length ? { title: "Missing Samples", samples: valData.missing_fastq_files } : null });
+        return;
+      }
+
+      // ── Step 4: Run MIRA assembly ──
+      const miraRes = await fetch(`${API.runMIRA}?run_name=${encodeURIComponent(runName)}&experiment_type=${encodeURIComponent(experimentType)}`);
+      const miraData = await miraRes.json();
+      if (!miraRes.ok) throw new Error(miraData.detail || "run MIRA assembly failed");
+
+      // Step 5: Start polling for pipeline status
+      // Check if pid returned from the response is still running, if so, start polling for status
+      if (miraData.pid) {
+
+        // Update the selected run for the UI state
+        setSelectedRun({
+          run_name:         runName,
+          experiment_type:  experimentType,
+        });
+
+        // Stage the submission status, error, and success messages
+        setSubmitSuccess("MIRA assembly launched successfully! You can monitor its progress in the 'Processing' step.");
+        setSubmitError(null);
+        setSubmitting(true);
+
+        // Clear previous results now that a new run has started
+        setResultBarcodeAssignments(null);
+        setResultQcStatement(null);
+        setResultQcDecisions(null);
+        setResultCoverageHeatmap(null);
+        setResultMiraSummary(null);
+        setMiraSummaryPage(0);
+        setResultSampleCoverageList(null);
+        setSelectedSampleForCoverage("");      
+        setResultSampleCoverageSankey(null);
+        setResultSampleCoveragePlot(null);
+        setResultVariants(null);      
+        setVariantsPage(0);
+        setResultMinorSnvs(null);
+        setMinorSnvsPage(0);
+        setResultIndels(null);
+        setIndelsPage(0);
+        setResultAaFailedFasta(null);
+        setResultAaPassedFasta(null);
+        setResultNtFailedFasta(null);
+        setResultNtPassedFasta(null);      
+        setResultNextcladeFasta(null);
+
+        // Update the selected run for the UI state
+        setAssembled(false);
+        setCancelRun(false);
+        setSubmitProcessId(miraData.pid);
+        setPipelinePolling(true);
+        setShowDAG(true);
+
+      }
+
+    } catch (err) {
+      setSubmitError({ title: "Assembly Error", items: [err.message], missing: null });
+      setSubmitSuccess(null);
+      setSubmitting(false);
+    }
+
+  }, [experimentType, ontSampleRows, illuminaSampleRows, runName, subSample, primer, createParquet, nextclade]);
+
+  // True once assembly finishes but every result field is still empty (nothing to display).
+  const hasNoResults = [
+    resultBarcodeAssignments,
+    resultQcStatement,
+    resultQcDecisions,
+    resultCoverageHeatmap,
+    resultMiraSummary,
+    resultSampleCoverageList,
+    resultVariants,
+    resultIndels,
+    resultMinorSnvs,
+  ].every((result) => result === null);
+
+  return (
+    <div className="flex h-full overflow-hidden">
+
+      {/* ── Left: accordion steps ─────────────────── */}
+      <div className="flex-1 overflow-auto p-4 space-y-2">
+        {ASSEMBLY_STEPS.map(({ id, title, subtitle, icon }) => (
+          <div key={id} id={`step-${id}`} className="rounded-xl border border-border overflow-hidden">
+            <button
+              onClick={() => toggle(id)}
+              className="w-full px-4 py-3 bg-muted/20 hover:bg-muted/40 transition-colors"
+            >
+              <StepHeader
+                icon={id === "progress" && pipelinePolling == true && assembled == false
+                  ? ({ size }) => <RefreshCw size={size} className="animate-spin" />
+                  : icon
+                }
+                title={title}
+                subtitle={subtitle}
+                open={openStep.has(id)}
+              />
+            </button>
+
+            {openStep.has(id) && (
+              <>
+                {/* ── Step 1: Setup ──────────────────── */}
+                {id === "setup" && (
+                  <StepPanel>
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-xs font-bold tracking-wider text-muted-foreground uppercase">Run Information</span>
+                      <div className="flex-1 h-px bg-border" />
+                    </div>
+                    <div>
+                      <FieldLabel>Run Name<span className="text-destructive">*</span></FieldLabel>
+                      <p className="mb-2 text-xs text-muted-foreground">The name must not contain any spaces. If exists, spaces will be auto-replaced with underscores.</p>
+                      <input
+                        value={runName}
+                        onChange={(e) => setRunName(e.target.value.replace(/\s+/g, "_"))}
+                        placeholder="e.g. Flu_Illumina_2024-01-01"
+                        disabled={!isNewRun}
+                        className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
+                      />
+                    </div>
+                    <div>
+                      <FieldLabel>Experiment Type <span className="text-destructive">*</span></FieldLabel>
+                      <p className="mb-2 text-xs text-muted-foreground">The experiment type determines the primers and analysis pipeline to be used.</p>
+                      <select
+                        value={experimentType}
+                        onChange={(e) => {
+                          setExperimentType(e.target.value);
+                          setPrimer(e.target.value?.startsWith("SC2") ? SC2_PRIMERS[0].value : e.target.value?.startsWith("RSV") ? RSV_PRIMERS[0].value : "");
+                        }}
+                        disabled={!isNewRun}
+                        className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
+                      >
+                        <option value="">— Select experiment type —</option>
+                        {EXPERIMENT_TYPES.map((p) => <option key={p}>{p}</option>)}
+                      </select>
+                    </div>
+                    {(experimentType?.startsWith("SC2") || experimentType?.startsWith("RSV")) && (
+                      <div>
+                        <FieldLabel>Primers <span className="text-destructive">*</span></FieldLabel>
+                        <p className="mb-2 text-xs text-muted-foreground">Select the appropriate primer for the chosen experiment type.</p>
+                        <select
+                          value={primer}
+                          onChange={(e) => setPrimer(e.target.value)}
+                          className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                        >
+                          {experimentType?.startsWith("SC2") && SC2_PRIMERS.map(({ value, label }) => (
+                            <option key={value} value={value}>{label}</option>
+                          ))}
+                          {experimentType?.startsWith("RSV") && RSV_PRIMERS.map(({ value, label }) => (
+                            <option key={value} value={value}>{label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-xs font-bold tracking-wider text-muted-foreground uppercase">Sample Sheet</span>
+                      <div className="flex-1 h-px bg-border" />
+                    </div>
+
+                    {(!runName || !experimentType) && (
+                      <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                        <AlertCircle size={13} className="shrink-0" /> Please provide a <strong className="mx-0.5">Run Name</strong> and select an <strong className="mx-0.5">Experiment Type</strong> above to continue.
+                      </div>
+                    )}
+
+                    {runName && experimentType && (<>
+
+                    {(experimentType.toLowerCase().endsWith("ont") ? ontSampleRows : illuminaSampleRows).length === 0 && (
+                    <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                      <AlertCircle size={13} /> Upload FASTQ files to auto-populate the sample sheet.
+                    </div>
+                    )}
+
+                    {(experimentType.toLowerCase().endsWith("ont") ? uploadOntError : uploadIlluminaError) && (
+                      <div className="rounded-lg border bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-800 px-3 py-2 space-y-1 text-xs mb-2 max-h-[150px] overflow-y-auto">
+                        <p className="font-semibold text-destructive mb-1">Upload Error:</p>
+                        {(experimentType.toLowerCase().endsWith("ont") ? uploadOntError.items : uploadIlluminaError.items).map((msg, i) => (
+                          <div key={i} className="flex items-start gap-2">
+                            <AlertCircle size={12} className="shrink-0 mt-0.5 text-destructive" />
+                            <span className="text-destructive font-mono">{msg}</span>
+                          </div>
+                        ))}
+                        <p className="font-semibold text-destructive mb-1">Invalid Files:</p>
+                        {(experimentType.toLowerCase().endsWith("ont") ? uploadOntError.missing : uploadIlluminaError.missing).map((msg, i) => (
+                          <div key={i}>
+                            <div className="flex items-start gap-2">
+                              <AlertCircle size={12} className="shrink-0 mt-0.5 text-destructive" />
+                              <span className="text-destructive font-mono">{msg}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div>
+                      <FieldLabel>Upload FASTQ Files</FieldLabel>
+                      <label className="flex flex-col items-center justify-center gap-2 h-28 rounded-xl border-2 border-dashed border-border bg-muted/10 hover:bg-muted/20 cursor-pointer transition-colors text-muted-foreground text-sm">
+                        <Upload size={22} />
+                        <span>Drag &amp; drop or <span className="text-primary underline">browse</span></span>
+                        <span className="text-xs opacity-60">.fastq, .fastq.gz accepted, and sample names must not contain any spaces. If exists, spaces will be replaced with underscores.</span>
+                        <input type="file" className="hidden" multiple accept=".fastq,.fastq.gz,.fq,.fq.gz"
+                          onChange={(e) => {
+                            
+                            // Handle file selection and validation
+                            const files = Array.from(e.target.files || []);
+                            if (!files.length) return;
+
+                            // Determine if the experiment type is ONT or Illumina
+                            const isOnt = experimentType.toLowerCase().endsWith("ont");
+
+                            // Sanitize: replace spaces with underscores
+                            const sanitized = files.map(f => f.name.replace(/\s+/g, "_"));
+
+                            // Validate filenames based on experiment type
+                            if (isOnt) {
+
+                              // Validate: ONT filenames must contain _barcode##_
+                              const invalidFiles = sanitized.filter(fname => !/_barcode\d+_/i.test(fname));
+                              if (invalidFiles.length > 0) {
+                                setUploadOntError({ items: [`For ONT run, the FASTQ files must contain a barcode pattern (_barcode##_) in their filenames.`], missing: [...invalidFiles] });
+                                e.target.value = "";
+                                return;
+                              } else {
+                                setUploadOntError(null);
+                              }
+
+                              // Store File objects keyed by sanitized filename
+                              const fileMap = {};
+                              files.forEach((f, i) => { fileMap[sanitized[i]] = f; });
+                              setUploadedOntFileObjects(prev => ({ ...prev, ...fileMap }));
+                            
+                              // Group ONT files by barcode extracted from filename
+                              const grouped = {};
+                              sanitized.forEach(fname => {
+                                const match = fname.match(/_barcode(\d+)_/i);
+                                const barcode = match
+                                  ? `barcode${String(parseInt(match[1])).padStart(2, "0")}`
+                                  : fname.replace(/\.(fastq|fq)(\.gz)?$/i, "");
+                                if (!grouped[barcode]) grouped[barcode] = [];
+                                grouped[barcode].push(fname);
+                              });
+
+                              // Sort barcodes ascending (barcode01, barcode02, ...)
+                              const sortedBarcodes = Object.keys(grouped).sort((a, b) => {
+                                const na = parseInt(a.match(/\d+/)?.[0] ?? "0");
+                                const nb = parseInt(b.match(/\d+/)?.[0] ?? "0");
+                                return na - nb;
+                              });
+
+                              // Continue sample numbering after existing rows
+                              const existingNums = ontSampleRows
+                                .map(r => parseInt(r.sample_id.replace(/\D+/g, "") || "0"))
+                                .filter(Boolean);
+                              let sampleCounter = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
+
+                              const allPotentialRows = [];
+                              sortedBarcodes.forEach(barcode => {
+                                const existingByBarcode = ontSampleRows.find(r => r.barcode === barcode);
+                                const sample_id = existingByBarcode ? existingByBarcode.sample_id : `sample_${sampleCounter++}`;
+                                const sample_type = existingByBarcode ? existingByBarcode.sample_type : "Test";
+                                grouped[barcode].forEach(fname => {
+                                  // Look up status by the specific fastq file first; fall back to barcode-level row
+                                  const existingByFastq = ontSampleRows.find(r => r.fastq === fname);
+                                  const status = existingByFastq ? existingByFastq.status : (existingByBarcode ? existingByBarcode.status : "Keep");
+                                  allPotentialRows.push({
+                                    barcode: barcode, 
+                                    sample_id: sample_id, 
+                                    sample_type: sample_type, 
+                                    single_end: "true", 
+                                    fastq: fname,
+                                    status: status
+                                  });
+                                });
+                              });
+
+                              // Overwrite existing rows with matching fastq and add new ones
+                              const ontNewRows = allPotentialRows.filter(r => !ontSampleRows.some(e => e.fastq === r.fastq));
+                              const ontUpdates = allPotentialRows.filter(r => ontSampleRows.some(e => e.fastq === r.fastq));
+
+                              setOntSampleRows(prev => {
+                                const updated = prev.map(r => {
+                                  const u = ontUpdates.find(m => m.fastq === r.fastq);
+                                  return u ? { ...r, ...u } : r;
+                                });
+                                return ontNewRows.length > 0 ? [...updated, ...ontNewRows] : updated;
+                              });
+
+                              // Accumulate uploaded ONT fastq filenames
+                              setUploadOntFastq(prev => [...new Set([...prev, ...sanitized])]);
+
+                            } else {
+
+                              // Validate: Illumina filenames must contain _R1 or _R2
+                              const invalidFiles = sanitized.filter(fname => {
+                                const base = fname.replace(/\.(fastq|fq)(\.gz)?$/i, "");
+                                return !/_R1(?:_|$)/i.test(base) && !/_R2(?:_|$)/i.test(base);
+                              });
+                              if (invalidFiles.length > 0) {
+                                setUploadIlluminaError({ items: [`For Illumina run, the FASTQ files must contain "_R1" or "_R2" in their filenames.`], missing: [...invalidFiles] });
+                                e.target.value = "";
+                                return;
+                              }else {
+                                setUploadIlluminaError(null);
+                              }
+
+                              // Store File objects keyed by sanitized filename
+                              const fileMap = {};
+                              files.forEach((f, i) => { fileMap[sanitized[i]] = f; });
+                              setUploadedIlluminaFileObjects(prev => ({ ...prev, ...fileMap }));
+
+                              // Pair R1 / R2 files by sample_id prefix
+                              // Matches _R1_ (mid-filename) or _R1 at end, e.g. SAMPLE_R1_001 or SAMPLE_R1
+                              const grouped = {};
+                              sanitized.forEach(fname => {
+                                const base = fname.replace(/\.(fastq|fq)(\.gz)?$/i, "");
+                                const r1 = base.match(/^(.+?)_R1(?:_|$)/i);
+                                const r2 = base.match(/^(.+?)_R2(?:_|$)/i);
+                                let sampleId, read;
+                                if (r1) { sampleId = r1[1]; read = "R1"; }
+                                else if (r2) { sampleId = r2[1]; read = "R2"; }
+                                else { sampleId = base; read = "R1"; }
+                                if (!grouped[sampleId]) grouped[sampleId] = {};
+                                grouped[sampleId][read] = fname;
+                              });
+                              const allPotentialRows = Object.entries(grouped).map(([sampleId, reads]) => ({
+                                sample_id: sampleId,
+                                sample_type: "Test",
+                                single_end: reads.R1 && reads.R2 ? "false" : "true",
+                                fastq_1: reads.R1 || "",
+                                fastq_2: reads.R2 || "",
+                                status: "Keep",
+                              }));
+
+                              // Classify each new row: new sample or overwrite existing
+                              const newRows = [];
+                              const mergeUpdates = [];
+
+                              for (const newRow of allPotentialRows) {
+                                const existingRow = illuminaSampleRows.find(e => e.sample_id === newRow.sample_id);
+                                if (!existingRow) {
+                                  newRows.push(newRow);
+                                } else {
+                                  const sample_id = existingRow.sample_id;
+                                  const sample_type = existingRow.sample_type;
+                                  const fastq_1 = existingRow.fastq_1 ? existingRow.fastq_1 : newRow.fastq_1;
+                                  const fastq_2 = existingRow.fastq_2 ? existingRow.fastq_2 : newRow.fastq_2;
+                                  const single_end = fastq_1 && fastq_2 ? "false" : "true";
+                                  const status = existingRow.status;
+                                  mergeUpdates.push({
+                                    sample_id:  sample_id,
+                                    sample_type: sample_type,
+                                    fastq_1:    fastq_1,
+                                    fastq_2:    fastq_2,
+                                    single_end: single_end,
+                                    status: status,
+                                  });
+                                }
+                              }
+
+                              // Apply updates + additions atomically
+                              setIlluminaSampleRows(prev => {
+                                const updated = prev.map(r => {
+                                  const u = mergeUpdates.find(m => m.sample_id === r.sample_id);
+                                  return u ? { ...r, ...u } : r;
+                                });
+                                return newRows.length > 0 ? [...updated, ...newRows] : updated;
+                              });
+
+                              // Accumulate uploaded Illumina fastq filenames
+                              setUploadIlluminaFastq(prev => [...new Set([...prev, ...sanitized])]); 
+
+                            }
+
+                            e.target.value = ""; // allow re-selecting same files
+
+                          }}
+                        />
+                      </label>
+                    </div>
+
+                    {(experimentType.toLowerCase().endsWith("ont") ? ontSampleRows : illuminaSampleRows).length > 0 && (
+                      <div className="flex items-center gap-2">
+                        <div className="flex gap-1.5 shrink-0">
+                          <button
+                            onClick={() => exportSampleSheet("csv")}
+                            className="flex items-center gap-1 px-3 py-1 rounded-md border border-border text-xs text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+                          >
+                            <Download size={11} /> CSV
+                          </button>
+                          <button
+                            onClick={() => exportSampleSheet("excel")}
+                            className="flex items-center gap-1 px-3 py-1 rounded-md border border-border text-xs text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+                          >
+                            <Download size={11} /> Excel
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          value={sampleSearch}
+                          onChange={(e) => setSampleSearch(e.target.value)}
+                          placeholder="Search samples…"
+                          className="flex-1 h-7 px-2 rounded-md border border-border bg-background text-xs font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+                        />
+                      </div>
+                    )}
+
+                    <div className="rounded-xl border border-border overflow-hidden">
+                      <div className="overflow-y-auto max-h-[300px]">
+                      <table className="w-full text-xs">
+                        <thead className="bg-muted sticky top-0 z-10">
+                          <tr>
+                            {(experimentType.toLowerCase().endsWith("ont")
+                              ? ["barcode", "sample_id", "sample_type", "single_end", "fastq", "status"]
+                              : ["sample_id", "sample_type", "single_end", "fastq_1", "fastq_2", "status"]
+                            ).map((h) => (
+                              <th
+                                key={h}
+                                className="px-3 py-2 text-left font-semibold text-muted-foreground font-mono cursor-pointer select-none hover:text-foreground transition-colors"
+                                onClick={() => setSortConfig(prev => ({
+                                  key: h,
+                                  dir: prev.key === h && prev.dir === "asc" ? "desc" : "asc",
+                                }))}
+                              >
+                                <span className="flex items-center gap-1">
+                                  {h}
+                                  {sortConfig.key === h ? (
+                                    sortConfig.dir === "asc"
+                                      ? <ArrowUp size={10} className="text-primary shrink-0" />
+                                      : <ArrowDown size={10} className="text-primary shrink-0" />
+                                  ) : (
+                                    <ArrowUpDown size={10} className="opacity-30 shrink-0" />
+                                  )}
+                                </span>
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(() => {
+                            const isOnt = experimentType.toLowerCase().endsWith("ont");
+                            const activeRows = isOnt ? ontSampleRows : illuminaSampleRows;
+                            const q = sampleSearch.trim().toLowerCase();
+                            const filteredRows = q
+                              ? activeRows.filter(row => {
+                                  const vals = isOnt
+                                    ? [row.barcode, row.sample_id, row.sample_type, row.single_end, row.fastq, row.status]
+                                    : [row.sample_id, row.sample_type, row.single_end, row.fastq_1, row.fastq_2, row.status];
+                                  return vals.some(v => (v ?? "").toString().toLowerCase().includes(q));
+                                })
+                              : activeRows;
+                            const getVal = (row, k) => {
+                              if (isOnt && k === "fastq") return (row.fastq ?? "").toString().toLowerCase();
+                              return (row[k] ?? "").toString().toLowerCase();
+                            };
+                            const sortedRows = sortConfig.key
+                              ? [...filteredRows].sort((a, b) => {
+                                  const va = getVal(a, sortConfig.key);
+                                  const vb = getVal(b, sortConfig.key);
+                                  if (va < vb) return sortConfig.dir === "asc" ? -1 : 1;
+                                  if (va > vb) return sortConfig.dir === "asc" ? 1 : -1;
+                                  return 0;
+                                })
+                              : filteredRows;
+                            if (sortedRows.length === 0) return (
+                              <tr className="border-t border-border">
+                                <td colSpan={6} className="px-3 py-4 text-center text-muted-foreground">
+                                  {q ? "No samples match your search." : "No samples loaded — upload FASTQ files to populate."}
+                                </td>
+                              </tr>
+                            );
+                            return sortedRows.map((row) => {
+                              const idx = activeRows.indexOf(row);
+                              const colKeys = isOnt
+                                ? ["barcode", "sample_id", "sample_type", "single_end", "fastq"]
+                                : ["sample_id", "sample_type", "single_end", "fastq_1", "fastq_2"];
+                              const colVals = isOnt
+                                ? [row.barcode, row.sample_id, row.sample_type, row.single_end, row.fastq]
+                                : [row.sample_id, row.sample_type, row.single_end, row.fastq_1, row.fastq_2];
+                              return (
+                                <tr key={idx} className={cn("border-t border-border transition-colors", row.status === "Exclude" && "opacity-50 bg-muted/20")}>
+                                  {colKeys.map((key, ci) => (
+                                    <td key={ci} className="px-3 py-2 font-mono text-foreground">
+                                      {key === "sample_type" ? (
+                                        isOnt ? (
+                                          <span className="px-2 py-0.5 rounded bg-muted text-muted-foreground font-mono text-xs">Test</span>
+                                        ) : (
+                                        <select
+                                          value={row.sample_type}
+                                          onChange={(e) => setIlluminaSampleRows((prev) => prev.map((r, i) => i === idx ? { ...r, sample_type: e.target.value } : r))}
+                                          className="h-7 px-2 rounded border border-border bg-background text-xs font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+                                        >
+                                          {SAMPLE_TYPES.map((opt) => <option key={opt}>{opt}</option>)}
+                                        </select>
+                                        )
+                                      ) : (
+                                        key.startsWith("fastq") ? (
+                                          <span className="flex items-center gap-1">
+                                            {colVals[ci] && (isOnt ? uploadedOntFileObjects[colVals[ci]] : uploadedIlluminaFileObjects[colVals[ci]]) && (
+                                              <Upload size={10} className="text-emerald-500 shrink-0" title="Uploaded this session" />
+                                            )}
+                                            <span className="block overflow-x-auto whitespace-nowrap max-w-[300px] scrollbar-thin">{colVals[ci]}</span>
+                                          </span>
+                                        ) : (
+                                          <span className="block overflow-x-auto whitespace-nowrap max-w-[300px] scrollbar-thin">{colVals[ci]}</span>
+                                        )
+                                      )}
+                                    </td>
+                                  ))}
+                                  <td className="px-3 py-2">
+                                    <div className="flex items-center gap-1.5">
+                                      <button
+                                        onClick={() => toggleSampleStatus(idx)}
+                                        className={cn(
+                                          "px-2 py-0.5 rounded-full text-xs font-semibold border transition-colors",
+                                          row.status === "Keep"
+                                            ? "bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800"
+                                            : "bg-red-100 text-red-700 border-red-200 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800"
+                                        )}
+                                      >
+                                        {row.status === "Keep" ? "Keep" : "Exclude"}
+                                      </button>
+                                      <button
+                                        onClick={() => removeSample(idx)}
+                                        title="Remove sample"
+                                        className="p-1 rounded-md text-muted-foreground hover:text-destructive hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
+                                      >
+                                        <Trash2 size={12} />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            });
+                          })()}
+                        </tbody>
+                      </table>
+                      </div>
+                    </div>
+                    </>)}
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-xs font-bold tracking-wider text-muted-foreground uppercase">Assembly Parameters</span>
+                      <div className="flex-1 h-px bg-border" />
+                    </div>
+                    <div>
+                      <FieldLabel>Number of Subsamples <span className="text-destructive">*</span></FieldLabel>
+                      <p className="text-xs text-muted-foreground mb-2 leading-relaxed">
+                        The number of reads used for subsampling. Set to <code className="font-mono bg-muted px-1 rounded">0</code> to skip subsampling.
+                      </p>
+                      <input
+                        type="number"
+                        value={subSample}
+                        onChange={(e) => setSubSample(e.target.value)}
+                        placeholder="e.g. 100"
+                        min={0}
+                        className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      />
+                    </div>
+                    <button
+                      onClick={() => setCreateParquet((v) => !v)}
+                      className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
+                    >
+                      <div>
+                        <p className="text-sm font-medium">Create Parquet Files</p>
+                        <p className="text-xs text-muted-foreground">When set to true, this flag will save the assembly outputs from CSV files to Parquet format for downstream analysis.</p>
+                      </div>
+                      <span className={cn(
+                        "relative w-10 h-5 rounded-full transition-colors shrink-0 pointer-events-none",
+                        createParquet ? "bg-primary" : "bg-muted"
+                      )}>
+                        <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform", createParquet ? "translate-x-5" : "translate-x-0.5")} />
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => setNextclade((v) => !v)}
+                      className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
+                    >
+                      <div>
+                        <p className="text-sm font-medium">Run Nextclade</p>
+                        <p className="text-xs text-muted-foreground">When set to true, this flag will run Nextclade with your passing samples.</p>
+                      </div>
+                      <span className={cn(
+                        "relative w-10 h-5 rounded-full transition-colors shrink-0 pointer-events-none",
+                        nextclade ? "bg-primary" : "bg-muted"
+                      )}>
+                        <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform", nextclade ? "translate-x-5" : "translate-x-0.5")} />
+                      </span>
+                    </button>
+                    {submitSuccess && submitError === null && (
+                      <div className="flex items-start gap-2 text-xs text-emerald-700 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-lg px-3 py-2">
+                        <Check size={13} className="shrink-0 mt-0.5" /> {submitSuccess}
+                      </div>
+                    )}
+                    {submitError && (
+                      <div className="rounded-lg border bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-800 px-3 py-2 space-y-1.5 text-xs">
+                        {submitError.title && submitError.title.length > 0 && (
+                          <p className="font-semibold text-destructive mb-1">{submitError.title}</p>
+                        )}
+                        {Array.isArray(submitError.items) && submitError.items.map((msg, i) => (
+                          <div key={i} className="flex items-start gap-2">
+                            <AlertCircle size={12} className="shrink-0 mt-0.5 text-destructive" />
+                            <span className="text-destructive">{msg}</span>
+                          </div>
+                        ))}
+                        {Array.isArray(submitError.missing?.samples) && submitError.missing.samples.length > 0 && (
+                          <div className="mt-2 pt-2 border-t border-red-200 dark:border-red-800 space-y-1">
+                            <p className="font-semibold text-destructive">{submitError.missing.title}</p>
+                            {submitError.missing.samples.map((msg, i) => (
+                              <div key={i} className="flex items-start gap-2">
+                                <AlertCircle size={11} className="shrink-0 mt-0.5 text-destructive" />
+                                <span className="text-destructive">
+                                  <span className="font-mono font-semibold">{msg}</span>
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <button
+                        disabled={submitting}
+                        onClick={submitAssembly}
+                        className="flex items-center gap-2 px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {submitting ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
+                        {submitting ? "Processing..." : isNewRun ? "Run Assembly" : "Rerun Assembly"}
+                      </button>
+                      {submitProcessId && pipelinePolling && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              const statusRes = await fetch(`${API.miraCancel}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&pid=${submitProcessId}`);
+                              const data = await statusRes.json();
+                              if (!statusRes.ok) throw new Error(data.detail || "Failed to cancel MIRA run");
+                              setCancelRun(true);
+                              setSubmitError({
+                                title: "Cancelled Status",
+                                items: Array.isArray(data.message) ? data.message : [data.message || "The MIRA run was cancelled."],
+                                missing: null,
+                              });
+                            } catch (err) {
+                              setSubmitError({ title: "Cancellation Error", items: [err.message], missing: null });
+                            }
+                          }}
+                          className="flex items-center gap-2 px-5 py-2 rounded-lg bg-destructive text-destructive-foreground text-sm font-medium hover:bg-destructive/90 transition-colors"
+                        >
+                          <Square size={14} /> Cancel Run
+                        </button>
+                      )}
+                    </div>
+
+                  </StepPanel>
+                )}
+
+                {/* ── Step 2: Processing ─────────── */}
+                {id === "progress" && (
+                  <StepPanel>
+                    {/* ── no run loaded yet ── */}
+                    {showDAG == false && (
+                      <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                        <AlertCircle size={13} /> Run MIRA assembly in Step 1 to watch its live progress here.
+                      </div>
+                    )}
+
+                    {/* ── run loaded / submitted ── */}
+                    {showDAG == true && (
+                      <>
+                        {/* header row */}
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <div className="flex items-center gap-3 min-w-0 bg-muted/60 border border-border px-3 py-1.5 rounded-lg">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Run</span>
+                              <span className="text-xs font-mono font-semibold text-foreground truncate max-w-[220px]">{selectedRun?.run_name || "—"}</span>
+                            </div>
+                            <div className="w-px h-4 bg-border shrink-0" />
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Type</span>
+                              <span className="text-xs font-mono text-foreground">{selectedRun?.experiment_type || "—"}</span>
+                            </div>
+                            <div className="w-px h-4 bg-border shrink-0" />
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">PID</span>
+                              <span className="text-xs font-mono text-foreground">{submitProcessId || "—"}</span>
+                            </div>
+                          </div>
+                          {pipelineDAG?.workflows?.status && (() => {
+                            const s = pipelineDAG?.workflows?.status;
+                            const { cls, Icon } = {
+                              COMPLETED:  { cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400", Icon: Check },
+                              FAILED:     { cls: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400", Icon: AlertCircle },
+                              PROCESSING: { cls: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400", Icon: RefreshCw },
+                            }[s] ?? { cls: "bg-muted text-muted-foreground", Icon: AlertCircle };
+                            return (
+                              <span className={cn("flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold shrink-0", cls)}>
+                                <Icon size={12} className={s === "PROCESSING" ? "animate-spin" : ""} />
+                                {s}
+                              </span>
+                            );
+                          })()}
+                        </div>
+
+                        {/* CANCELED status message */}
+                        {pipelineDAG?.workflows?.status && (
+                          Array.isArray(pipelineDAG?.message) && pipelineDAG.message.length > 0
+                            ? pipelineDAG.message.map((msg, i) => (
+                                <div key={i} className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+                                  <AlertCircle size={13} className="shrink-0 mt-0.5" />
+                                  <span>{msg}</span>
+                                </div>
+                              ))
+                            : pipelineDAG?.workflows?.status === "CANCELED" && (
+                                <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+                                  <AlertCircle size={13} className="shrink-0 mt-0.5" />
+                                  <span>The MIRA run was canceled or interrupted.</span>
+                                </div>
+                              )
+                        )}
+
+                        {/* pipeline tasks — flat list */}
+                        {pipelineDAG?.tasks?.length > 0 && (
+                          <div className="rounded-xl border border-border overflow-hidden">
+                            <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
+                              <p className="text-xs font-bold text-foreground uppercase tracking-wider">Running Tasks</p>                           </div>
+                            <div className="divide-y divide-border/50 max-h-[360px] overflow-y-auto">
+                              {pipelineDAG?.tasks?.map(task => {
+                                const done   = task.status === "COMPLETED";
+                                const failed = task.status === "FAILED";
+                                return (
+                                  <div key={task.task_id} className="flex items-center justify-between gap-3 px-3 py-1.5">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      {done   && <Check size={10} className="text-emerald-500 shrink-0" />}
+                                      {failed  && <AlertCircle size={10} className="text-destructive shrink-0" />}
+                                      {!done && !failed && <RefreshCw size={10} className="animate-spin text-sky-500 shrink-0" />}
+                                      <span className="text-xs font-mono text-foreground truncate">{task.process_name}</span>
+                                      {task.sample && <span className="text-xs text-muted-foreground shrink-0">({task.sample})</span>}
+                                    </div>
+                                    <span className={cn(
+                                      "px-1.5 py-0.5 rounded font-mono text-xs shrink-0",
+                                      done   ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                                      : failed ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                                      : "bg-muted text-muted-foreground"
+                                    )}>{task.status}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* timing footer */}
+                        {pipelineDAG?.workflows && (
+                          <div className="text-xs text-muted-foreground border-t border-border pt-2 flex items-center justify-between flex-wrap gap-y-1">
+                            <div className="flex gap-x-4 flex-wrap gap-y-0.5">
+                              <span>Started: <span className="text-foreground">{pipelineDAG?.workflows?.started_at || "—"}</span></span>
+                              <span>Completed: <span className="text-foreground">{pipelineDAG?.workflows?.completed_at || "—"}</span></span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
+                                {pipelineDAG?.workflows?.number_of_samples ?? 0} total samples
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 font-mono">
+                                {pipelineDAG?.workflows?.number_of_samples_with_failed_tasks ?? 0} samples failed
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 font-mono">
+                                {pipelineDAG?.workflows?.number_of_samples_with_successful_tasks ?? 0} samples passed
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </StepPanel>
+                )}
+
+                {/* ── Step 3: Results ─────────────── */}
+                {id === "results" && (
+                  <StepPanel>
+                    {!assembled && (
+                      <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                        <AlertCircle size={13} /> Results will appear here after assembly is completed.
+                      </div>
+                    )}
+                    {assembled && cancelRun && hasNoResults && (
+                      <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                        <AlertCircle size={13} /> There are no results generated for this run.
+                      </div>
+                    )}
+                    {assembled && !cancelRun && hasNoResults && (
+                      <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                        <AlertCircle size={13} /> The assembly completed, but there are no results generated for this run.
+                      </div>
+                    )}
+
+                    {/* ── 1. Barcode Assignment ── */}
+                    {assembled && resultBarcodeAssignments !== null && (
+                      <div className="rounded-xl border border-border overflow-hidden">
+                        <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
+                          <p className="text-xs font-bold text-foreground uppercase tracking-wider">Barcode Assignment</p>
+                        </div>
+                        <div className="p-2">
+                          <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
+                            <Plot
+                              data={resultBarcodeAssignments.data ?? []}
+                              layout={{
+                                ...(resultBarcodeAssignments.layout ?? {}),
+                                autosize: true,
+                                margin: { l: 20, r: 20, t: 40, b: 20 },
+                                paper_bgcolor: "transparent",
+                                plot_bgcolor: "transparent",
+                                font: { size: 11 },
+                                showlegend: true,
+                                legend: { orientation: "h", x: 0.5, xanchor: "center", y: -0.1 },
+                              }}
+                              config={PLOT_CONFIG}
+                              style={{ width: "100%", minHeight: 300 }}
+                              useResizeHandler
+                            />
+                          </Suspense>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── 2. Automatic QC Decisions heatmap ── */}
+                    {assembled && resultQcDecisions !== null && (
+                      <div className="rounded-xl border border-border overflow-hidden">
+                        <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
+                          <p className="text-xs font-bold text-foreground uppercase tracking-wider">Automatic Quality Control Decisions</p>
+                        </div>
+                        {/* ── QC Statement ── */}
+                        {resultQcStatement && (() => {
+                          const fails = Object.entries(resultQcStatement["FAILS QC"] ?? {});
+                          const passes = Object.entries(resultQcStatement["passes QC"] ?? {});
+                          if (fails.length === 0 && passes.length === 0) return null;
+                          return (
+                            <div className="px-3 py-2 border-b border-border space-y-1 bg-muted/5">
+                              {fails.map(([sample, pct]) => (
+                                <div key={`fail-${sample}`} className="flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
+                                  <AlertCircle size={11} className="shrink-0 mt-0.5" />
+                                  <span>Your negative sample <strong>&ldquo;{sample}&rdquo; FAILS QC</strong> with {pct}% reads mapping to reference.</span>
+                                </div>
+                              ))}
+                              {passes.map(([sample, pct]) => (
+                                <div key={`pass-${sample}`} className="flex items-start gap-1.5 text-xs text-foreground">
+                                  <Check size={11} className="shrink-0 mt-0.5 text-emerald-500" />
+                                  <span>Your negative sample &ldquo;{sample}&rdquo; passes QC with {pct}% reads mapping to reference.</span>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
+                        <div className="p-2">
+                          <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
+                            <Plot
+                              data={resultQcDecisions.data ?? []}
+                              layout={{
+                                ...(resultQcDecisions.layout ?? {}),
+                                autosize: true,
+                                margin: { l: 60, r: 20, t: 40, b: 20 },
+                                paper_bgcolor: "transparent",
+                                plot_bgcolor: "transparent",
+                                font: { size: 11 },
+                                xaxis: { ...(resultQcDecisions.layout?.xaxis ?? {}), side: "top" },
+                              }}
+                              config={PLOT_CONFIG}
+                              style={{ width: "100%", minHeight: 260 }}
+                              useResizeHandler
+                            />
+                          </Suspense>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── 5b. Coverage Heatmap ── */}
+                    {assembled && resultCoverageHeatmap !== null && (
+                      <div className="rounded-xl border border-border overflow-hidden">
+                        <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
+                          <p className="text-xs font-bold text-foreground uppercase tracking-wider">Median Coverage Heatmap</p>
+                        </div>
+                        <div className="p-2">
+                          <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
+                            <Plot
+                              data={resultCoverageHeatmap.data ?? []}
+                              layout={{
+                                ...(resultCoverageHeatmap.layout ?? {}),
+                                autosize: true,
+                                margin: { l: 60, r: 20, t: 40, b: 20 },
+                                paper_bgcolor: "transparent",
+                                plot_bgcolor: "transparent",
+                                font: { size: 11 },
+                                xaxis: { ...(resultCoverageHeatmap.layout?.xaxis ?? {}), side: "top" },
+                              }}
+                              config={PLOT_CONFIG}
+                              style={{ width: "100%", minHeight: 260 }}
+                              useResizeHandler
+                            />
+                          </Suspense>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── 4. MIRA Summary ── */}
+                    {assembled && resultMiraSummary !== null && (resultMiraSummary.length === 0 ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/20 rounded-lg px-3 py-2 border border-border">
+                        <Database size={13} className="shrink-0" /> <span><span className="font-semibold">MIRA Summary:</span> No data returned for this run.</span>
+                      </div>
+                    ) : (
+                      <ResultTable title="Mira Summary" data={resultMiraSummary} page={miraSummaryPage} setPage={setMiraSummaryPage} colorize />
+                    ))}
+
+                    {/* ── 5c. Sample Coverage Plot ── */}
+                    {assembled && resultSampleCoverageList !== null && (() => {
+                      // Derive sorted sample list from the sample coverage list (pandas split-format).
+                      const sampleOptions = resultSampleCoverageList.columns && resultSampleCoverageList.data
+                        ? [...new Set(resultSampleCoverageList.data.map(row => row[resultSampleCoverageList.columns.indexOf("Sample")]))].sort()
+                        : Object.keys(resultSampleCoverageSankey ?? {}).sort();
+                      const currentSample = selectedSampleForCoverage || sampleOptions[0] || "";
+                      const figure = resultSampleCoverageSankey?.[currentSample] ?? null;
+                      return (
+                        <div className="rounded-xl border border-border overflow-hidden">
+                          <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
+                            <p className="text-xs font-bold text-foreground uppercase tracking-wider">Per-Sample Coverage Plot</p>
+                            <select
+                              value={currentSample}
+                              onChange={e => fetchSankeyForSample(e.target.value)}
+                              className="h-7 px-2 rounded-md border border-border bg-background text-xs font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+                            >
+                              {sampleOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          </div>
+                          <div className="p-2">
+                            {figure ? (
+                              <>
+                                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1 pb-1">Sankey Plot - {currentSample}</p>
+                                <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
+                                <Plot
+                                  data={figure.data ?? []}
+                                  layout={{
+                                    ...(figure.layout ?? {}),
+                                    autosize: true,
+                                    margin: { l: 20, r: 20, t: 30, b: 20 },
+                                    paper_bgcolor: "transparent",
+                                    plot_bgcolor: "transparent",
+                                    font: { size: 11 },
+                                  }}
+                                  config={PLOT_CONFIG}
+                                  style={{ width: "100%", minHeight: 280 }}
+                                  useResizeHandler
+                                />
+                                </Suspense>
+                              </>
+                            ) : (
+                              <div className="flex items-center gap-2 text-xs text-muted-foreground px-3 py-4">
+                                <Database size={13} className="shrink-0" /> No coverage figure available for this sample.
+                              </div>
+                            )}
+                          </div>
+
+                          {/* ── Linear Coverage Plot ── */}
+                          {(() => {
+                            const covFigure = resultSampleCoveragePlot?.[currentSample] ?? null;
+                            if (!covFigure) return null;
+                            return (
+                              <div className="border-t border-border p-2">
+                                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1 pb-1">Coverage Plot - {currentSample}</p>
+                                <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
+                                  <Plot
+                                    data={covFigure.data ?? []}
+                                    layout={{
+                                      ...(covFigure.layout ?? {}),
+                                      autosize: true,
+                                      margin: { l: 50, r: 20, t: 30, b: 40 },
+                                      paper_bgcolor: "transparent",
+                                      plot_bgcolor: "transparent",
+                                      font: { size: 11 },
+                                    }}
+                                    config={{ ...(covFigure.config ?? {}), ...PLOT_CONFIG }}
+                                    style={{ width: "100%", minHeight: 260 }}
+                                    useResizeHandler
+                                  />
+                                </Suspense>
+                              </div>
+                            );
+                          })()}
+
+                        </div>
+                      );
+                    })()}
+
+                    {/* ── 6. Reference Variants ── */}
+                    {assembled && resultVariants !== null && (resultVariants.length === 0 ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/20 rounded-lg px-3 py-2 border border-border">
+                        <Database size={13} className="shrink-0" /> <span><span className="font-semibold">Reference Variants:</span> No data returned for this run.</span>
+                      </div>
+                    ) : (
+                      <ResultTable title="Reference Variants" data={resultVariants} page={variantsPage} setPage={setVariantsPage} />
+                    ))}
+
+                    {/* ── 7. Minor SNVs ── */}
+                    {assembled && resultMinorSnvs !== null && (resultMinorSnvs.length === 0 ? (
+                      <div className="flex items-start justify-between gap-3 p-3 rounded-xl border border-border bg-muted/10">
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">MINOR SNVs</p>
+                          <p className="text-xs text-muted-foreground mt-3">No Minor SNVs found for this run.</p>
+                        </div>
+                      </div>                      
+                    ) : (
+                      <ResultTable title="Minor SNVs" data={resultMinorSnvs} page={minorSnvsPage} setPage={setMinorSnvsPage} />
+                    ))}
+
+                    {/* ── 8. Reference Indels ── */}
+                    {assembled && resultIndels !== null && (resultIndels.length === 0 ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/20 rounded-lg px-3 py-2 border border-border">
+                        <Database size={13} className="shrink-0" /> <span><span className="font-semibold">Reference Indels:</span> No data returned for this run.</span>
+                      </div>
+                    ) : (
+                      <ResultTable title="Reference Indels" data={resultIndels} page={indelsPage} setPage={setIndelsPage} />
+                    ))}
+                  </StepPanel>
+                )}
+
+                {/* ── Step 4: Export ──────────────── */}
+                {id === "export" && (
+                  <StepPanel>
+                    {!assembled && (
+                      <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                        <AlertCircle size={13} /> Export files will be available after assembly is completed.
+                      </div>
+                    )}
+                    {assembled && cancelRun && !resultNtPassedFasta && !resultAaFailedFasta && !resultNtFailedFasta && !resultAaPassedFasta && !resultNextcladeFasta && (
+                      <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                        <AlertCircle size={13} /> There are no FASTA files generated from this run.
+                      </div>
+                    )}
+                    {assembled && !cancelRun && !resultNtPassedFasta && !resultAaFailedFasta && !resultNtFailedFasta && !resultAaPassedFasta && !resultNextcladeFasta && (
+                      <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                        <AlertCircle size={13} /> The assembly completed, but there are no FASTA files generated from this run.
+                      </div>
+                    )}
+                    <div className="space-y-2">
+                      {[
+                        { label: "NT Passed FASTA",  desc: "Nucleotide consensus sequences that passed QC thresholds",  location: resultNtPassedFasta,  dlUrl: API.downloadNtPassedFasta },
+                        { label: "NT Failed FASTA",  desc: "Nucleotide consensus sequences that failed QC thresholds",  location: resultNtFailedFasta,  dlUrl: API.downloadNtFailedFasta },
+                        { label: "AA Passed FASTA",  desc: "Amino acid translated sequences that passed QC thresholds",  location: resultAaPassedFasta,  dlUrl: API.downloadAaPassedFasta },
+                        { label: "AA Failed FASTA",  desc: "Amino acid translated sequences that failed QC thresholds",  location: resultAaFailedFasta,  dlUrl: API.downloadAaFailedFasta },
+                      ].filter(({ location }) => location).map(({ label, desc, location, dlUrl }) => (
+                        <div key={label} className="flex items-start justify-between gap-3 p-3 rounded-xl border border-border bg-muted/10">
+                          <div>
+                            <p className="text-sm font-semibold text-foreground">{label}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
+                          </div>
+                          <a
+                            href={`${dlUrl}?run_name=${encodeURIComponent(selectedRun?.run_name ?? "")}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type ?? "")}`}
+                            download
+                            className="shrink-0 flex items-center gap-1.5 px-3 py-1 rounded-full border border-primary bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+                          >
+                            <Download size={11} /> Download
+                          </a>
+                        </div>
+                      ))}
+                      {/* Nextclade FASTA files (one per subtype/segment) */}
+                      {resultNextcladeFasta && typeof resultNextcladeFasta === "object" && Object.keys(resultNextcladeFasta).map(key => {
+                        const nextcladeFastaUrl = `${API.downloadNextcladeFasta}?run_name=${encodeURIComponent(selectedRun?.run_name ?? "")}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type ?? "")}&key=${encodeURIComponent(key)}`;
+                        // Nextclade dataset shortcuts are named "<pathogen>_<subtype>_<segment>" (e.g. "flu_h3n2_na"),
+                        // but our key only holds "<subtype>_<segment>" (e.g. "h3n2_na"), so re-add the pathogen prefix.
+                        const pathogenPrefix = (selectedRun?.experiment_type ?? "").split("-")[0]?.toLowerCase() ?? "";
+                        const datasetName = pathogenPrefix ? `${pathogenPrefix}_${key}` : key;
+                        const nextcladeViewUrl = `${NEXTCLADE_BASE}?dataset-name=${encodeURIComponent(datasetName)}&input-fasta=${encodeURIComponent(nextcladeFastaUrl)}`;
+                        return (
+                          <div key={key} className="flex items-start justify-between gap-3 p-3 rounded-xl border border-border bg-muted/10">
+                            <div>
+                              <p className="text-sm font-semibold text-foreground">Nextclade FASTA — {key}</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">Nextclade-aligned sequences for {key}</p>
+                            </div>
+                            <div className="shrink-0 flex items-center gap-2">
+                              <a
+                                href={nextcladeViewUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-primary text-primary text-xs font-medium hover:bg-primary/10 transition-colors"
+                              >
+                                <ExternalLink size={11} /> View NextClade Assignment
+                              </a>
+                              <a
+                                href={nextcladeFastaUrl}
+                                download
+                                className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-primary bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+                              >
+                                <Download size={11} /> Download
+                              </a>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </StepPanel>
+                )}
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* ── Resizable divider ────────────────────── */}
+      <div
+        onMouseDown={onMouseDown}
+        className="w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/40 transition-colors"
+      />
+
+      {/* ── Right: run panel ─────────────────────── */}
+      <aside
+        style={{ width: rightWidth }}
+        className="shrink-0 border-l border-border p-4 flex flex-col gap-4 bg-muted/10 overflow-y-auto"
+      >
+        <div className="pt-3 space-y-1.5">
+          <p className="text-xs font-bold tracking-wider text-muted-foreground uppercase mb-2">Quick Actions</p>
+          {[
+            [PlusCircle, "New Run",  resetRun],
+            [FolderOpen, "Load Run", openLoadRunModal],
+            [Download,   "Export Run", openExportRunModal],
+          ].map(([Icon, label, action]) => (
+            <button key={label} onClick={action} className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/60 transition-colors border border-transparent hover:border-border">
+              <Icon size={13} className="text-primary" /> {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="border-t border-border pt-3 space-y-1">
+          <p className="text-xs font-bold tracking-wider text-muted-foreground uppercase mb-2">Jump To</p>
+          {ASSEMBLY_STEPS.map(({ id, title, icon: Icon }) => (
+            <button
+              key={id}
+              onClick={() => {
+                setOpenStep(prev => { const next = new Set(prev); next.add(id); return next; });
+                setTimeout(() => document.getElementById(`step-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+              }}
+              className={cn(
+                "w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-colors border text-left",
+                openStep.has(id)
+                  ? "text-primary border-primary/20 bg-primary/5"
+                  : "text-foreground border-transparent hover:bg-muted/60 hover:border-border"
+              )}
+            >
+              <Icon size={13} className="text-primary shrink-0" />
+              <span className="truncate">{title}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-auto border-t border-border pt-3">
+          <p className="text-xs text-muted-foreground">Base URL: <a href="https://cdcgov.github.io/MIRA/" target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline">cdcgov.github.io/MIRA/</a></p>
+        </div>
+      </aside>
+
+      {/* ── Export Run modal ─────────────────── */}
+      {exportRunModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-background border border-border rounded-xl p-6 max-w-2xl w-full mx-4 shadow-xl flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-foreground">Export MIRA Reports</h3>
+              <button onClick={() => setExportRunModal(false)} className="text-muted-foreground hover:text-foreground transition-colors">
+                <X size={14} />
+              </button>
+            </div>
+
+            {exportRunLoading && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground py-4 justify-center">
+                <RefreshCw size={13} className="animate-spin" /> Loading runs…
+              </div>
+            )}
+
+            {exportRunError && (
+              <div className="rounded-lg border bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-800 px-3 py-2 space-y-1 text-xs">
+                <p className="font-semibold text-destructive mb-1">Load Error:</p>
+                <div className="flex items-start gap-2">
+                  <AlertCircle size={12} className="shrink-0 mt-0.5 text-destructive" />
+                  <span className="text-destructive">{exportRunError}</span>
+                </div>
+              </div>
+            )}
+
+            {!exportRunLoading && !exportRunError && (
+              availableRuns.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-4">There are no runs found in storage.</p>
+              ) : (() => {
+                const q = exportRunSearch.trim().toLowerCase();
+                const filtered = (q
+                  ? availableRuns.filter(r =>
+                      [r.run_name, r.experiment_type, r.assembly_status, r.run_date]
+                        .some(v => (v ?? "").toLowerCase().includes(q))
+                    )
+                  : availableRuns
+                ).sort((a, b) => (a.run_name ?? "").localeCompare(b.run_name ?? ""));
+                return (
+                  <>
+                    <p className="text-xs text-muted-foreground">
+                      Select a run to download its MIRA report files as a <span className="font-mono">.zip</span> archive.
+                    </p>                  
+                    <div className="relative">
+                      <FileSearch size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                      <input
+                        value={exportRunSearch}
+                        onChange={(e) => { setExportRunSearch(e.target.value); setExportSelectedRun(null); }}
+                        placeholder="Search runs…"
+                        className="w-full h-8 pl-8 pr-3 rounded-lg border border-border bg-background text-xs font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+                      />
+                    </div>
+                    {filtered.length === 0 ? (
+                      <p className="text-xs text-muted-foreground text-center py-3">No runs match your search.</p>
+                    ) : (
+                      <div className={cn("rounded-xl border border-border divide-y divide-border", availableRuns.length > 10 && "max-h-96 overflow-y-auto")}>
+                        {filtered.map(run => (
+                          <button
+                            key={run.assembly_id}
+                            onClick={() => setExportSelectedRun(run)}
+                            className={cn(
+                              "w-full text-left px-4 py-3 text-xs transition-colors",
+                              exportSelectedRun?.assembly_id === run.assembly_id
+                                ? "bg-primary/10 border-l-2 border-primary"
+                                : "hover:bg-muted/40"
+                            )}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Name:</span>
+                                  <span className="font-semibold text-foreground font-mono truncate">{run.run_name}</span>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Type:</span>
+                                  <span className="font-mono text-foreground">{run.experiment_type}</span>
+                                </div>
+                              </div>
+                              <span className={cn(
+                                  "px-2 py-0.5 rounded-full text-xs font-medium shrink-0",
+                                  run.assembly_status === "SUBMITTED"  ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400" :
+                                  run.assembly_status === "PROCESSING" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" :
+                                  run.assembly_status === "PROCESSED"  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" :
+                                  "bg-muted text-muted-foreground"
+                                )}>{run.assembly_status}
+                              </span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()
+            )}
+
+            {exportSelectedRun && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/20 border border-border text-xs">
+                <Download size={11} className="text-primary shrink-0" />
+                <span className="text-muted-foreground">Will download:</span>
+                <span className="font-mono font-semibold text-foreground">{exportSelectedRun.run_name}_mira_reports.zip</span>
+              </div>
+            )}
+
+            <div className="flex gap-2 justify-end pt-1">
+              <button
+                onClick={() => setExportRunModal(false)}
+                className="px-4 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-muted/60 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleExportDownload}
+                disabled={!exportSelectedRun || exportDownloading || exportRunLoading}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {exportDownloading ? <RefreshCw size={11} className="animate-spin" /> : <Download size={11} />}
+                {exportDownloading ? "Downloading…" : "Download Reports"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Load Run modal ────────────────────── */}
+      {loadRunModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-background border border-border rounded-xl p-6 max-w-2xl w-full mx-4 shadow-xl flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-foreground">Load Existing Runs</h3>
+              <button onClick={() => setLoadRunModal(false)} className="text-muted-foreground hover:text-foreground transition-colors">
+                <X size={14} />
+              </button>
+            </div>
+
+            {loadRunLoading && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground py-4 justify-center">
+                <RefreshCw size={13} className="animate-spin" /> Loading runs…
+              </div>
+            )}
+
+            {loadRunError && (
+              <div className="rounded-lg border bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-800 px-3 py-2 space-y-1 text-xs">
+                <p className="font-semibold text-destructive mb-1">Load Error:</p>
+                <div className="flex items-start gap-2">
+                  <AlertCircle size={12} className="shrink-0 mt-0.5 text-destructive" />
+                  <span className="text-destructive">{loadRunError}</span>
+                </div>
+              </div>
+            )}
+
+            {!loadRunLoading && !loadRunError && (
+              availableRuns.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-4">There are no runs found in storage.</p>
+              ) : (() => {
+                const q = runSearch.trim().toLowerCase();
+                const filtered = (q
+                  ? availableRuns.filter(r =>
+                      [r.run_name, r.experiment_type, r.assembly_status, r.run_date]
+                        .some(v => (v ?? "").toLowerCase().includes(q))
+                    )
+                  : availableRuns
+                ).sort((a, b) => (a.run_name ?? "").localeCompare(b.run_name ?? ""));
+                return (
+                  <>
+                    <div className="relative">
+                      <FileSearch size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                      <input
+                        value={runSearch}
+                        onChange={(e) => { setRunSearch(e.target.value); setSelectedRun(null); }}
+                        placeholder="Search runs…"
+                        className="w-full h-8 pl-8 pr-3 rounded-lg border border-border bg-background text-xs font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+                      />
+                    </div>
+                    {filtered.length === 0 ? (
+                      <p className="text-xs text-muted-foreground text-center py-3">No runs match your search.</p>
+                    ) : (
+                      <div className={cn("rounded-xl border border-border divide-y divide-border", availableRuns.length > 10 && "max-h-96 overflow-y-auto")}>
+                        {filtered.map(run => (
+                          <button
+                            key={run.assembly_id}
+                            onClick={() => setSelectedRun(run)}
+                            onDoubleClick={() => { setSelectedRun(run); handleLoadRun(run); }}
+                            className={cn(
+                              "w-full text-left px-4 py-3 text-xs transition-colors",
+                              selectedRun?.assembly_id === run.assembly_id
+                                ? "bg-primary/10 border-l-2 border-primary"
+                                : "hover:bg-muted/40"
+                            )}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Name:</span>
+                                  <span className="font-semibold text-foreground font-mono truncate">{run.run_name}</span>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Type:</span>
+                                  <span className="font-mono text-foreground">{run.experiment_type}</span>
+                                </div>
+                                {run.run_date && (
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Date:</span>
+                                    <span className="font-mono text-foreground">{run.run_date}</span>
+                                  </div>
+                                )}
+                              </div>
+                              <span className={cn(
+                                "px-2 py-0.5 rounded-full text-xs font-medium shrink-0",
+                                run.assembly_status === "SUBMITTED"  ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400" :
+                                run.assembly_status === "PROCESSING" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" :
+                                run.assembly_status === "PROCESSED"  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" :
+                                "bg-muted text-muted-foreground"
+                              )}>{run.assembly_status}</span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()
+            )}
+
+            <div className="flex gap-2 justify-end pt-1">
+              <button
+                onClick={() => setLoadRunModal(false)}
+                className="px-4 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-muted/60 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleLoadRun()}
+                disabled={!selectedRun || loadRunLoading}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loadRunLoading ? <RefreshCw size={11} className="animate-spin" /> : <FolderOpen size={11} />}
+                Load Selected Run
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Confirm Remove Sample modal ────────────── */}
+      {confirmRemoveIdx !== null && (() => {
+        const isOnt = experimentType.toLowerCase().endsWith("ont");
+        const sample = (isOnt ? ontSampleRows : illuminaSampleRows)[confirmRemoveIdx];
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div className="bg-background border border-border rounded-xl p-8 max-w-lg w-full mx-4 shadow-xl flex flex-col gap-5">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-bold text-foreground">Remove Sample</h3>
+                <button onClick={() => setConfirmRemoveIdx(null)} className="text-muted-foreground hover:text-foreground transition-colors">
+                  <X size={16} />
+                </button>
+              </div>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Are you sure you want to remove{" "}
+                <span className="font-mono font-semibold text-foreground">{sample?.sample_id ?? "this sample"}</span>{" "}
+                from the sample sheet?
+                {!isNewRun && (
+                  <>
+                    {" This will permanently remove the sample from storage. To deselect a sample, just toggle the "}
+                    <span className="font-mono font-semibold text-foreground">'Keep'</span> status to switch its status to <span className="font-mono font-semibold text-foreground">'exclude'</span>.
+                  </>
+                )}
+              </p>
+              <div className="flex gap-3 justify-end pt-2">
+                <button
+                  onClick={() => setConfirmRemoveIdx(null)}
+                  className="px-5 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:bg-muted/60 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmRemoveSample}
+                  className="flex items-center gap-1.5 px-5 py-2 rounded-lg bg-destructive text-destructive-foreground text-sm font-semibold hover:bg-destructive/90 transition-colors"
+                >
+                  <Trash2 size={13} /> Remove
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+/* ── SeqSender Tab ──────────────────────────────── */
+const SEQSENDER_STEPS = [
+  { id: "setup",  title: "STEP 1: SEQSENDER SETUP",   subtitle: "Select database target, organism, input files, and submit",  icon: Database },
+  { id: "status", title: "STEP 2: SUBMISSION STATUS",  subtitle: "Track per-database submission progress",             icon: ClipboardList },
+];
+
+const ORGANISMS = ["FLU", "COV", "POX", "ARBO", "RSV", "OTHER"];
+const DB_LIST = [
+  { key: "biosample", label: "BioSample",  desc: "NCBI BioSample — biological source metadata" },
+  { key: "sra",       label: "SRA",        desc: "NCBI Sequence Read Archive — raw read data" },
+  { key: "genbank",   label: "GenBank",    desc: "NCBI GenBank — assembled consensus sequences" },
+  { key: "gisaid",    label: "GISAID",     desc: "GISAID EpiFlu / EpiCoV — flu & SARS-CoV-2" },
+];
+
+function SeqSenderTab() {
+  const [openStep, setOpenStep]           = useState(() => new Set(SEQSENDER_STEPS.map((s) => s.id)));
+  const [dbs, setDbs]                     = useState({ biosample: false, sra: false, genbank: false, gisaid: false });
+  const [organism, setOrganism]           = useState("");
+  const [subName, setSubName]             = useState("");
+  const [subDir, setSubDir]               = useState("");
+  const [configFile, setConfigFile]       = useState("");
+  const [metaFile, setMetaFile]           = useState("");
+  const [fastaFile, setFastaFile]         = useState("");
+  const [gffFile, setGffFile]             = useState("");
+  const [table2asn, setTable2asn]         = useState(false);
+  const [testMode, setTestMode]           = useState(false);
+  const [copied, setCopied]               = useState(false);
+  const [submitted, setSubmitted]         = useState(false);
+  const [rightWidth, setRightWidth]       = useState(260);
+  const dragging = useRef(false);
+
+  const toggle = (id) => setOpenStep((prev) => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+  const toggleDb = (k) => setDbs((p) => ({ ...p, [k]: !p[k] }));
+
+  const onMouseDown = useCallback(() => {
+    dragging.current = true;
+    const onMove = (e) => {
+      if (!dragging.current) return;
+      setRightWidth(Math.max(200, Math.min(420, document.body.clientWidth - e.clientX)));
+    };
+    const onUp = () => { dragging.current = false; window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, []);
+
+  const command = [
+    "python seqsender.py submit",
+    ...Object.entries(dbs).filter(([, v]) => v).map(([k]) => `--${k}`),
+    organism        && `--organism ${organism}`,
+    subName         && `--submission_name ${subName}`,
+    subDir          && `--submission_dir ${subDir}`,
+    configFile      && `--config_file ${configFile}`,
+    metaFile        && `--metadata_file ${metaFile}`,
+    fastaFile       && `--fasta_file ${fastaFile}`,
+    table2asn       && `--table2asn`,
+    gffFile         && `--gff_file ${gffFile}`,
+    testMode        && `--test`,
+  ].filter(Boolean).join(" \\\n  ");
+
+  const copyCommand = () => { navigator.clipboard.writeText(command); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+
+  return (
+    <div className="flex h-full overflow-hidden">
+
+      {/* ── Left: accordion steps ─────────────────── */}
+      <div className="flex-1 overflow-auto p-4 space-y-2">
+        {SEQSENDER_STEPS.map(({ id, title, subtitle, icon }) => (
+          <div key={id} className="rounded-xl border border-border overflow-hidden">
+            <button onClick={() => toggle(id)} className="w-full px-4 py-3 bg-muted/20 hover:bg-muted/40 transition-colors">
+              <StepHeader icon={icon} title={title} subtitle={subtitle} open={openStep.has(id)} />
+            </button>
+
+            {openStep.has(id) && (
+              <>
+                {/* Step 1: Setup */}
+                {id === "setup" && (
+                  <StepPanel>
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-xs font-bold tracking-wider text-muted-foreground uppercase">Database Targets</span>
+                      <div className="flex-1 h-px bg-border" />
+                    </div>
+                    <p className="text-xs text-muted-foreground">Select one or more target databases for this submission. <span className="text-destructive font-bold">*</span></p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {DB_LIST.map(({ key, label, desc }) => (
+                        <label key={key} className={cn(
+                          "flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors",
+                          dbs[key] ? "border-primary bg-primary/5" : "border-border hover:bg-muted/20"
+                        )}>
+                          <input type="checkbox" checked={dbs[key]} onChange={() => toggleDb(key)} className="mt-0.5 accent-primary" />
+                          <div>
+                            <p className="text-sm font-semibold">{label}</p>
+                            <p className="text-xs text-muted-foreground">{desc}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-xs font-bold tracking-wider text-muted-foreground uppercase">Pathogen</span>
+                      <div className="flex-1 h-px bg-border" />
+                    </div>
+
+                    <div>
+                      <FieldLabel>Organism <span className="text-destructive">*</span></FieldLabel>
+                      <div className="flex flex-wrap gap-2">
+                        {ORGANISMS.map((org) => (
+                          <button key={org} onClick={() => setOrganism(org)}
+                            className={cn(
+                              "px-4 py-1.5 rounded-full text-xs font-semibold border transition-colors",
+                              organism === org
+                                ? "bg-primary text-primary-foreground border-primary"
+                                : "border-border text-muted-foreground hover:border-primary hover:text-primary"
+                            )}>{org}</button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-xs font-bold tracking-wider text-muted-foreground uppercase">Submission Inputs</span>
+                      <div className="flex-1 h-px bg-border" />
+                    </div>
+
+                    <div>
+                      <FieldLabel>Submission Name <span className="text-destructive">*</span></FieldLabel>
+                      <input value={subName} onChange={(e) => setSubName(e.target.value)}
+                        placeholder="e.g. FLU_H3N2_2026_Batch01"
+                        className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                    </div>
+
+                    {[
+                      { label: "Config File",    required: true,  val: configFile,  set: setConfigFile,  accept: ".yaml,.yml,.json",    ph: "config.yaml" },
+                      { label: "Metadata File",  required: true,  val: metaFile,    set: setMetaFile,    accept: ".csv,.tsv,.xlsx",      ph: "metadata.csv" },
+                      { label: "FASTA File",     required: true,  val: fastaFile,   set: setFastaFile,   accept: ".fasta,.fa,.fna",      ph: "sequences.fasta" },
+                      { label: "GFF File",       required: false, val: gffFile,     set: setGffFile,     accept: ".gff,.gff3",           ph: "annotation.gff (optional)" },
+                    ].map(({ label, required, val, set, accept, ph }) => (
+                      <div key={label}>
+                        <FieldLabel>{label} {required && <span className="text-destructive">*</span>}</FieldLabel>
+                        <div className="flex gap-2">
+                          <input value={val} onChange={(e) => set(e.target.value)} placeholder={ph}
+                            className="flex-1 h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                          <label className="flex items-center gap-1.5 px-3 h-9 rounded-md border border-border bg-muted/20 hover:bg-muted/40 cursor-pointer text-xs text-muted-foreground transition-colors">
+                            <FolderOpen size={13} /> Browse
+                            <input type="file" className="hidden" accept={accept}
+                              onChange={(e) => e.target.files?.[0] && set(e.target.files[0].name)} />
+                          </label>
+                        </div>
+                      </div>
+                    ))}
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-xs font-bold tracking-wider text-muted-foreground uppercase">Submission Options</span>
+                      <div className="flex-1 h-px bg-border" />
+                    </div>
+
+                    {[
+                      { label: "--table2asn",   desc: "Use table2asn for GenBank submission (required for annotated sequences)", val: table2asn, set: setTable2asn, show: dbs.genbank },
+                      { label: "--test",        desc: "Run in test mode — submit to test servers without affecting production",    val: testMode,  set: setTestMode,  show: true },
+                    ].filter(({ show }) => show).map(({ label, desc, val, set }) => (
+                      <button key={label} onClick={() => set((v) => !v)}
+                        className="w-full flex items-start justify-between gap-4 p-3 rounded-xl border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left">
+                        <div>
+                          <p className="text-sm font-mono font-semibold">{label}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
+                        </div>
+                        <span className={cn("relative w-10 h-5 rounded-full transition-colors shrink-0 mt-0.5 pointer-events-none", val ? "bg-primary" : "bg-muted")}>
+                          <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform", val ? "translate-x-5" : "translate-x-0.5")} />
+                        </span>
+                      </button>
+                    ))}
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-xs font-bold tracking-wider text-muted-foreground uppercase">Review & Submit</span>
+                      <div className="flex-1 h-px bg-border" />
+                    </div>
+
+                    <button onClick={() => setSubmitted(true)} className="flex items-center gap-2 px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+                      <Rocket size={14} /> Submit to {Object.entries(dbs).filter(([,v])=>v).map(([k])=>k).join(", ") || "selected databases"}
+                    </button>
+                  </StepPanel>
+                )}
+
+                {/* Step 2: Status */}
+                {id === "status" && (
+                  <StepPanel>
+                    <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                      <AlertCircle size={13} /> Submission status and accession numbers will appear here once the submission is submitted and proccessed.
+                    </div>
+
+                    {submitted && (
+                      <div className="space-y-2">
+                        {[
+                          { key: "biosample", label: "BioSample", accessionLabel: "BioSample Accession", placeholder: "e.g. SAMN00000000"   },
+                          { key: "sra",       label: "SRA",       accessionLabel: "SRA Accession",        placeholder: "e.g. SRR00000000"    },
+                          { key: "genbank",   label: "GenBank",   accessionLabel: "GenBank Accession",    placeholder: "e.g. MN000000"       },
+                          { key: "gisaid",    label: "GISAID",    accessionLabel: "EPI ISL Accession",    placeholder: "e.g. EPI_ISL_000000" },
+                        ]
+                          .filter(({ key }) => dbs[key])
+                          .map(({ key, label, accessionLabel, placeholder }) => (
+                            <div key={key} className="rounded-xl border border-border bg-muted/10 overflow-hidden">
+                              <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
+                                <p className="text-xs font-bold tracking-wide text-foreground">{label}</p>
+                                <span className="px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-xs font-medium">Pending</span>
+                              </div>
+                              <div className="px-3 py-2 space-y-1.5">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-muted-foreground">{accessionLabel}</span>
+                                  <span className="font-mono text-muted-foreground/60">{placeholder}</span>
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-muted-foreground">Message</span>
+                                  <span className="text-muted-foreground/60">—</span>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+
+                    <button className="flex items-center gap-2 px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+                      <RefreshCw size={14} /> Refresh Status
+                    </button>
+                  </StepPanel>
+                )}
+
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* ── Resizable divider ────────────────────── */}
+      <div onMouseDown={onMouseDown} className="w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/40 transition-colors" />
+
+      {/* ── Right: sidebar ───────────────────────── */}
+      <aside style={{ width: rightWidth }} className="shrink-0 border-l border-border p-4 flex flex-col gap-4 bg-muted/10 overflow-y-auto">
+
+        <div className="pt-3 space-y-1.5">
+          <p className="text-xs font-bold tracking-wider text-muted-foreground uppercase mb-2">Quick Actions</p>
+          {[
+            [PlusCircle, "New Submission"],
+            [FolderOpen, "Load Submission"],
+            [Download,   "Download Config"],
+          ].map(([Icon, label]) => (
+            <button key={label} className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/60 transition-colors border border-transparent hover:border-border">
+              <Icon size={13} className="text-primary" /> {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-auto border-t border-border pt-3">
+          <p className="text-xs text-muted-foreground">Base URL: <a href="https://cdcgov.github.io/seqsender/" target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline">cdcgov.github.io/seqsender/</a></p>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+const NEXTCLADE_BASE = "https://clades.nextstrain.org";
+
+/* ── Resources Tab ──────────────────────────────── */
+function ResourceCard({ icon: Icon, title, children }) {
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden flex flex-col">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-muted/20 shrink-0">
+        <div className="flex items-center justify-center h-7 w-7 rounded-lg bg-primary/10 text-primary">
+          <Icon size={15} />
+        </div>
+        <h3 className="text-sm font-bold tracking-wide text-foreground">{title}</h3>
+      </div>
+      <div className="p-4 space-y-2 overflow-y-auto flex-1">{children}</div>
+    </div>
+  );
+}
+
+function ResourceLink({ href, icon: Icon = ExternalLink, children, badge }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer"
+      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-foreground hover:bg-muted/60 hover:text-primary transition-colors group">
+      <Icon size={13} className="text-muted-foreground group-hover:text-primary shrink-0" />
+      <span className="flex-1">{children}</span>
+      {badge && <span className="text-xs px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">{badge}</span>}
+    </a>
+  );
+}
+
+function ContactCard({ name, role, email, github }) {
+  return (
+    <div className="flex items-start gap-3 p-3 rounded-lg border border-border bg-muted/10">
+      <div className="flex items-center justify-center h-8 w-8 rounded-full bg-primary/10 text-primary text-xs font-bold shrink-0">
+        {name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-foreground">{name}</p>
+        <p className="text-xs text-muted-foreground">{role}</p>
+        <div className="flex flex-wrap gap-2 mt-1.5">
+          {email && (
+            <a href={`mailto:${email}`} className="flex items-center gap-1 text-xs text-primary hover:underline">
+              <Mail size={10} /> {email}
+            </a>
+          )}
+          {github && (
+            <a href={`https://github.com/${github}`} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary hover:underline">
+              <GitFork size={10} /> @{github}
+            </a>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResourcesTab() {
+  return (
+    <div className="h-full overflow-auto p-4">
+      <div className="h-full grid grid-cols-2 grid-rows-2 gap-4" style={{ minHeight: "fit-content" }}>
+
+        {/* ── Installation ─────────────────────── */}
+        <ResourceCard icon={Package} title="Installation">
+          <p className="text-xs text-muted-foreground mb-1">MIRA requires Python 3.8+ and conda/mamba. Supports Linux and macOS.</p>
+          <ResourceLink href="https://github.com/CDCgov/MIRA" icon={GitFork}>GitHub — CDCgov/MIRA</ResourceLink>
+          <ResourceLink href="https://github.com/CDCgov/MIRA/blob/master/MIRA-INSTALL.sh" icon={Download} badge="script">MIRA-INSTALL.sh</ResourceLink>
+          <ResourceLink href="https://github.com/CDCgov/MIRA/blob/master/requirements.txt" icon={FileStack}>requirements.txt</ResourceLink>
+          <div className="mt-2 rounded-lg bg-muted/30 border border-border px-3 py-2">
+            <p className="text-xs font-mono text-foreground">bash MIRA-INSTALL.sh</p>
+            <p className="text-xs font-mono text-muted-foreground mt-0.5">conda activate mira &amp;&amp; python app.py</p>
+          </div>
+          <ResourceLink href="https://github.com/CDCgov/MIRA/blob/master/docker-compose.yml" icon={ExternalLink} badge="docker">Docker Compose</ResourceLink>
+        </ResourceCard>
+
+        {/* ── Documentation ────────────────────── */}
+        <ResourceCard icon={BookOpen} title="Documentation">
+          <ResourceLink href="https://github.com/CDCgov/MIRA/blob/master/README.md">MIRA README</ResourceLink>
+          <ResourceLink href="https://github.com/CDCgov/MIRA/wiki">MIRA Wiki</ResourceLink>
+          <div className="mt-1 pt-2 border-t border-border">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Related Tools</p>
+            <ResourceLink href="https://docs.nextstrain.org/projects/nextclade/en/stable/" badge="nextclade">Nextclade Documentation</ResourceLink>
+            <ResourceLink href="https://docs.nextstrain.org/projects/nextclade/en/stable/user/nextclade-web/url-parameters.html">Nextclade URL Parameters</ResourceLink>
+            <ResourceLink href="https://github.com/CDCgov/seqsender" badge="seqsender">SeqSender Documentation</ResourceLink>
+            <ResourceLink href="https://github.com/CDCgov/irma-core">IRMA-core Documentation</ResourceLink>
+          </div>
+          <div className="mt-1 pt-2 border-t border-border">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Databases</p>
+            <ResourceLink href="https://www.ncbi.nlm.nih.gov/sra">NCBI SRA</ResourceLink>
+            <ResourceLink href="https://www.gisaid.org">GISAID</ResourceLink>
+            <ResourceLink href="https://clades.nextstrain.org">Nextclade Web</ResourceLink>
+          </div>
+        </ResourceCard>
+
+        {/* ── GitHub Repositories ──────────────── */}
+        <ResourceCard icon={GitFork} title="GitHub Repositories">
+          {[
+            { repo: "CDCgov/MIRA",          desc: "Main MIRA application",              badge: "main" },
+            { repo: "CDCgov/seqsender",      desc: "Sequence submission pipeline",       badge: "tool" },
+            { repo: "CDCgov/irma-core",      desc: "IRMA assembly core",                badge: "tool" },
+            { repo: "nextstrain/nextclade",  desc: "Clade assignment & QC tool",         badge: "ext" },
+            { repo: "nextstrain/augur",       desc: "Phylogenetic analysis pipeline",    badge: "ext" },
+          ].map(({ repo, desc, badge }) => (
+            <a key={repo} href={`https://github.com/${repo}`} target="_blank" rel="noopener noreferrer"
+              className="flex items-start gap-2.5 px-3 py-2 rounded-lg hover:bg-muted/60 transition-colors group">
+              <GitFork size={14} className="text-muted-foreground group-hover:text-primary mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-mono text-foreground group-hover:text-primary">{repo}</span>
+                  <span className={cn(
+                    "text-xs px-1.5 py-0.5 rounded-full font-medium",
+                    badge === "main" ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
+                  )}>{badge}</span>
+                </div>
+                <p className="text-xs text-muted-foreground">{desc}</p>
+              </div>
+            </a>
+          ))}
+        </ResourceCard>
+
+        {/* ── Contact ──────────────────────────── */}
+        <ResourceCard icon={Mail} title="Who to Contact">
+          <ContactCard
+            name="MIRA Development Team"
+            role="CDC VSDB — Virus Surveillance and Diagnostic Branch"
+            email="flu@cdc.gov"
+            github="CDCgov"
+          />
+          <ContactCard
+            name="SeqSender Team"
+            role="CDC — Sequence submission support"
+            github="CDCgov"
+          />
+          <div className="mt-2 pt-2 border-t border-border space-y-1.5">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Report Issues</p>
+            <ResourceLink href="https://github.com/CDCgov/MIRA/issues" icon={MessageSquare} badge="bugs">MIRA GitHub Issues</ResourceLink>
+            <ResourceLink href="https://github.com/CDCgov/seqsender/issues" icon={MessageSquare} badge="bugs">SeqSender GitHub Issues</ResourceLink>
+          </div>
+          <div className="mt-2 pt-2 border-t border-border">
+            <p className="text-xs text-muted-foreground">For general inquiries about CDC influenza surveillance tools, visit <a href="https://www.cdc.gov/flu" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">cdc.gov/flu</a>.</p>
+          </div>
+        </ResourceCard>
+
+      </div>
+    </div>
+  );
+}
+
+/* ── Placeholder tab content ─────────────────────── */
+function TabContent({ tab }) {
+  if (tab.id === "home")       return <HomeTab />;
+  if (tab.id === "assembly")   return <AssemblyTab />;
+  if (tab.id === "seqsender")  return <SeqSenderTab />;
+  if (tab.id === "resources")  return <ResourcesTab />;
+  return (
+    <div className="p-6">
+      <div className="rounded-xl border border-border bg-card p-8 text-center text-muted-foreground">
+        <p className="text-lg font-medium">{tab.label}</p>
+        <p className="text-sm mt-1">Content for the {tab.label} tab goes here.</p>
+      </div>
+    </div>
+  );
+}
+
+/* ── Main App ────────────────────────────────────── */
+export default function App() {
+  const getInitialTab = () => {
+    const hash = window.location.hash.slice(1);
+    return TABS.find((t) => t.id === hash) ? hash : "home";
+  };
+
+  const [activeTab, setActiveTab] = useState(getInitialTab);
+  const [darkMode, setDarkMode]   = useState(false);
+
+  const updateUrl = (tabId) => {
+    window.history.pushState({ tab: tabId }, "", tabId === "home" ? location.pathname : `#${tabId}`);
+  };
+
+  const navigateTo = (tabId) => {
+    if (tabId === activeTab) return;
+    setActiveTab(tabId);
+    updateUrl(tabId);
+  };
+
+  // Sync active tab when browser back/forward is used
+  useEffect(() => {
+    const onPopState = () => {
+      const hash = window.location.hash.slice(1);
+      setActiveTab(TABS.find((t) => t.id === hash) ? hash : "home");
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", darkMode);
+  }, [darkMode]);
+
+  const currentTab = TABS.find((t) => t.id === activeTab);
+
+  return (
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-background text-foreground">
+
+      {/* ── Header ───────────────────────────────── */}
+      <header className="h-24 shrink-0 w-full bg-primary border-b border-border flex items-center px-4 gap-3">
+        {/* Brand */}
+        <button
+          onClick={() => navigateTo("home")}
+          className="flex items-center gap-3 text-white hover:opacity-90 transition-opacity"
+        >
+          <div className="relative shrink-0">
+            <img
+              src="/mira-logo.png"
+              alt="MIRA logo"
+              className="h-16 w-16 object-contain drop-shadow-md rounded-full ring-2 ring-white ring-offset-2 ring-offset-primary"
+            />
+            <span className="absolute bottom-0 right-0 flex items-center justify-center h-5 w-5 rounded-full bg-white shadow">
+              <Dna size={12} strokes={5} className="text-primary" />
+            </span>
+          </div>
+          <div className="flex flex-col leading-tight">
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl tracking-widest text-white" style={{ fontFamily: "'Cinzel', serif", fontWeight: 700 }}>MIRA</span>
+              <span className="text-xs text-white/50 font-mono">v2.0.0</span>
+            </div>
+            <span className="text-xs text-white/80 hidden sm:inline tracking-wider normalcase">
+              Influenza, SARS-CoV-2, and RSV Genome Assembly &amp; Curation
+            </span>
+          </div>
+        </button>
+
+        {/* Right controls */}
+        <div className="ml-auto flex items-center gap-1">
+
+          {/* Notifications */}
+          <Dropdown
+            trigger={
+              <button className="p-2 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition-colors">
+                <Bell size={16} />
+              </button>
+            }
+          >
+            <div className="px-4 py-2 text-xs text-muted-foreground font-medium border-b border-border">
+              Notifications
+            </div>
+            <DropdownItem>There are no new notifications</DropdownItem>
+          </Dropdown>
+
+          {/* Settings */}
+          <Dropdown
+            trigger={
+              <button className="p-2 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition-colors">
+                <Settings size={16} />
+              </button>
+            }
+          >
+            <div className="px-4 py-2 text-xs text-muted-foreground font-medium border-b border-border">
+              Settings
+            </div>
+            <DropdownItem
+              icon={darkMode ? Sun : Moon}
+              onClick={() => setDarkMode((v) => !v)}
+            >
+              {darkMode ? "Light mode" : "Dark mode"}
+              {darkMode && <Check size={12} className="ml-auto" />}
+            </DropdownItem>
+          </Dropdown>
+        </div>
+      </header>
+
+      {/* ── Main area ────────────────────────────── */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+
+        {/* ── Tab bar ──────────────────────────── */}
+        <div className="flex border-b border-border bg-background px-3 pt-2 gap-1 shadow-sm shrink-0">
+          {TABS.filter((t) => t.id !== "home").map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => navigateTo(tab.id)}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-t-md border-b-2 transition-colors",
+                  active
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                )}
+              >
+                <Icon size={14} />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+        {/* ── Tab content ──────────────────────── */}
+        <main className="flex-1 overflow-hidden">
+          {TABS.map((tab) => (
+            <div key={tab.id} className={cn("h-full", activeTab !== tab.id && "hidden")}>
+              <TabContent tab={tab} />
+            </div>
+          ))}
+        </main>
+      </div>
+    </div>
+  );
+}

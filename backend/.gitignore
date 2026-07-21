@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+data/
+.nextflow/
+*.log
+app/__pycache__/

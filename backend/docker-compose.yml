@@ -1,0 +1,41 @@
+
+x-mira-nf-image:
+  &mira-nf-image
+  cdcgov/mira-nf:v2.1.1
+
+x-data-storage-path:
+  &data-storage-path
+  /home/snu3/Connect/MIRA-REACT/backend/data
+
+services:
+  mira-nf:
+    container_name: mira-nf
+    image: *mira-nf-image
+    restart: always
+    command: ["tail", "-f", "/dev/null"]  # Keep the container running
+
+  mira-backend:
+    container_name: mira-backend
+    image: mira-backend:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        UBUNTU_IMAGE: ubuntu:24.04
+        MICROMAMBA_IMAGE: mambaorg/micromamba:2.8.0
+    depends_on:
+      - mira-nf
+    ports:
+      - 8080:8080
+    restart: always
+    environment:
+      HOST_MIRA_NF_IMAGE: *mira-nf-image
+      HOST_DATA_STORAGE_PATH: *data-storage-path
+    volumes:
+      - type: bind
+        source: *data-storage-path
+        target: /MIRA-backend/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    working_dir: /MIRA-backend
+    entrypoint: ["/bin/bash", "-c", "/MIRA-backend/api-kickoff"]
+

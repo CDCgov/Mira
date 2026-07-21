@@ -1,0 +1,22 @@
+
+x-mira-frontend-codebase:
+  &mira-frontend-codebase
+  /home/snu3/Connect/MIRA-REACT/frontend
+
+services:
+  mira-frontend:
+    container_name: mira-frontend
+    image: mira-frontend:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - 5175:5175
+    restart: always
+    volumes:
+      - type: bind
+        source: *mira-frontend-codebase
+        target: /MIRA-frontend
+      - /MIRA-frontend/node_modules
+    working_dir: /MIRA-frontend
+    entrypoint: ["/bin/sh", "-c", "npm install && npm run dev -- --host 0.0.0.0 --port 5175"]
