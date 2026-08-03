@@ -19,8 +19,9 @@ import subprocess
 # Import schema validator 
 from .schema_validator import (
     _DEFAULT_MIRA_STORAGE_PATH,
-    _DEFAULT_MIRA_NF_IMAGE,
+    _HOST_MIRA_NF_IMAGE,
     _HOST_MIRA_STORAGE_PATH,
+    nextclade_pathogen_aliases,
     assembly_pa_schema,
     assembly_db_schema,
     ont_samplesheet_pa_schema,
@@ -81,7 +82,7 @@ def _remove_previous_pipeline_outputs(run_dir: str) -> None:
             [
                 "docker", "run", "--rm",
                 "-v", f"{_HOST_MIRA_STORAGE_PATH}:/data",
-                _DEFAULT_MIRA_NF_IMAGE,
+                _HOST_MIRA_NF_IMAGE,
                 "rm", "-rf", "--", *container_paths,
             ],
             check=True,
@@ -344,6 +345,12 @@ def retrieve_indels(run_name: str, experiment_type: str) -> dict | None:
         raise Exception(str(err))
     return indels_result
 
+####################################################
+#
+# MIRA RETRIEVE FASTA FUNCTIONS
+#
+####################################################
+
 # Get nt_passed_fasta location from storage
 def retrieve_passed_amended_consensus(run_name: str, experiment_type: str) -> str | None:
     try:
@@ -427,24 +434,25 @@ def retrieve_failed_amino_acid_consensus(run_name: str, experiment_type: str) ->
 # Get nextclade fasta location from storage
 def retrieve_nextclade_aligned_fasta(run_name: str, experiment_type: str) -> str | None:
     try:
-        # Extract instrument type from experiment_type
+        # Extract pathogen and instrument from experiment_type
         pathogen = experiment_type.split("-")[0]
-        instrument = experiment_type.split("-")[-1]  
+        instrument = experiment_type.split("-")[-1]
         # Create placeholder to store fasta for each pathogen, subtype, and segment combination
         nextclade_fasta_paths = {}
-        fasta_path_dir = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, "outputs", "nextclade")
+        fasta_path_dir = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, "outputs", "nextclade", "input_fasta_files")
         if os.path.isdir(fasta_path_dir):
             candidates = sorted(
-                (f for f in os.listdir(fasta_path_dir)
-                if f.startswith(f"{pathogen.lower()}") and f.endswith(".aligned.fasta")),
+                (f for f in os.listdir(fasta_path_dir) if f.startswith(f"nextclade") and f.endswith(".fasta")),
                 reverse=True,
             )
+            print(f"Candidates for nextclade fasta files: {candidates}")
             for f in candidates:
-                fasta_path = os.path.join(fasta_path_dir, f)
-                subtype = re.search(rf"{pathogen.lower()}_(\w+)_(\w+)\.aligned\.fasta", f).group(1)
-                segment = re.search(rf"{pathogen.lower()}_(\w+)_(\w+)\.aligned\.fasta", f).group(2)
-                if os.path.exists(fasta_path):
-                    nextclade_fasta_paths[f"{subtype}_{segment}"] = fasta_path
+                match = re.search(rf"nextclade_{re.escape(run_name)}_(.*?)\.fasta", f)
+                #print(f"Checking file '{f}' for match: {match}")
+                if match:
+                    dataset = match.group(1)
+                    nextclade_fasta_paths[dataset] = os.path.join(fasta_path_dir, f)
+        print(f"Nextclade fasta paths found: {nextclade_fasta_paths}")
         # Return the dictionary of nextclade fasta paths if any exist, otherwise return None
         if len(nextclade_fasta_paths) > 0:
             return nextclade_fasta_paths
@@ -933,10 +941,11 @@ def run_mira_docker(
             "-e", f"HOST_UID={os.getuid()}",
             "-e", f"HOST_GID={os.getgid()}",
             "-e", f"CONTAINER_RUN_DIR={container_run_dir}",
-            f"{_DEFAULT_MIRA_NF_IMAGE}",
+            f"{_HOST_MIRA_NF_IMAGE}",
             "bash", "-c", f"trap '{permission_cleanup}' EXIT; \"$@\"", "mira-entrypoint",
             "nextflow", "run", "/MIRA-NF/main.nf",
             "-profile", "mira_nf_container",
+            "--check_version", "false",
             "--input",   container_samplesheet,
             "--runpath", container_run_dir,
             "--outdir",  container_output_dir,
@@ -952,6 +961,9 @@ def run_mira_docker(
             cmd.extend(["--parquet_files"])
         if run_nextclade:
             cmd.extend(["--nextclade"])
+
+        print(f"Launching MIRA-NF pipeline for run '{run_name}' with command:")
+        print(' '.join(cmd))
 
         # Fire and forget — launch in background, do not block
         proc = subprocess.Popen(
@@ -1111,7 +1123,7 @@ def cancel_mira_run(
         else:
             return {
                 "status":  "not_running",
-                "message": [f"PID '{pid}' does not exist. Run '{run_name}' is probably not running. Nothing to be done."]
+                "message": [f"PID '{pid}' does not exist. Run '{run_name}' is probably not running or completed. Nothing to be done."]
             }
     except ValueError as err:
         raise ValueError(str(err))
@@ -1182,7 +1194,7 @@ def create_mira_dag(
         "tasks_total":     0,
         "tasks_succeeded": 0,
         "tasks_failed":    0,
-        "number_of_samples": 0,
+        "number_of_samples": len(known_sample_ids),
         "number_of_samples_with_failed_tasks": 0,
         "number_of_samples_with_successful_tasks": 0,
     }
@@ -1219,7 +1231,7 @@ def create_mira_dag(
             trace_file = os.path.join(pipeline_info_dir, candidates[0])
   
     # ── 3. Parse trace file for per-task details ────────────────────
-    tasks: List[Dict[str, Any]] = []
+    tasks: List[Dict[str, Any]] = []; 
     if trace_file is not None:
         with open(trace_file, errors="replace") as fh:
             header = fh.readline().strip().split("\t")
@@ -1243,6 +1255,15 @@ def create_mira_dag(
                 })
         # Sort tasks by task_id to ensure consistent ordering
         tasks.sort(key=lambda t: t["task_id"])
+    elif assembly_status != "PROCESSING" and trace_file is None:
+        message.append(f"Cannot find execution trace file for this run. The trace file may have been deleted or moved. Try running MIRA again.")
+
+    # ── 4. Infer completion from trace tasks if DB status is stale ──
+    # Covers the case where check_mira_status failed to update the DB
+    sample_status: Dict[str, str] = {}    
+    if os.path.exists(nextflow_log) and len(tasks) > 0 and workflow["status"] == "COMPLETED":
+        has_failed = [t for t in tasks if t.get("status") != "COMPLETED"]
+        workflow["status"] = "FAILED" if len(has_failed) > 0 else "COMPLETED"
         # Update workflow-level task counts
         workflow["tasks_total"] = len(tasks)
         if workflow["tasks_succeeded"] == 0 and workflow["tasks_failed"] == 0:
@@ -1250,24 +1271,18 @@ def create_mira_dag(
             workflow["tasks_failed"]    = sum(1 for t in tasks if t["exit_code"] != "0")
         # Update workflow-level sample counts (restricted to known samples from
         # the samplesheet, so singleton/reference-dataset tasks aren't counted)
-        sample_status: Dict[str, str] = {}
         for t in tasks:
             if t["sample"] is not None and t["sample"] in known_sample_ids:
                 if t["sample"] not in sample_status:
                     sample_status[t["sample"]] = "PASSED" if t["exit_code"] == "0" else "FAILED"
                 elif sample_status[t["sample"]] != "FAILED" and t["exit_code"] != "0":
                     sample_status[t["sample"]] = "FAILED"
-        workflow["number_of_samples"] = len(sample_status)
+        # Check if any known samples were not present in the trace file and mark them as "FAILED"
+        for sample_id in known_sample_ids:
+            if sample_id not in sample_status:
+                sample_status[sample_id] = "FAILED"
         workflow["number_of_samples_with_failed_tasks"] = sum(1 for s in sample_status.values() if s == "FAILED")
-        workflow["number_of_samples_with_successful_tasks"] = sum(1 for s in sample_status.values() if s == "PASSED")
-    elif assembly_status != "PROCESSING" and trace_file is None:
-        message.append(f"Cannot find execution trace file for this run. The trace file may have been deleted or moved. Try running MIRA again.")
-
-    # ── 4. Infer completion from trace tasks if DB status is stale ──
-    # Covers the case where check_mira_status failed to update the DB
-    if os.path.exists(nextflow_log) and len(tasks) > 0 and workflow["status"] == "COMPLETED":
-        has_failed = [t for t in tasks if t.get("status") != "COMPLETED"]
-        workflow["status"] = "FAILED" if len(has_failed) > 0 else "COMPLETED"
+        workflow["number_of_samples_with_successful_tasks"] = sum(1 for s in sample_status.values() if s == "PASSED")        
 
     # Return workflow-level info and task list
     return {

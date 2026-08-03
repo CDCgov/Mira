@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense, Fragment } from "react";
 const Plot = lazy(() => import("react-plotly.js"));
 import {
   Dna,
@@ -68,9 +68,9 @@ const API = {
   uploadFastqs:     `${API_BASE}/upload/fastqs`,
   validateRun:      `${API_BASE}/validate/run`,
   runMIRA:          `${API_BASE}/run/MIRA`,
-  miraDAG:           `${API_BASE}/MIRA/DAG`,
-  miraStatus:        `${API_BASE}/MIRA/status`,
-  miraCancel:        `${API_BASE}/cancel/MIRA`,
+  miraDAG:          `${API_BASE}/MIRA/DAG`,
+  miraStatus:       `${API_BASE}/MIRA/status`,
+  miraCancel:       `${API_BASE}/cancel/MIRA`,
   retrieveBarcodeAssignment:    `${API_BASE}/retrieve/barcode_assignment`,
   retrieveQcStatement:          `${API_BASE}/retrieve/qc_statement`,
   retrieveQcDecisions:          `${API_BASE}/retrieve/quality_control_decisions`,
@@ -82,17 +82,19 @@ const API = {
   retrieveVariants:             `${API_BASE}/retrieve/variants`,
   retrieveMinorSnvs:            `${API_BASE}/retrieve/minor_snvs`,
   retrieveIndels:               `${API_BASE}/retrieve/indels`,
-  retrieveNtPassedFasta:    `${API_BASE}/retrieve/passed_amended_consensus`,
-  retrieveNtFailedFasta:    `${API_BASE}/retrieve/failed_amended_consensus`,
-  retrieveAaPassedFasta:    `${API_BASE}/retrieve/passed_amino_acid_consensus`,
-  retrieveAaFailedFasta:    `${API_BASE}/retrieve/failed_amino_acid_consensus`,
-  retrieveNextcladeFasta:   `${API_BASE}/retrieve/nextclade_aligned_fasta`,
-  downloadNtPassedFasta:    `${API_BASE}/download/nt_passed_fasta`,
-  downloadNtFailedFasta:    `${API_BASE}/download/nt_failed_fasta`,
-  downloadAaPassedFasta:    `${API_BASE}/download/aa_passed_fasta`,
-  downloadAaFailedFasta:    `${API_BASE}/download/aa_failed_fasta`,
-  downloadNextcladeFasta:   `${API_BASE}/download/nextclade_fasta`,
-  downloadMiraReports:      `${API_BASE}/download/mira_reports`,
+  retrieveNtPassedFasta:        `${API_BASE}/retrieve/passed_amended_consensus`,
+  retrieveNtFailedFasta:        `${API_BASE}/retrieve/failed_amended_consensus`,
+  retrieveAaPassedFasta:        `${API_BASE}/retrieve/passed_amino_acid_consensus`,
+  retrieveAaFailedFasta:        `${API_BASE}/retrieve/failed_amino_acid_consensus`,
+  retrieveNextcladeFasta:       `${API_BASE}/retrieve/nextclade_aligned_fasta`,
+  downloadNtPassedFasta:        `${API_BASE}/download/nt_passed_fasta`,
+  downloadNtFailedFasta:        `${API_BASE}/download/nt_failed_fasta`,
+  downloadAaPassedFasta:        `${API_BASE}/download/aa_passed_fasta`,
+  downloadAaFailedFasta:        `${API_BASE}/download/aa_failed_fasta`,
+  downloadNextcladeFasta:       `${API_BASE}/download/nextclade_fasta`,
+  downloadMiraReports:          `${API_BASE}/download/mira_reports`,
+  downloadSeqsenderConfig:           `${API_BASE}/download/seqsender_config_template`,
+  downloadSeqsenderMetadataTemplate: `${API_BASE}/download/seqsender_metadata_template`,
 };
 
 /* ── simple dropdown hook ────────────────────────── */
@@ -282,9 +284,9 @@ function HomeTab() {
 /* ── Assembly Tab ────────────────────────────────── */
 const ASSEMBLY_STEPS = [
   { id: "setup",    title: "STEP 1: MIRA SETUP",  subtitle: "Define run, configure sample sheet, and set assembly parameters", icon: Upload },
-  { id: "progress", title: "STEP 2: PROCESSING",  subtitle: "Monitor assembly progress and stage status",                    icon: RefreshCw },
-  { id: "results",  title: "STEP 3: RESULTS",     subtitle: "Assembly statistics, QC decisions, and coverage plots",                          icon: BarChart3 },
-  { id: "export",   title: "STEP 4: EXPORT",      subtitle: "Download FASTA outputs from the assembly run",                  icon: Download },
+  { id: "progress", title: "STEP 2: PROCESSING",  subtitle: "Monitor assembly progress and stage status",                      icon: RefreshCw },
+  { id: "results",  title: "STEP 3: RESULTS",     subtitle: "Assembly statistics, QC decisions, and coverage plots",           icon: BarChart3 },
+  { id: "export",   title: "STEP 4: EXPORT",      subtitle: "Download FASTA outputs from the assembly run",                    icon: Download },
 ];
 
 function StepHeader({ icon: Icon, title, subtitle, open }) {
@@ -475,7 +477,7 @@ function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colo
 
       {/* colorize bin legend */}
       {colorize && (
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/10">
+        <div className="flex items-center justify-center gap-2 px-3 py-2 border-b border-border bg-muted/10">
           <span className="text-xs text-muted-foreground shrink-0">Percentile:</span>
           <div className="flex overflow-hidden rounded border border-border shrink-0">
             {PUBUGN_8.map((color, i) => {
@@ -628,19 +630,38 @@ function AssemblyTab() {
     const poll = async () => {
       try {
 
+        // If the run is still active, poll /pipeline/status for the DAG
         if (submitProcessId && cancelRun === false) {
           const statusRes = await fetch(`${API.miraStatus}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}&pid=${submitProcessId}`);
           if (!statusRes.ok) { await statusRes.body?.cancel?.(); }
         }
 
+        // Fetch the DAG from /pipeline/status
         const dagRes = await fetch(`${API.miraDAG}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`);
-        if (!dagRes.ok) { await dagRes.body?.cancel?.(); return; }
+        
+        // If the run was cancelled, don't let a failed/missing DAG response (e.g. the
+        // backend already cleared the job) leave polling stuck on forever.
+        if (!dagRes.ok) {
+          await dagRes.body?.cancel?.();
+          if (cancelRun === true && !cancelled) {
+            setAssembled(true);
+            setSubmitting(false);
+            setSubmitSuccess(null);
+            setPipelinePolling(false);
+          }
+          return;
+        }
+
+        // If the DAG response is OK, parse it and update state
         const data = await dagRes.json();
 
+        // If the run was cancelled, don't let a failed/missing DAG response (e.g. the
+        // backend already cleared the job) leave polling stuck on forever.
         if (!cancelled) {
           setPipelineDAG(data);
           const done = data?.workflows?.status === "COMPLETED" || data?.workflows?.status === "FAILED" || data?.workflows?.status === "CANCELED" || data?.workflows?.status === "UNKNOWN";
           if (done || cancelRun === true) { 
+           try {
 
             // Fetch all result tables and plots
             const barcodeRes = await fetch(
@@ -767,12 +788,17 @@ function AssemblyTab() {
             if (!nextcladeRes.ok) throw new Error(nextcladeData.detail || "Failed to load Nextclade fasta");
             setResultNextcladeFasta(nextcladeData?.location ?? null);
 
-            // If the run is done, stop polling and fetch results
-            setPipelinePolling(false); 
-            setSubmitting(false); 
-            setAssembled(true);
-            setSubmitSuccess(null);
-
+           } catch (resultErr) {
+             // A single missing/failed result endpoint shouldn't keep the run stuck
+             // in "Processing..." forever — log it and still mark the run as done.
+             console.error("Failed to load one or more result sets:", resultErr);
+           } finally {
+             // If the run is done, stop polling regardless of individual result-fetch outcomes
+             setAssembled(true);
+             setSubmitting(false);
+             setSubmitSuccess(null);
+             setPipelinePolling(false);
+           }
           }
         }
       } catch (_) { /* network error — keep polling */ }
@@ -907,6 +933,14 @@ function AssemblyTab() {
     { value: "dong_et_al",               label: "Dong et al. 230312" },
     { value: "davina_nunez_wgs",         label: "Davina-Nunez et al. - WG pools" },
   ];
+
+  // Define constant for Nextclade dataset names
+  const NEXTCLADE_DATASETS = {
+    "sc2": "sars-cov-2",
+    "flu": "flu",
+    "rsv": "rsv",
+    "mpox": "mpox",
+  };
 
   // Handle mouse down event for resizing the right panel
   const onMouseDown = useCallback(() => {
@@ -1352,11 +1386,11 @@ function AssemblyTab() {
         setResultNextcladeFasta(null);
 
         // Update the selected run for the UI state
+        setShowDAG(true);
         setAssembled(false);
         setCancelRun(false);
         setSubmitProcessId(miraData.pid);
         setPipelinePolling(true);
-        setShowDAG(true);
 
       }
 
@@ -1381,6 +1415,18 @@ function AssemblyTab() {
     resultMinorSnvs,
   ].every((result) => result === null);
 
+  // Result sub-sections available for jump-to navigation under Step 3: Results (only shown once populated).
+  const resultSections = [
+    { id: "result-section-barcode",  label: "Barcode Assignment", show: resultBarcodeAssignments !== null },
+    { id: "result-section-qc",       label: "QC Decisions",       show: resultQcDecisions !== null },
+    { id: "result-section-heatmap",  label: "Median Coverage Heatmap",   show: resultCoverageHeatmap !== null },
+    { id: "result-section-summary",  label: "MIRA Summary",       show: resultMiraSummary !== null },
+    { id: "result-section-coverage", label: "Sample Sankey & Coverage Plots",    show: resultSampleCoverageList !== null },
+    { id: "result-section-variants", label: "AA Variants",        show: resultVariants !== null },
+    { id: "result-section-snvs",     label: "Minor SNVs",         show: resultMinorSnvs !== null },
+    { id: "result-section-indels",   label: "Minor Indels & Deletions",             show: resultIndels !== null },
+  ].filter(({ show }) => show);
+
   return (
     <div className="flex h-full overflow-hidden">
 
@@ -1393,7 +1439,7 @@ function AssemblyTab() {
               className="w-full px-4 py-3 bg-muted/20 hover:bg-muted/40 transition-colors"
             >
               <StepHeader
-                icon={id === "progress" && pipelinePolling == true && assembled == false
+                icon={id === "progress" && pipelinePolling == true && assembled == false && cancelRun == false
                   ? ({ size }) => <RefreshCw size={size} className="animate-spin" />
                   : icon
                 }
@@ -1504,7 +1550,7 @@ function AssemblyTab() {
                         <Upload size={22} />
                         <span>Drag &amp; drop or <span className="text-primary underline">browse</span></span>
                         <span className="text-xs opacity-60">.fastq, .fastq.gz accepted, and sample names must not contain any spaces. If exists, spaces will be replaced with underscores.</span>
-                        <input type="file" className="hidden" multiple accept=".fastq,.fastq.gz,.fq,.fq.gz"
+                        <input type="file" className="hidden" multiple
                           onChange={(e) => {
                             
                             // Handle file selection and validation
@@ -1516,6 +1562,15 @@ function AssemblyTab() {
 
                             // Sanitize: replace spaces with underscores
                             const sanitized = files.map(f => f.name.replace(/\s+/g, "_"));
+
+                            // Validate: only .fastq, .fastq.gz, .fq, .fq.gz files are accepted (case-insensitive)
+                            const nonFastqFiles = sanitized.filter(fname => !/\.(fastq|fq)(\.gz)?$/i.test(fname));
+                            if (nonFastqFiles.length > 0) {
+                              const err = { items: [`Only FASTQ files (.fastq, .fastq.gz, .fq, .fq.gz) are accepted.`], missing: [...nonFastqFiles] };
+                              isOnt ? setUploadOntError(err) : setUploadIlluminaError(err);
+                              e.target.value = "";
+                              return;
+                            }
 
                             // Validate filenames based on experiment type
                             if (isOnt) {
@@ -1930,7 +1985,7 @@ function AssemblyTab() {
                         className="flex items-center gap-2 px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {submitting ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
-                        {submitting ? "Processing..." : isNewRun ? "Run Assembly" : "Rerun Assembly"}
+                        {submitting ? "Processing..." : isNewRun ? "Run Genome Assembly" : "Re-run Genome Assembly"}
                       </button>
                       {submitProcessId && pipelinePolling && (
                         <button
@@ -1940,9 +1995,10 @@ function AssemblyTab() {
                               const data = await statusRes.json();
                               if (!statusRes.ok) throw new Error(data.detail || "Failed to cancel MIRA run");
                               setCancelRun(true);
+                              setSubmitting(false);
                               setSubmitError({
                                 title: "Cancelled Status",
-                                items: Array.isArray(data.message) ? data.message : [data.message || "The MIRA run was cancelled."],
+                                items: Array.isArray(data.message) ? data.message : [data.message || "MIRA run was canceled or interrupted."],
                                 missing: null,
                               });
                             } catch (err) {
@@ -2018,7 +2074,7 @@ function AssemblyTab() {
                             : pipelineDAG?.workflows?.status === "CANCELED" && (
                                 <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
                                   <AlertCircle size={13} className="shrink-0 mt-0.5" />
-                                  <span>The MIRA run was canceled or interrupted.</span>
+                                  <span>MIRA run was canceled or interrupted.</span>
                                 </div>
                               )
                         )}
@@ -2027,7 +2083,8 @@ function AssemblyTab() {
                         {pipelineDAG?.tasks?.length > 0 && (
                           <div className="rounded-xl border border-border overflow-hidden">
                             <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
-                              <p className="text-xs font-bold text-foreground uppercase tracking-wider">Running Tasks</p>                           </div>
+                              <p className="text-xs font-bold text-foreground uppercase tracking-wider">Running Tasks</p>                           
+                            </div>
                             <div className="divide-y divide-border/50 max-h-[360px] overflow-y-auto">
                               {pipelineDAG?.tasks?.map(task => {
                                 const done   = task.status === "COMPLETED";
@@ -2037,7 +2094,7 @@ function AssemblyTab() {
                                     <div className="flex items-center gap-2 min-w-0">
                                       {done   && <Check size={10} className="text-emerald-500 shrink-0" />}
                                       {failed  && <AlertCircle size={10} className="text-destructive shrink-0" />}
-                                      {!done && !failed && <RefreshCw size={10} className="animate-spin text-sky-500 shrink-0" />}
+                                      {!done && !failed && <AlertCircle size={10} className="text-destructive shrink-0" />}
                                       <span className="text-xs font-mono text-foreground truncate">{task.process_name}</span>
                                       {task.sample && <span className="text-xs text-muted-foreground shrink-0">({task.sample})</span>}
                                     </div>
@@ -2089,7 +2146,7 @@ function AssemblyTab() {
                     )}
                     {assembled && cancelRun && hasNoResults && (
                       <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
-                        <AlertCircle size={13} /> There are no results generated for this run.
+                        <AlertCircle size={13} /> Run was canceled. There are no results generated for this run.
                       </div>
                     )}
                     {assembled && !cancelRun && hasNoResults && (
@@ -2100,7 +2157,7 @@ function AssemblyTab() {
 
                     {/* ── 1. Barcode Assignment ── */}
                     {assembled && resultBarcodeAssignments !== null && (
-                      <div className="rounded-xl border border-border overflow-hidden">
+                      <div id="result-section-barcode" className="rounded-xl border border-border overflow-hidden">
                         <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                           <p className="text-xs font-bold text-foreground uppercase tracking-wider">Barcode Assignment</p>
                         </div>
@@ -2129,7 +2186,7 @@ function AssemblyTab() {
 
                     {/* ── 2. Automatic QC Decisions heatmap ── */}
                     {assembled && resultQcDecisions !== null && (
-                      <div className="rounded-xl border border-border overflow-hidden">
+                      <div id="result-section-qc" className="rounded-xl border border-border overflow-hidden">
                         <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                           <p className="text-xs font-bold text-foreground uppercase tracking-wider">Automatic Quality Control Decisions</p>
                         </div>
@@ -2179,7 +2236,7 @@ function AssemblyTab() {
 
                     {/* ── 5b. Coverage Heatmap ── */}
                     {assembled && resultCoverageHeatmap !== null && (
-                      <div className="rounded-xl border border-border overflow-hidden">
+                      <div id="result-section-heatmap" className="rounded-xl border border-border overflow-hidden">
                         <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                           <p className="text-xs font-bold text-foreground uppercase tracking-wider">Median Coverage Heatmap</p>
                         </div>
@@ -2206,13 +2263,17 @@ function AssemblyTab() {
                     )}
 
                     {/* ── 4. MIRA Summary ── */}
-                    {assembled && resultMiraSummary !== null && (resultMiraSummary.length === 0 ? (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/20 rounded-lg px-3 py-2 border border-border">
-                        <Database size={13} className="shrink-0" /> <span><span className="font-semibold">MIRA Summary:</span> No data returned for this run.</span>
+                    {assembled && resultMiraSummary !== null && (
+                      <div id="result-section-summary">
+                        {resultMiraSummary.length === 0 ? (
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/20 rounded-lg px-3 py-2 border border-border">
+                            <Database size={13} className="shrink-0" /> <span><span className="font-semibold">MIRA Summary:</span> No data returned for this run.</span>
+                          </div>
+                        ) : (
+                          <ResultTable title="Mira Summary Table" data={resultMiraSummary} page={miraSummaryPage} setPage={setMiraSummaryPage} colorize />
+                        )}
                       </div>
-                    ) : (
-                      <ResultTable title="Mira Summary" data={resultMiraSummary} page={miraSummaryPage} setPage={setMiraSummaryPage} colorize />
-                    ))}
+                    )}
 
                     {/* ── 5c. Sample Coverage Plot ── */}
                     {assembled && resultSampleCoverageList !== null && (() => {
@@ -2223,9 +2284,9 @@ function AssemblyTab() {
                       const currentSample = selectedSampleForCoverage || sampleOptions[0] || "";
                       const figure = resultSampleCoverageSankey?.[currentSample] ?? null;
                       return (
-                        <div className="rounded-xl border border-border overflow-hidden">
+                        <div id="result-section-coverage" className="rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
-                            <p className="text-xs font-bold text-foreground uppercase tracking-wider">Per-Sample Coverage Plot</p>
+                            <p className="text-xs font-bold text-foreground uppercase tracking-wider">Per-Sample Coverage and Sankey Plots</p>
                             <select
                               value={currentSample}
                               onChange={e => fetchSankeyForSample(e.target.value)}
@@ -2294,34 +2355,46 @@ function AssemblyTab() {
                     })()}
 
                     {/* ── 6. Reference Variants ── */}
-                    {assembled && resultVariants !== null && (resultVariants.length === 0 ? (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/20 rounded-lg px-3 py-2 border border-border">
-                        <Database size={13} className="shrink-0" /> <span><span className="font-semibold">Reference Variants:</span> No data returned for this run.</span>
+                    {assembled && resultVariants !== null && (
+                      <div id="result-section-variants">
+                        {resultVariants.length === 0 ? (
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/20 rounded-lg px-3 py-2 border border-border">
+                            <Database size={13} className="shrink-0" /> <span><span className="font-semibold">AA Variants Table:</span> No data returned for this run.</span>
+                          </div>
+                        ) : (
+                          <ResultTable title="AA Variants Table" data={resultVariants} page={variantsPage} setPage={setVariantsPage} />
+                        )}
                       </div>
-                    ) : (
-                      <ResultTable title="Reference Variants" data={resultVariants} page={variantsPage} setPage={setVariantsPage} />
-                    ))}
+                    )}
 
                     {/* ── 7. Minor SNVs ── */}
-                    {assembled && resultMinorSnvs !== null && (resultMinorSnvs.length === 0 ? (
-                      <div className="flex items-start justify-between gap-3 p-3 rounded-xl border border-border bg-muted/10">
-                        <div>
-                          <p className="text-sm font-semibold text-foreground">MINOR SNVs</p>
-                          <p className="text-xs text-muted-foreground mt-3">No Minor SNVs found for this run.</p>
-                        </div>
-                      </div>                      
-                    ) : (
-                      <ResultTable title="Minor SNVs" data={resultMinorSnvs} page={minorSnvsPage} setPage={setMinorSnvsPage} />
-                    ))}
+                    {assembled && resultMinorSnvs !== null && (
+                      <div id="result-section-snvs">
+                        {resultMinorSnvs.length === 0 ? (
+                          <div className="flex items-start justify-between gap-3 p-3 rounded-xl border border-border bg-muted/10">
+                            <div>
+                              <p className="text-sm font-semibold text-foreground">MINOR SNVs</p>
+                              <p className="text-xs text-muted-foreground mt-3">No Minor SNVs found for this run.</p>
+                            </div>
+                          </div>                      
+                        ) : (
+                          <ResultTable title="Minor Variants Table" data={resultMinorSnvs} page={minorSnvsPage} setPage={setMinorSnvsPage} />
+                        )}
+                      </div>
+                    )}
 
                     {/* ── 8. Reference Indels ── */}
-                    {assembled && resultIndels !== null && (resultIndels.length === 0 ? (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/20 rounded-lg px-3 py-2 border border-border">
-                        <Database size={13} className="shrink-0" /> <span><span className="font-semibold">Reference Indels:</span> No data returned for this run.</span>
+                    {assembled && resultIndels !== null && (
+                      <div id="result-section-indels">
+                        {resultIndels.length === 0 ? (
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/20 rounded-lg px-3 py-2 border border-border">
+                            <Database size={13} className="shrink-0" /> <span><span className="font-semibold">Reference Indels:</span> No data returned for this run.</span>
+                          </div>
+                        ) : (
+                          <ResultTable title="Minor Indels Table" data={resultIndels} page={indelsPage} setPage={setIndelsPage} />
+                        )}
                       </div>
-                    ) : (
-                      <ResultTable title="Reference Indels" data={resultIndels} page={indelsPage} setPage={setIndelsPage} />
-                    ))}
+                    )}
                   </StepPanel>
                 )}
 
@@ -2335,7 +2408,7 @@ function AssemblyTab() {
                     )}
                     {assembled && cancelRun && !resultNtPassedFasta && !resultAaFailedFasta && !resultNtFailedFasta && !resultAaPassedFasta && !resultNextcladeFasta && (
                       <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
-                        <AlertCircle size={13} /> There are no FASTA files generated from this run.
+                        <AlertCircle size={13} /> Run was canceled. There are no FASTA files generated from this run.
                       </div>
                     )}
                     {assembled && !cancelRun && !resultNtPassedFasta && !resultAaFailedFasta && !resultNtFailedFasta && !resultAaPassedFasta && !resultNextcladeFasta && (
@@ -2367,11 +2440,7 @@ function AssemblyTab() {
                       {/* Nextclade FASTA files (one per subtype/segment) */}
                       {resultNextcladeFasta && typeof resultNextcladeFasta === "object" && Object.keys(resultNextcladeFasta).map(key => {
                         const nextcladeFastaUrl = `${API.downloadNextcladeFasta}?run_name=${encodeURIComponent(selectedRun?.run_name ?? "")}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type ?? "")}&key=${encodeURIComponent(key)}`;
-                        // Nextclade dataset shortcuts are named "<pathogen>_<subtype>_<segment>" (e.g. "flu_h3n2_na"),
-                        // but our key only holds "<subtype>_<segment>" (e.g. "h3n2_na"), so re-add the pathogen prefix.
-                        const pathogenPrefix = (selectedRun?.experiment_type ?? "").split("-")[0]?.toLowerCase() ?? "";
-                        const datasetName = pathogenPrefix ? `${pathogenPrefix}_${key}` : key;
-                        const nextcladeViewUrl = `${NEXTCLADE_BASE}?dataset-name=${encodeURIComponent(datasetName)}&input-fasta=${encodeURIComponent(nextcladeFastaUrl)}`;
+                        const nextcladeViewUrl = `${NEXTCLADE_BASE}?dataset-name=${encodeURIComponent(key)}&input-fasta=${encodeURIComponent(nextcladeFastaUrl)}`;
                         return (
                           <div key={key} className="flex items-start justify-between gap-3 p-3 rounded-xl border border-border bg-muted/10">
                             <div>
@@ -2434,27 +2503,44 @@ function AssemblyTab() {
         <div className="border-t border-border pt-3 space-y-1">
           <p className="text-xs font-bold tracking-wider text-muted-foreground uppercase mb-2">Jump To</p>
           {ASSEMBLY_STEPS.map(({ id, title, icon: Icon }) => (
-            <button
-              key={id}
-              onClick={() => {
-                setOpenStep(prev => { const next = new Set(prev); next.add(id); return next; });
-                setTimeout(() => document.getElementById(`step-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
-              }}
-              className={cn(
-                "w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-colors border text-left",
-                openStep.has(id)
-                  ? "text-primary border-primary/20 bg-primary/5"
-                  : "text-foreground border-transparent hover:bg-muted/60 hover:border-border"
+            <Fragment key={id}>
+              <button
+                onClick={() => {
+                  setOpenStep(prev => { const next = new Set(prev); next.add(id); return next; });
+                  setTimeout(() => document.getElementById(`step-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+                }}
+                className={cn(
+                  "w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-colors border text-left",
+                  openStep.has(id)
+                    ? "text-primary border-primary/20 bg-primary/5"
+                    : "text-foreground border-transparent hover:bg-muted/60 hover:border-border"
+                )}
+              >
+                <Icon size={13} className="text-primary shrink-0" />
+                <span className="truncate">{title}</span>
+              </button>
+              {id === "results" && assembled && !hasNoResults && resultSections.length > 0 && (
+                <div className="ml-4 pl-2 border-l border-border space-y-0.5">
+                  {resultSections.map(({ id: sectionId, label }) => (
+                    <button
+                      key={sectionId}
+                      onClick={() => {
+                        setOpenStep(prev => { const next = new Set(prev); next.add("results"); return next; });
+                        setTimeout(() => document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+                      }}
+                      className="w-full flex items-center px-3 py-1 rounded-md text-xs text-muted-foreground hover:text-primary hover:bg-muted/60 transition-colors text-left"
+                    >
+                      <span className="truncate">{label}</span>
+                    </button>
+                  ))}
+                </div>
               )}
-            >
-              <Icon size={13} className="text-primary shrink-0" />
-              <span className="truncate">{title}</span>
-            </button>
+            </Fragment>
           ))}
         </div>
 
         <div className="mt-auto border-t border-border pt-3">
-          <p className="text-xs text-muted-foreground">Base URL: <a href="https://cdcgov.github.io/MIRA/" target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline">cdcgov.github.io/MIRA/</a></p>
+          <p className="text-center text-xs text-muted-foreground"><a href="https://cdcgov.github.io/MIRA/" target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline">cdcgov.github.io/MIRA/</a></p>
         </div>
       </aside>
 
@@ -2751,35 +2837,35 @@ function AssemblyTab() {
 
 /* ── SeqSender Tab ──────────────────────────────── */
 const SEQSENDER_STEPS = [
-  { id: "setup",  title: "STEP 1: SEQSENDER SETUP",   subtitle: "Select database target, organism, input files, and submit",  icon: Database },
-  { id: "status", title: "STEP 2: SUBMISSION STATUS",  subtitle: "Track per-database submission progress",             icon: ClipboardList },
+  { id: "setup",  title: "STEP 1: SEQSENDER SETUP",    subtitle: "Select database target, organism, input files, and submit",  icon: Database },
+  { id: "status", title: "STEP 2: SUBMISSION STATUS",  subtitle: "Track per-database submission progress",                     icon: ClipboardList },
 ];
-
-const ORGANISMS = ["FLU", "COV", "POX", "ARBO", "RSV", "OTHER"];
+const ORGANISMS = ["FLU", "COV", "RSV", "POX", "ARBO", "OTHER"];
 const DB_LIST = [
   { key: "biosample", label: "BioSample",  desc: "NCBI BioSample — biological source metadata" },
   { key: "sra",       label: "SRA",        desc: "NCBI Sequence Read Archive — raw read data" },
   { key: "genbank",   label: "GenBank",    desc: "NCBI GenBank — assembled consensus sequences" },
-  { key: "gisaid",    label: "GISAID",     desc: "GISAID EpiFlu / EpiCoV — flu & SARS-CoV-2" },
+  { key: "gisaid",    label: "GISAID",     desc: "GISAID — submissions of Influenza, SARS-CoV-2, & other pathogens genomic data" },
 ];
 
+// ── SeqSender Tab Component ────────────────────────
 function SeqSenderTab() {
   const [openStep, setOpenStep]           = useState(() => new Set(SEQSENDER_STEPS.map((s) => s.id)));
   const [dbs, setDbs]                     = useState({ biosample: false, sra: false, genbank: false, gisaid: false });
   const [organism, setOrganism]           = useState("");
   const [subName, setSubName]             = useState("");
-  const [subDir, setSubDir]               = useState("");
   const [configFile, setConfigFile]       = useState("");
   const [metaFile, setMetaFile]           = useState("");
   const [fastaFile, setFastaFile]         = useState("");
+  const [gisaidCliFile, setGisaidCliFile] = useState("");
   const [gffFile, setGffFile]             = useState("");
   const [table2asn, setTable2asn]         = useState(false);
   const [testMode, setTestMode]           = useState(false);
-  const [copied, setCopied]               = useState(false);
   const [submitted, setSubmitted]         = useState(false);
   const [rightWidth, setRightWidth]       = useState(260);
   const dragging = useRef(false);
 
+  // Toggle the open/closed state of a step in the accordion
   const toggle = (id) => setOpenStep((prev) => {
     const next = new Set(prev);
     next.has(id) ? next.delete(id) : next.add(id);
@@ -2787,6 +2873,7 @@ function SeqSenderTab() {
   });
   const toggleDb = (k) => setDbs((p) => ({ ...p, [k]: !p[k] }));
 
+  // Handle resizing of the right panel
   const onMouseDown = useCallback(() => {
     dragging.current = true;
     const onMove = (e) => {
@@ -2797,22 +2884,6 @@ function SeqSenderTab() {
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   }, []);
-
-  const command = [
-    "python seqsender.py submit",
-    ...Object.entries(dbs).filter(([, v]) => v).map(([k]) => `--${k}`),
-    organism        && `--organism ${organism}`,
-    subName         && `--submission_name ${subName}`,
-    subDir          && `--submission_dir ${subDir}`,
-    configFile      && `--config_file ${configFile}`,
-    metaFile        && `--metadata_file ${metaFile}`,
-    fastaFile       && `--fasta_file ${fastaFile}`,
-    table2asn       && `--table2asn`,
-    gffFile         && `--gff_file ${gffFile}`,
-    testMode        && `--test`,
-  ].filter(Boolean).join(" \\\n  ");
-
-  const copyCommand = () => { navigator.clipboard.writeText(command); setCopied(true); setTimeout(() => setCopied(false), 2000); };
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -2870,6 +2941,25 @@ function SeqSenderTab() {
                       </div>
                     </div>
 
+                    {Object.values(dbs).some(Boolean) && organism && (
+                      <div className="flex flex-wrap gap-2">
+                        <a
+                          href={`${API.downloadSeqsenderConfig}?organism=${encodeURIComponent(organism)}&${Object.entries(dbs).filter(([, v]) => v).map(([k]) => `${k}=true`).join("&")}`}
+                          download
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border bg-muted/20 hover:bg-muted/40 text-xs font-medium text-foreground transition-colors"
+                        >
+                          <Download size={13} /> Download Config File
+                        </a>
+                        <a
+                          href={`${API.downloadSeqsenderMetadataTemplate}?organism=${encodeURIComponent(organism)}&${Object.entries(dbs).filter(([, v]) => v).map(([k]) => `${k}=true`).join("&")}`}
+                          download
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border bg-muted/20 hover:bg-muted/40 text-xs font-medium text-foreground transition-colors"
+                        >
+                          <Download size={13} /> Download Metadata Template
+                        </a>
+                      </div>
+                    )}
+
                     <div className="flex items-center gap-2 pt-1">
                       <span className="text-xs font-bold tracking-wider text-muted-foreground uppercase">Submission Inputs</span>
                       <div className="flex-1 h-px bg-border" />
@@ -2878,15 +2968,16 @@ function SeqSenderTab() {
                     <div>
                       <FieldLabel>Submission Name <span className="text-destructive">*</span></FieldLabel>
                       <input value={subName} onChange={(e) => setSubName(e.target.value)}
-                        placeholder="e.g. FLU_H3N2_2026_Batch01"
+                        placeholder="e.g. FLU_H3N2_2026"
                         className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
                     </div>
 
                     {[
-                      { label: "Config File",    required: true,  val: configFile,  set: setConfigFile,  accept: ".yaml,.yml,.json",    ph: "config.yaml" },
-                      { label: "Metadata File",  required: true,  val: metaFile,    set: setMetaFile,    accept: ".csv,.tsv,.xlsx",      ph: "metadata.csv" },
-                      { label: "FASTA File",     required: true,  val: fastaFile,   set: setFastaFile,   accept: ".fasta,.fa,.fna",      ph: "sequences.fasta" },
-                      { label: "GFF File",       required: false, val: gffFile,     set: setGffFile,     accept: ".gff,.gff3",           ph: "annotation.gff (optional)" },
+                      { label: "Config File",    required: true,  val: configFile,    set: setConfigFile,     accept: ".yaml,.yml,.json",     ph: "config.yaml" },
+                      { label: "Metadata File",  required: true,  val: metaFile,      set: setMetaFile,       accept: ".csv,.tsv,.xlsx",      ph: "metadata.csv" },
+                      { label: "FASTA Files",    required: true,  val: fastaFile,     set: setFastaFile,      accept: ".fasta,.fa,.fna",      ph: "sequences.fasta" },
+                      { label: "GISAID CLI",     required: true,  val: gisaidCliFile, set: setGisaidCliFile,  accept: "binary",               ph: "e.g. fluCLI" },
+                      { label: "GFF File",       required: false, val: gffFile,       set: setGffFile,        accept: ".gff,.gff3",           ph: "annotation.gff (optional)" },
                     ].map(({ label, required, val, set, accept, ph }) => (
                       <div key={label}>
                         <FieldLabel>{label} {required && <span className="text-destructive">*</span>}</FieldLabel>
@@ -2896,7 +2987,8 @@ function SeqSenderTab() {
                           <label className="flex items-center gap-1.5 px-3 h-9 rounded-md border border-border bg-muted/20 hover:bg-muted/40 cursor-pointer text-xs text-muted-foreground transition-colors">
                             <FolderOpen size={13} /> Browse
                             <input type="file" className="hidden" accept={accept}
-                              onChange={(e) => e.target.files?.[0] && set(e.target.files[0].name)} />
+                              multiple={label === "FASTA Files"}
+                              onChange={(e) => e.target.files?.length && set(Array.from(e.target.files).map(file => file.name).join(", "))} />
                           </label>
                         </div>
                       </div>
@@ -2944,7 +3036,7 @@ function SeqSenderTab() {
                     {submitted && (
                       <div className="space-y-2">
                         {[
-                          { key: "biosample", label: "BioSample", accessionLabel: "BioSample Accession", placeholder: "e.g. SAMN00000000"   },
+                          { key: "biosample", label: "BioSample", accessionLabel: "BioSample Accession",  placeholder: "e.g. SAMN00000000"    },
                           { key: "sra",       label: "SRA",       accessionLabel: "SRA Accession",        placeholder: "e.g. SRR00000000"    },
                           { key: "genbank",   label: "GenBank",   accessionLabel: "GenBank Accession",    placeholder: "e.g. MN000000"       },
                           { key: "gisaid",    label: "GISAID",    accessionLabel: "EPI ISL Accession",    placeholder: "e.g. EPI_ISL_000000" },
@@ -2970,10 +3062,11 @@ function SeqSenderTab() {
                           ))}
                       </div>
                     )}
-
-                    <button className="flex items-center gap-2 px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
-                      <RefreshCw size={14} /> Refresh Status
-                    </button>
+                    {submitted && (
+                      <button className="flex items-center gap-2 px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+                        <RefreshCw size={14} /> Refresh Status
+                      </button>
+                    )}
                   </StepPanel>
                 )}
 
@@ -3003,7 +3096,7 @@ function SeqSenderTab() {
         </div>
 
         <div className="mt-auto border-t border-border pt-3">
-          <p className="text-xs text-muted-foreground">Base URL: <a href="https://cdcgov.github.io/seqsender/" target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline">cdcgov.github.io/seqsender/</a></p>
+          <p className="text-center text-xs text-muted-foreground"><a href="https://cdcgov.github.io/seqsender/" target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline">cdcgov.github.io/seqsender/</a></p>
         </div>
       </aside>
     </div>

@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Any
 
 # Import general python packages
 import os
+import yaml
 import sqlite3
 
 # Allow files created by this backend to be group-readable and group-writable.
@@ -24,15 +25,50 @@ def _ensure_storage_directory(path: str) -> None:
     os.makedirs(path, mode=0o2775, exist_ok=True)
     os.chmod(path, 0o2775)
 
+# Read in the config.yml file to get the data storage path
+def _read_config_yml() -> Dict[str, Any]:
+    config_path = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "config.yml"))
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+    return config
+
+# Get deployment type from config.yml or environment variable
+def get_deploy_type() -> str:
+    config = _read_config_yml()
+    deploy_type = config.get("DEPLOY", None)
+    if not deploy_type:
+        raise ValueError("DEPLOY must be set in config.yml.")
+    elif deploy_type not in ["Local", "Docker"]:
+        raise ValueError("DEPLOY must be either 'Local' or 'Docker'.")
+    return deploy_type
+
+# Get the data storage path from config.yml or environment variable
+def get_data_storage_path() -> str:
+    config = _read_config_yml()
+    data_storage_path = config.get("DATA_ROOT", None)
+    if not data_storage_path:
+        raise ValueError("DATA_ROOT must be set in config.yml")
+    return os.path.realpath(data_storage_path)
+
+# Get the MIRA Nextflow image from config.yml or environment variable
+def get_mira_nf_image() -> str:
+    config = _read_config_yml()
+    mira_nf_image = config.get("MIRA_NF_IMAGE", None)
+    if not mira_nf_image:
+        raise ValueError("MIRA_NF_IMAGE must be set in config.yml.")
+    return mira_nf_image
+
 # Define storage paths for sqlite database and schema file
 _DEFAULT_SCHEMA_FILE = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "sqlite/schema.sql"))
 
 # Define data storage path for MIRA and SeqSender, allowing override via environment variable
-_DEFAULT_DATA_STORAGE_PATH = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "data"))
+_DEFAULT_DATA_STORAGE_PATH = get_data_storage_path()
 _ensure_storage_directory(_DEFAULT_DATA_STORAGE_PATH)
 
 # Define storage path for sqlite database, allowing override via environment variable
-_DEFAULT_SQLITE_PATH = os.path.realpath(os.path.join(_DEFAULT_DATA_STORAGE_PATH, "sqlite"))
+_DEFAULT_SQLITE_PATH = os.path.realpath(os.path.join(_DEFAULT_DATA_STORAGE_PATH, "SQlite"))
 _ensure_storage_directory(_DEFAULT_SQLITE_PATH)
 
 # Create sqlite database if it doesn't exist, using schema.sql
@@ -46,23 +82,37 @@ if not os.path.exists(_DEFAULT_SQLITE_FILE):
     conn.close()
 os.chmod(_DEFAULT_SQLITE_FILE, 0o664)
 
-# Define host storage path for MIRA and SeqSender data, allowing override via environment variable
+# Define storage path for MIRA data, allowing override via environment variable
 _DEFAULT_MIRA_STORAGE_PATH = os.path.join(_DEFAULT_DATA_STORAGE_PATH, "MIRA")
 _ensure_storage_directory(_DEFAULT_MIRA_STORAGE_PATH)
 
-# HOST-side path to the MIRA storage directory, used ONLY as the bind-mount source
-# for sibling "docker run" containers launched via the Docker socket (DooD cleanup /
-# pipeline launch in mira_handler.py). The Docker daemon always resolves "-v" sources
-# against the HOST filesystem regardless of which container issued the command, so
-# this must never be used for direct file I/O inside this process — that's what
-# _DEFAULT_MIRA_STORAGE_PATH (above) is for. Set HOST_DATA_STORAGE_PATH in
-# docker-compose.yml to the real host path of ./backend/data.
-_HOST_DATA_STORAGE_PATH = os.getenv("HOST_DATA_STORAGE_PATH", _DEFAULT_DATA_STORAGE_PATH)
-_HOST_MIRA_STORAGE_PATH = os.path.join(_HOST_DATA_STORAGE_PATH, "MIRA")
+# Define storage path for SeqSender data, allowing override via environment variable
+_DEFAULT_SEQSENDER_STORAGE_PATH = os.path.join(_DEFAULT_DATA_STORAGE_PATH, "SeqSender")
+_ensure_storage_directory(_DEFAULT_SEQSENDER_STORAGE_PATH)
 
-# DEFINE CURRENT MIRA DOCKER IMAGE FOR THE APP
-_MIRA_NF_IMAGE = "cdcgov/mira-nf:v2.1.1"
-_DEFAULT_MIRA_NF_IMAGE = os.getenv("HOST_MIRA_NF_IMAGE", _MIRA_NF_IMAGE)
+# Define local host storage path for MIRA to run in Docker
+deploy_type = get_deploy_type()
+if deploy_type == "Docker":
+    _HOST_DATA_STORAGE_PATH = os.getenv("HOST_DATA_STORAGE_PATH", None)
+    if not _HOST_DATA_STORAGE_PATH:
+        raise ValueError("HOST_DATA_STORAGE_PATH must be set in docker-compose.yml as an environment variable.")
+    _HOST_MIRA_STORAGE_PATH = os.path.join(_HOST_DATA_STORAGE_PATH, "MIRA")
+elif deploy_type == "Local":
+    _HOST_MIRA_STORAGE_PATH = _DEFAULT_DATA_STORAGE_PATH
+
+# DEFINE MIRA-NF DOCKER IMAGE FOR THE APP
+_DEFAULT_MIRA_NF_IMAGE = get_mira_nf_image()
+if deploy_type == "Docker":
+    _HOST_MIRA_NF_IMAGE = os.getenv("HOST_MIRA_NF_IMAGE", None)
+    if not _HOST_MIRA_NF_IMAGE:
+        raise ValueError("HOST_MIRA_NF_IMAGE must be set in docker-compose.yml as an environment variable.")
+elif deploy_type == "Local":
+    _HOST_MIRA_NF_IMAGE = _DEFAULT_MIRA_NF_IMAGE
+
+print(f"Using MIRA-NF Docker Image: {_HOST_MIRA_NF_IMAGE}")
+print(f"Using {deploy_type} Data Storage Path: {_DEFAULT_DATA_STORAGE_PATH}")
+print(f"Using {deploy_type} MIRA Storage Path: {_DEFAULT_MIRA_STORAGE_PATH}")
+print(f"Using Host MIRA Storage Path: {_HOST_MIRA_STORAGE_PATH}")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -126,9 +176,8 @@ def validate_tbl(
         label = f"[{table_name}] " if table_name else ""
         raise ValueError(f"{label}Schema validation failed: {exc}") from exc
 
-
 # ---------------------------------------------------------------------------
-# GLOBAL VARIABLES
+# GLOBAL VARIABLES FOR MIRA
 # ---------------------------------------------------------------------------
 experiment_types = [
     'Flu-ONT',
@@ -159,6 +208,12 @@ assembly_status = ['SUBMITTED', 'PROCESSING', 'FAILED', 'CANCELED', 'COMPLETED']
 # Segments not listed here (e.g. flu h3n2/h1n1pdm pb1/pb2/np/mp/ns) have no
 # shortcut and must be referenced by their full dataset `path` instead
 # (e.g. "nextstrain/flu/h3n2/pb2").
+nextclade_pathogen_aliases = {
+    "flu": "flu",
+    "rsv": "rsv",
+    "sc2": "sars-cov-2",
+    "mpox": "mpox",
+}
 NEXTCLADE_DATASET_SHORTCUTS = {
     "flu": {
         "h3n2":     {"ha": "flu_h3n2_ha",     "na": "flu_h3n2_na",     "pa": "flu_h3n2_pa"},
@@ -186,6 +241,30 @@ NEXTCLADE_DATASET_SHORTCUTS = {
         "lineage-b.1": "hMPXV_B1",
     },
 }
+
+# ─── Pipeline stage mapping ─────────────────
+_MIRA_STAGE_MAP = [
+    "CHECKMIRAVERSION",
+    "CONCATFASTQS",
+    "NEXTFLOWSAMPLESHEET",
+    "SAMPLESHEET_CHECK",
+    "FINDCHEMISTRY",
+    "TRIMBARCODES",
+    "SC2TRIMPRIMERS",
+    "IRMA",
+    "CONFIRM_IRMA_OUTPUT",
+    "CREATE_IRMA_INPUT",
+    "CREATE_INPUT",
+    "CREATE_IRMA_FOR_QC",
+    "CREATE_IRMA_FOR_QC2",
+    "PASS_FAILED",
+    "CREATE_DAIS_INPUT",
+    "DAIS_RIBOSOME",
+    "PREPARE_MIRA_REPORTS",
+    "GET_NEXTCLADE_DATASET",
+    "RUN_NEXTCLADE",
+    "UPDATE_MIRA_SUMMARY"
+]
 
 # ---------------------------------------------------------------------------
 # ASSEMBLY SCHEMA
@@ -269,28 +348,173 @@ upload_fastq_files_pa_schema = pa.DataFrameSchema(
         "sample_id": _required_str(),
         "fastq_path": pa.Column(pl.String, nullable=False, required=True),
     },
-    name="uploaded_fastq_files",
+    name="upload_fastq_files",
 )
 
-# ─── Pipeline stage groupings (process short-name → stage id) ─────────────────
-_STAGE_MAP: Dict[str, Dict[str, str]] = {
-    "CHECK_MIRA_VERSION":     {"task_id": 1},
-    "CONCAT_FASTQS":          {"task_id": 2},
-    "NEXTFLOW_SAMPLESHEET":   {"task_id": 3},
-    "SAMPLESHEET_CHECK":      {"task_id": 4},
-    "FIND_CHEMISTRY":         {"task_id": 5},
-    "TRIM_BARCODES":          {"task_id": 6},
-    "IRMA":                   {"task_id": 7},
-    "CONFIRM_IRMA_OUTPUT":    {"task_id": 8},
-    "CREATE_IRMA_INPUT":      {"task_id": 9},
-    "CREATE_INPUT":           {"task_id": 10},
-    "CREATE_IRMA_FOR_QC":     {"task_id": 11},
-    "CREATE_IRMA_FOR_QC2":    {"task_id": 12},
-    "PASS_FAILED":            {"task_id": 13},
-    "CREATE_DAIS_INPUT":      {"task_id": 14},
-    "DAIS_RIBOSOME":          {"task_id": 15},
-    "PREPARE_MIRA_REPORTS":   {"task_id": 16},
-    "GET_NEXTCLADE_DATASET":  {"task_id": 17},
-    "RUN_NEXTCLADE":          {"task_id": 18},
-    "UPDATE_MIRA_SUMMARY":    {"task_id": 19},
-}
+# ---------------------------------------------------------------------------
+# GLOBAL VARIABLES FOR MIRA
+# ---------------------------------------------------------------------------
+database_targets = ["BioSample", "SRA", "GenBank", "GISAID"]
+
+submission_status = [
+    'SUBMITTED', 'CREATED', 'QUEUED', 'PROCESSING',
+    'FAILED', 'PROCESSED', 'ERROR', 'WAITING', 
+    'DELETED', 'RETIRED', 'VALIDATED', 'EMAILED'
+]
+
+pathogen_targets = ["FLU", "COV", "RSV", "POX", "ARBO", "OTHER"]
+
+# ---------------------------------------------------------------------------
+# SEQSENDER SUBMISSION TABLE SCHEMA
+# ---------------------------------------------------------------------------
+submission_tbl_pa_schema = pa.DataFrameSchema(
+    columns={
+        "submission_name": _required_str(),
+        "organism": _required_str(),
+        "db": _required_str(),
+        "submission_type": _required_str(),
+        "submission_status": _required_str(),
+        "submission_id": _nullable_str(required=True),
+        "submission_id_status": _required_str(),
+        "submission_date": _required_str(),
+        "upload_date": _required_str(),
+    },
+    name="submission"
+)
+# ---------------------------------------------------------------------------
+# SEQSENDER METADATA SCHEMA
+# ---------------------------------------------------------------------------
+metadata_tbl_pa_schema = pa.DataFrameSchema(
+    columns={
+        "organism": _required_str(),
+        "authors": _required_str(),
+        "collection_date": _required_str(),
+        "bioproject": _required_str(),
+        "sequence_name": _required_str(),
+        "gb-sample_name": _required_str(),
+        "gb-fasta_definition_line_modifiers": _nullable_str(required=False),
+        "gb-title": _nullable_str(required=False),
+        "gb-comment": _nullable_str(required=False),
+        "src-Altitude": _nullable_str(required=False),
+        "src-Bio_material": _nullable_str(required=False),
+        "src-Breed": _nullable_str(required=False),
+        "src-Cell_line": _nullable_str(required=False),
+        "src-Cell_type": _nullable_str(required=False),
+        "src-Clone": _nullable_str(required=False),
+        "src-Collected_by": _nullable_str(required=False),
+        "src-geo_loc_name": _required_str(),
+        "src-Cultivar": _nullable_str(required=False),
+        "src-Culture_collection": _nullable_str(required=False),
+        "src-Dev_stage": _nullable_str(required=False),
+        "src-Ecotype": _nullable_str(required=False),
+        "src-Fwd_primer_name": _nullable_str(required=False),
+        "src-Fwd_primer_seq": _nullable_str(required=False),
+        "src-Genotype": _nullable_str(required=False),
+        "src-Haplogroup": _nullable_str(required=False),
+        "src-Haplotype": _nullable_str(required=False),
+        "src-Host": _required_str(),
+        "src-Isolate": _required_str(),
+        "src-Isolation-source": _nullable_str(required=False),
+        "src-Lab_host": _nullable_str(required=False),
+        "src-Lat_Lon": _nullable_str(required=False),
+        "src-Note": _nullable_str(required=False),
+        "src-Rev_primer_name": _nullable_str(required=False),
+        "src-Rev_primer_seq": _nullable_str(required=False),
+        "src-Segment": _nullable_str(required=False),
+        "src-Serotype": _nullable_str(required=False),
+        "src-Serovar": _nullable_str(required=False),
+        "src-Sex": _nullable_str(required=False),
+        "src-Specimen_voucher": _nullable_str(required=False),
+        "src-Strain": _nullable_str(required=False),
+        "src-Sub_species": _nullable_str(required=False),
+        "src-Tissue_lib": _nullable_str(required=False),
+        "src-Tissue_type": _nullable_str(required=False),
+        "src-Variety": _nullable_str(required=False),
+        "cmt-StructuredCommentPrefix": _required_str(),
+        "cmt-StructuredCommentSuffix": _required_str(),
+        "cmt-Assembly Method": _required_str(),
+        "gs-sample_name": _required_str(),
+        "gs-rsv_subtype": _required_str(),
+        "gs-rsv_passage": _required_str(),
+        "gs-rsv_location": _required_str(),
+        "gs-rsv_add_location": _nullable_str(required=False),
+        "gs-rsv_host": _required_str(),
+        "gs-rsv_add_host_info": _nullable_str(required=False),
+        "gs-rsv_sampling_strategy": _nullable_str(required=False),
+        "gs-rsv_sex": _required_str(),
+        "gs-rsv_patient_age": _required_str(),
+        "gs-rsv_patient_status": _required_str(),
+        "gs-rsv_specimen": _nullable_str(required=False),
+        "gs-rsv_outbreak": _nullable_str(required=False),
+        "gs-rsv_last_vaccinated": _nullable_str(required=False),
+        "gs-rsv_treatment": _nullable_str(required=False),
+        "gs-rsv_seq_technology": _required_str(),
+        "gs-rsv_assembly_method": _nullable_str(required=False),
+        "gs-rsv_coverage": _nullable_str(required=False),
+        "gs-rsv_orig_lab": _required_str(),
+        "gs-rsv_orig_lab_addr": _required_str(),
+        "gs-rsv_provider_sample_id": _nullable_str(required=False),
+        "gs-rsv_subm_lab": _required_str(),
+        "gs-rsv_subm_lab_addr": _required_str(),
+        "gs-rsv_subm_sample_id": _nullable_str(required=False),
+        "gs-rsv_comment": _required_str(),
+        "gs-comment_type": _required_str(),
+        "bs-sample_name": _required_str(),
+        "bs-sample_title": _required_str(),
+        "bs-sample_description": _nullable_str(required=False),
+        "bs-strain": _nullable_str(required=False),
+        "bs-isolate": _nullable_str(required=False),
+        "bs-collected_by": _required_str(),
+        "bs-geo_loc_name": _required_str(),
+        "bs-host": _required_str(),
+        "bs-host_disease": _required_str(),
+        "bs-isolation_source": _required_str(),
+        "bs-lat_lon": _required_str(),
+        "bs-culture_collection": _nullable_str(required=False),
+        "bs-genotype": _nullable_str(required=False),
+        "bs-host_age": _nullable_str(required=False),
+        "bs-host_description": _nullable_str(required=False),
+        "bs-host_disease_outcome": _nullable_str(required=False),
+        "bs-host_disease_stage": _nullable_str(required=False),
+        "bs-host_health_state": _nullable_str(required=False),
+        "bs-host_sex": _nullable_str(required=False),
+        "bs-host_subject_id": _nullable_str(required=False),
+        "bs-host_tissue_sampled": _nullable_str(required=False),
+        "bs-passage_history": _nullable_str(required=False),
+        "bs-pathotype": _nullable_str(required=False),
+        "bs-serotype": _nullable_str(required=False),
+        "bs-serovar": _nullable_str(required=False),
+        "bs-specimen_voucher": _nullable_str(required=False),
+        "bs-subgroup": _nullable_str(required=False),
+        "bs-subtype": _nullable_str(required=False),
+        "bs-title": _nullable_str(required=False),
+        "bs-comment": _nullable_str(required=False),
+        "sra-sample_name": _required_str(),
+        "sra-file_location": _required_str(),
+        "sra-file_1": _required_str(),
+        "sra-file_#": _nullable_str(required=False),
+        "sra-library_name": _nullable_str(required=False),
+        "sra-loader": _nullable_str(required=False),
+        "sra-library_strategy": _required_str(),
+        "sra-library_source": _required_str(),
+        "sra-library_selection": _required_str(),
+        "sra-library_layout": _required_str(),
+        "sra-platform": _nullable_str(required=False),
+        "sra-instrument_model": _required_str(),
+        "sra-design_description": _nullable_str(required=False),
+        "sra-title": _nullable_str(required=False),
+        "sra-comment": _nullable_str(required=False),
+    },
+    checks=[
+        pa.Check(
+            lambda data: data.lazyframe.select(
+                (pl.col("bs-strain").is_not_null() | pl.col("bs-isolate").is_not_null())
+                .alias("bs_strain_or_isolate_present")
+            ),
+            error="At least one of 'bs-strain' or 'bs-isolate' is required.",
+        ),
+    ],
+    name="metadata",
+)
+
+

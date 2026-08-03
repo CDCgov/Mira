@@ -44,7 +44,7 @@ cd backend
 
 ### Create the virtual environment 
 
-Using `venv` + pip (with `requirements.txt`):
+Using python >= 3.13 + `venv` + pip (with `requirements.txt`):
 
 ```bash
 python3 -m venv .venv
@@ -52,7 +52,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Or using conda/micromamba (with `environment.yml`):
+Or using Conda >= 25.7 or micromamba >= 2.0 (with `environment.yml`):
 
 ```bash
 micromamba env create -n mira_react_env -f environment.yml
@@ -63,11 +63,15 @@ micromamba activate mira_react_env
 
 ### Run MIRA backend
 
-With the virtual environment activated, start the FastAPI backend with Uvicorn from the `backend` directory:
+With the virtual environment activated, start the FastAPI backend using the `api-kickoff` script from the `backend` directory. This generates the `config.yml` to be consumed by the app and then launches the Swagger UI.
 
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8080 > mira-backend.log 2>&1 &
+./api-kickoff --deploy Local --data_dir /path/to/data --mira_nf_image cdcgov/mira-nf:v2.2.0 > mira-backend.log 2>&1 &
 ```
+
+- `--deploy` Options: Local/Docker. Must be `Local` for this workflow.
+- `--data_dir` is the directory on your machine used to store outputs from the app.
+- `--mira_nf_image` is the MIRA-NF Docker image to be used to run genome assembly (must already been pulled locally, see [Pull down the MIRA-NF image](#pull-down-the-mira-nf-image)).
 
 The API will be available at `http://localhost:8080`, with interactive docs at `http://localhost:8080/docs`.
 

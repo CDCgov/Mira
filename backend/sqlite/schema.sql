@@ -27,18 +27,15 @@ CREATE TABLE submission (
                           CHECK (submission_type IN (
                             'TEST', 'PRODUCTION'
                           )),
+  submission_id         TEXT DEFAULT NULL,
   submission_status     TEXT DEFAULT NULL 
                           CHECK (submission_status IN (
                             'SUBMITTED', 'CREATED', 'QUEUED', 'PROCESSING',
                             'FAILED', 'PROCESSED', 'ERROR', 'WAITING', 
                             'DELETED', 'RETIRED', 'VALIDATED', 'EMAILED'
-                          )),  
-  submission_id         TEXT NOT NULL,
-  submission_id_status  TEXT DEFAULT NULL 
-                          CHECK (submission_id_status IN (
-                            'PENDING', 'SUBMITTED', 'CREATED'
-                          )),
-  submission_date      TEXT NOT NULL DEFAULT (date('now')),
+                          )),    
+  submission_date       TEXT NOT NULL DEFAULT (date('now')),
+  updated_date          TEXT NOT NULL DEFAULT (date('now')),
   UNIQUE (submission_name, organism, db, submission_type)
 );
 --

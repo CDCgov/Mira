@@ -18,14 +18,7 @@ services:
 
   mira-backend:
     container_name: mira-backend
-    image: mira-backend:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        UBUNTU_IMAGE: ubuntu:24.04
-        MICROMAMBA_IMAGE: mambaorg/micromamba:2.8.0
-        MIRA_NF_IMAGE: *mira-nf-image
+    image: rchau88/mira-backend:latest
     depends_on:
       - mira-nf
     networks:
@@ -40,11 +33,10 @@ services:
       - type: bind
         source: *data-storage-path
         target: /data
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock # Mount the Docker socket to allow the backend container to run Nextflow pipelines
     working_dir: /data
     entrypoint: ["/bin/bash", "-c", "/MIRA-backend/api-kickoff --deploy Docker --data_dir /data --mira_nf_image \"$$HOST_MIRA_NF_IMAGE\""]
 
 networks:
   mira-backend:
     name: mira-backend
-

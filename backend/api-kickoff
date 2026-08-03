@@ -1,11 +1,91 @@
 #!/bin/bash 
-# Wrapper to launch MIRA Backend API
+# Wrapper to launch MIRA Backend API. 
+# This script takes --deploy, --data_dir, and --mira_image as arguments, checks for
+# the existence of the backend and data directories, generates the config.yml
+# file consumed by the backend app, and then starts the FastAPI app using Uvicorn.
 
-# Define backend directory 
-BACKEND_DIR=${BACKEND_DIR:-/MIRA-backend}
+set -euo pipefail
 
-# Navigate to the MIRA Backend directory
-cd ${BACKEND_DIR}
+usage() {
+    echo "Usage: $(basename "$0") --deploy <Local|Docker> --data_dir <DATA_ROOT> --mira_nf_image <MIRA_NF_IMAGE>" >&2
+    exit 1
+}
+
+DEPLOY=""
+DATA_ROOT=""
+MIRA_NF_IMAGE=""
+
+# Parse named arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --deploy)
+            DEPLOY="$2"
+            shift 2
+            ;;
+        --data_dir)
+            DATA_ROOT="$2"
+            shift 2
+            ;;
+        --mira_nf_image)
+            MIRA_NF_IMAGE="$2"
+            shift 2
+            ;;
+        *)
+            echo "Error: Unknown argument '$1'." >&2
+            usage
+            ;;
+    esac
+done
+
+# Require all 3 arguments to be provided
+if [[ -z "${DEPLOY}" || -z "${DATA_ROOT}" || -z "${MIRA_NF_IMAGE}" ]]; then
+    usage
+fi
+
+# Validate DEPLOY argument
+if [[ "${DEPLOY}" != "Local" && "${DEPLOY}" != "Docker" ]]; then
+    echo "Error: DEPLOY must be either 'Local' or 'Docker', got '${DEPLOY}'." >&2
+    exit 1
+fi
+
+# Define backend directory
+# Defaults to /MIRA-backend for Docker deployments
+# or the script's own location for Local deployments
+if [[ "${DEPLOY}" == "Docker" ]]; then
+    BACKEND_DIR="/MIRA-backend"
+else
+    BACKEND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+
+# Check if Backend directory exists
+if [[ ! -d "${BACKEND_DIR}" ]]; then
+    echo "Error: Backend directory ${BACKEND_DIR} not found." >&2
+    exit 1
+fi
+
+# Check if Data directory exists
+if [[ ! -d "${DATA_ROOT}" ]]; then
+    echo "Error: Data directory ${DATA_ROOT} not found." >&2
+    exit 1
+fi
+
+# Check if MIRA-NF image exists
+if [[ -z "$(docker images -q "${MIRA_NF_IMAGE}" 2> /dev/null)" ]]; then
+    echo "Error: MIRA-NF image ${MIRA_NF_IMAGE} not found." >&2
+    exit 1
+fi
+
+# Generate config.yml to be used by the backend app
+CONFIG_FILE="${BACKEND_DIR}/config.yml"
+echo "Writing DEPLOY=${DEPLOY}, DATA_ROOT=${DATA_ROOT}, MIRA_NF_IMAGE=${MIRA_NF_IMAGE} to ${CONFIG_FILE}"
+cat > "${CONFIG_FILE}" <<EOF
+DEPLOY: ${DEPLOY}
+DATA_ROOT: ${DATA_ROOT}
+MIRA_NF_IMAGE: ${MIRA_NF_IMAGE}
+EOF
+
+# Navigate to backend directory
+cd "${BACKEND_DIR}"
 
 # Start the FastAPI app using Uvicorn
 exec uvicorn app.main:app --reload --reload-dir app --host 0.0.0.0 --port 8080

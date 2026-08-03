@@ -18,8 +18,8 @@ from .schema_validator import (
 )
 
 # Pre-compute Literal types at module level to avoid class-body name collisions
-_ExperimentType  = Literal[tuple(experiment_types)]
-_SampleType      = Literal[tuple(sample_types)]
+_ExperimentTypes  = Literal[tuple(experiment_types)]
+_SampleTypes      = Literal[tuple(sample_types)]
 _SampleStatus    = Literal[tuple(sample_status)]
 _Sc2Primers      = Literal[tuple(sc2_primers)]
 _RsvPrimers      = Literal[tuple(rsv_primers)]
@@ -32,11 +32,11 @@ ALLOWED_FASTQ_TYPES = {"application/gzip", "application/x-gzip"}
 # ------ ASSEMBLY INFO MODEL ----------
 class AssemblyInfo(BaseModel):
     run_name: str = Field("ont_tiny_test_run", description="Name of the sequencing run.")
-    experiment_type: _ExperimentType = Field(..., description="Type of sequencing experiments.")
-    sc2_primer: Optional[Union[_Sc2Primers, Literal[""]]] = Field("", description="A list of SC2 primers if experiment type is SC2.")
-    rsv_primer: Optional[Union[_RsvPrimers, Literal[""]]] = Field("", description="A list of RSV primers if experiment type is RSV.")
+    experiment_type: _ExperimentTypes = Field(..., description="Type of sequencing experiments.")
+    sc2_primer: Optional[Union[_Sc2Primers, Literal[""]]] = Field("", description="A SC2 primer if experiment type is SC2.")
+    rsv_primer: Optional[Union[_RsvPrimers, Literal[""]]] = Field("", description="A RSV primer if experiment type is RSV.")
     subsample: int = Field(0, description="Number of reads to subsample for MIRA assembly.")
-    parquet_files: bool = Field(False, description="Whether to generate parquet files for the assembly.")
+    parquet_files: bool = Field(False, description="Whether to generate parquet files for the assembly outputs.")
     run_nextclade: bool = Field(True, description="Whether to run NextClade for lineage assignment.")
     irma_module: Optional[Union[_IrmaModules, Literal[""]]] = Field("", description="An IRMA module to use for assembly.")
     custom_irma_config: Optional[str] = Field("", description="A custom IRMA config file to use for assembly.")
@@ -56,7 +56,7 @@ class DBAssemblyInfo(AssemblyInfo):
 class OntSamplesheet(BaseModel):
     barcode: str = Field("barcode01", description="ONT barcode identifier (e.g. barcode01).")
     sample_id: str = Field("sample_1", description="Sample ID.")
-    sample_type: _SampleType = Field("Test", description="Sample type.")
+    sample_type: _SampleTypes = Field("Test", description="Sample type.")
     single_end: bool = Field(True, description="Whether the reads are single-end or paired-end. Always true for ONT.")
     fastq: str = Field("AMx369_pass_barcode1_143deb51_0.fastq.gz", description="FASTQ filename.")
     status: _SampleStatus = Field("Keep", description="Whether to keep or exclude the sample.")
@@ -73,7 +73,7 @@ class DBOntSamplesheet(OntSamplesheet):
 # ------ ILLUMINA SAMPLESHEET MODEL ----------
 class IlluminaSamplesheet(BaseModel):
     sample_id: str = Field("sample_1", description="Sample ID.")
-    sample_type: _SampleType = Field("Test", description="Sample type.")
+    sample_type: _SampleTypes = Field("Test", description="Sample type.")
     single_end: bool = Field(False, description="Whether the reads are single-end or paired-end. Always false for Illumina.")
     fastq_1: str = Field("sample_1_R1.fastq.gz", description="R1 FASTQ filename.")
     fastq_2: str = Field("sample_1_R2.fastq.gz", description="R2 FASTQ filename.")
@@ -90,8 +90,8 @@ class DBIlluminaSamplesheet(IlluminaSamplesheet):
 
 # ------  RUN REQUEST (REQUIRED: RUN NAME, EXPERIMENT TYPE) ----------
 class RunRequest(BaseModel):
-    run_name: str = Field("", description="Name of the sequencing run.")
-    experiment_type: _ExperimentType = Field(None, description="Type of sequencing experiment.")
+    run_name: str = Field(..., description="Name of the sequencing run.")
+    experiment_type: _ExperimentTypes = Field(..., description="Type of sequencing experiment.")
 
 # ------ RUN RESPONSE ----------
 class RunResponse(BaseModel):
@@ -103,7 +103,7 @@ class RunStatusRequest(RunRequest):
 
 # ------  DOWNLOAD FASTA REQUEST (REQUIRED: RUN NAME, EXPERIMENT TYPE, KEY) ----------
 class DownloadFastaRequest(RunRequest):
-    key: Optional[str] = Field(None, description="Key for the Nextclade FASTA file to download. If not provided, the first available key will be used.")
+    key: str = Field(..., description="Key for the Nextclade FASTA file to download. If not provided, the first available key will be used.")
 
 # ------  DELETE SAMPLE REQUEST (REQUIRED: RUN NAME, EXPERIMENT TYPE, SAMPLE ID) ----------
 class DeleteSampleRequest(RunRequest):

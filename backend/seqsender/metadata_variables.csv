@@ -1,0 +1,119 @@
+column_name,requirement,description
+organism,Required,The most descriptive organism name for the samples.
+authors,Required,"Citing authors. List of <b>Last, First Middle, suffix</b> separated by a semicolon "";"" E.g.: ""Baker, Howard Henry, Jr.; Powell, Earl Alexander, III.;"""
+collection_date,Required,"Collection date for sample. Must be in a valid format based on ISO 8601: ""YYYY-MM-DD"", ""YYYY-MM"", or ""YYYY"". Time is not supported."
+bioproject,Required,NCBI BioProject ID.
+sequence_name,Required,Sequence identifier used in fasta file. This is used to create the fasta file for Genbank or GISAID by updating the sequence name in your fasta file to reflect the sample name for the specified database.
+gb-sample_name,Required,Identifier name used for GenBank. Max length is 50 characters.
+gb-fasta_definition_line_modifiers,Optional,"NCBI fasta definition line modifiers can be added here. As many modifiers as you like can be added, but each must bounded by a set of brackets. Some of the available keywords are listed at ""https://www.ncbi.nlm.nih.gov/genbank/mods_fastadefline/""."
+gb-title,Optional,"Optional internal field for how the GenBank submission should be named when viewed from the NCBI submission portal, . If not provided, when performing submissions <--submission_name> with the suffix ""-GB"" will be used instead."
+gb-comment,Optional,Optional internal field explaining the purpose of the submission for when interacting and resolving submission issues with NCBI.
+src-Altitude,Optional,Altitude in metres above or below sea level of where the sample was collected.
+src-Bio_material,Optional,"An identifier for the biological material from which the nucleotide sequence was obtained, with optional institution code and collection code for the place where it is currently stored. This should be provided using the following format 'institution-code:collection-code:material_id'. material_id is mandatory, institution-code and collection-code are optional; institution-code is mandatory when collection-code is present. This qualifier should be used to annotate the identifiers of material in biological collections which include zoos and aquaria, stock centers, seed banks, germplasm repositories and DNA banks."
+src-Breed,Optional,The named breed from which sequence was obtained (usually applied to domesticated mammals).
+src-Cell_line,Optional,Cell line from which sequence was obtained.
+src-Cell_type,Optional,Type of cell from which sequence was obtained.
+src-Clone,Optional,Name of clone from which sequence was obtained.
+src-Collected_by,Optional,Name of person who collected the sample.
+src-geo_loc_name,Required,"Geographical origin of the sample; use the appropriate name from this list http://www.insdc.org/documents/country-qualifier-vocabulary. Use a colon to separate the country or ocean from more detailed information about the location, eg ""Canada: Vancouver"" or ""Germany: halfway down Zugspitze, Alps""."
+src-Cultivar,Optional,Cultivated variety of plant from which sequence was obtained.
+src-Culture_collection,Optional,"Institution code and identifier for the culture from which the nucleotide sequence was obtained, with optional collection code. This should be provided using the following format 'institution-code:collection-code:culture-id'. culture-id and institution-code are mandatory. This qualifier should be used to annotate live microbial and viral cultures, and cell lines that have been deposited in curated culture collections."
+src-Dev_stage,Optional,Developmental stage of organism.
+src-Ecotype,Optional,The named ecotype (population adapted to a local habitat) from which sequence was obtained (customarily applied to populations of Arabidopsis thaliana).
+src-Fwd_primer_name,Optional,name of forward PCR primer
+src-Fwd_primer_seq,Optional,nucleotide sequence of forward PCR primer
+src-Genotype,Optional,Genotype of the organism.
+src-Haplogroup,Optional,Name for a group of similar haplotypes that share some sequence variation
+src-Haplotype,Optional,Haplotype of the organism.
+src-Host,Required,"When the sequence submission is from an organism that exists in a symbiotic, parasitic, or other special relationship with some second organism, the 'host' modifier can be used to identify the name of the host species."
+src-Isolate,Required,Identification or description of the specific individual from which this sequence was obtained.
+src-Isolation-source,Optional,Describes the local geographical source of the organism from which the sequence was obtained.
+src-Lab_host,Optional,Laboratory host used to propagate the organism from which the sequence was obtained.
+src-Lat_Lon,Optional,"Latitude and longitude, in decimal degrees, of where the sample was collected."
+src-Note,Optional,Any additional information that you wish to provide about the sequence.
+src-Rev_primer_name,Optional,name of reverse PCR primer
+src-Rev_primer_seq,Optional,nucleotide sequence of reverse PCR primer
+src-Segment,Optional,name of viral or phage segment sequenced
+src-Serotype,Optional,See Serogroup
+src-Serovar,Optional,See Serogroup
+src-Sex,Optional,Sex of the organism from which the sequence was obtained.
+src-Specimen_voucher,Optional,"An identifier of the individual or collection of the source organism and the place where it is currently stored, usually an institution. This should be provided using the following format 'institution-code:collection-code:specimen-id'. specimen-id is mandatory, collection-code is optional; institution-code is mandatory when collection-code is provided. Examples: 99-SRNP UAM:Mamm:52179 personal collection:Joe Smith:99-SRNP AMCC:101706"
+src-Strain,Optional,Strain of organism from which sequence was obtained.
+src-Sub_species,Optional,Subspecies of organism from which sequence was obtained.
+src-Tissue_lib,Optional,Tissue library from which the sequence was obtained.
+src-Tissue_type,Optional,Type of tissue from which sequence was obtained.
+src-Variety,Optional,Variety of organism from which sequence was obtained.
+cmt-StructuredCommentPrefix,Required,"Structured comment keyword. ONLY REQUIRED IF INCLUDING COMMENT FILE. For FLU use 'FluData', HIV use 'HIV-DataBaseData', and for COV and other organisms use 'Assembly-Data'."
+cmt-StructuredCommentSuffix,Required,"Structured comment keyword. ONLY REQUIRED IF INCLUDING COMMENT FILE. For FLU use 'FluData', HIV use 'HIV-DataBaseData', and for COV and other organisms use 'Assembly-Data'."
+cmt-Assembly Method,Required,ONLY REQUIRED IF INCLUDING COMMENT FILE. Process used to assemble genome.
+gs-sample_name,Required,"Identifier name used for GISAID. Max length is 50 characters. This field is the same as ""rsv_sequence_name"" in GISAID's metadata template."
+gs-rsv_subtype,Required,"For RSV, there are two subtypes, ""RSV-A"" or ""RSV-B""."
+gs-rsv_passage,Required,"""Original"" if the sample was sequenced directly from swabs, otherwise add the name of the cell line (e.g., ""Vero"") used to culture the specimen."
+gs-rsv_location,Required,"Format as ""Continent / Country / Region / Sub-region""."
+gs-rsv_add_location,Optional,"Additional location information (e.g. Cruise Ship, Convention, Live animal market)."
+gs-rsv_host,Required,"Host species name. For Wastewater use ""Environment""."
+gs-rsv_add_host_info,Optional,Additional information regarding patient (e.g. Patient infected while interacting with animal).
+gs-rsv_sampling_strategy,Optional,"Sampling strategy for sequence (e.g. Sentinel surveillance (ILI), Sentinel surveillance (ARI), Sentinel surveillance (SARI), Non-sentinel-surveillance (hospital), Non-sentinel-surveillance (GP network), Longitudinal sampling on same patient(s), S gene dropout)."
+gs-rsv_sex,Required,"Biological sex. Should be ""Female"", ""Male"", or ""Unknown""."
+gs-rsv_patient_age,Required,"Age in years of the person from whom the specimen was collected. May take format other than numeric years, for example, ""0.5"" (i.e., 6 months), ""5 days"", ""7 months"". If units are not given, they are assumed in years. If missing, use ""Unknown""."
+gs-rsv_patient_status,Required,"E.g., ""Hospitalized"", ""Released"", ""Live"", ""Deceased"", ""Unknown""."
+gs-rsv_specimen,Optional,"Specimen source. For wastewater it must be ""Wastewater surveillance""."
+gs-rsv_outbreak,Optional,"Outbreak information (Date, Location e.g. type of gathering, Family cluster, etc.)."
+gs-rsv_last_vaccinated,Optional,Provide details if applicable.
+gs-rsv_treatment,Optional,"Provide details if applicable (e.g. Drug name, dosage)."
+gs-rsv_seq_technology,Required,"Add the sequencer brand and model (e.g. Illumina MiSeq, Sanger, Nanopore MinION)."
+gs-rsv_assembly_method,Optional,"Genome assembly algorithm (e.g. CLC Genomics Workbench 12, Geneious 10.2.4, SPAdes/MEGAHIT v1.2.9, UGENE v. 33)."
+gs-rsv_coverage,Optional,"Average genome coverage (e.g. 50x, 100x, 1,000x)."
+gs-rsv_orig_lab,Required,Full name of laboratory from where sample originated.
+gs-rsv_orig_lab_addr,Required,Complete building address of laboratory from where sample originated.
+gs-rsv_provider_sample_id,Optional,ID used by originating lab.
+gs-rsv_subm_lab,Required,Full name of laboratory submitting this record to GISAID.
+gs-rsv_subm_lab_addr,Required,Complete building address of the submitting laboratory.
+gs-rsv_subm_sample_id,Optional,ID used by submitting lab.
+gs-rsv_comment,Required,Leave blank.
+gs-comment_type,Required,Leave blank.
+bs-sample_name,Required,Identifier name used for BioSample. Max length is 50 characters.
+bs-sample_title,Required,Descriptive title for sample.
+bs-sample_description,Optional,Optional description for sample.
+bs-strain,"At least one field required. Group: At least one required: Group ""Organism""","At least one required: Group ""Organism"". microbial or eukaryotic strain name"
+bs-isolate,"At least one field required. Group: At least one required: Group ""Organism""","At least one required: Group ""Organism"". identification or description of the specific individual from which this sample was obtained"
+bs-collected_by,Required,Name of persons or institute who collected the sample
+bs-geo_loc_name,Required,"Geographical origin of the sample; use the appropriate name from this list http://www.insdc.org/documents/country-qualifier-vocabulary. Use a colon to separate the country or ocean from more detailed information about the location, eg ""Canada: Vancouver"" or ""Germany: halfway down Zugspitze, Alps"""
+bs-host,Required,"The natural (as opposed to laboratory) host to the organism from which the sample was obtained. Use the full taxonomic name, eg, ""Homo sapiens""."
+bs-host_disease,Required,"Name of relevant disease, e.g. Salmonella gastroenteritis. Controlled vocabulary, http://bioportal.bioontology.org/ontologies/1009 or http://www.ncbi.nlm.nih.gov/mesh"
+bs-isolation_source,Required,"Describes the physical, environmental and/or local geographical source of the biological sample from which the sample was derived."
+bs-lat_lon,Required,"The geographical coordinates of the location where the sample was collected. Specify as degrees latitude and longitude in format ""d[d.dddd] N|S d[dd.dddd] W|E"", eg, 38.98 N 77.11 W"
+bs-culture_collection,Optional,"Name of source institute and unique culture identifier. See the description for the proper format and list of allowed institutes, http://www.insdc.org/controlled-vocabulary-culturecollection-qualifier"
+bs-genotype,Optional,observed genotype
+bs-host_age,Optional,Age of host at the time of sampling
+bs-host_description,Optional,Additional information not included in other defined vocabulary fields
+bs-host_disease_outcome,Optional,"Final outcome of disease, e.g., death, chronic disease, recovery"
+bs-host_disease_stage,Optional,Stage of disease at the time of sampling
+bs-host_health_state,Optional,Information regarding health state of the individual sampled at the time of sampling
+bs-host_sex,Optional,Biological sex of the host
+bs-host_subject_id,Optional,"a unique identifier by which each subject can be referred to, de-identified, e.g. #131"
+bs-host_tissue_sampled,Optional,"name of body site where the sample was obtained from, such as a specific organ or tissue, e.g., tongue, lung. For foundational model of anatomy ontology (fma) (v 4.11.0) or Uber-anatomy ontology (UBERON) (v releases/2014-06-15) terms, please see http://purl.bioontology.org/ontology/FMA or http://purl.bioontology.org/ontology/UBERON"
+bs-passage_history,Optional,Number of passages and passage method
+bs-pathotype,Optional,"Some bacterial specific pathotypes (example Eschericia coli - STEC, UPEC)"
+bs-serotype,Optional,"Taxonomy below subspecies; a variety (in bacteria, fungi or virus) usually based on its antigenic properties. Same as serovar and serogroup. e.g. serotype=""H1N1"" in Influenza A virus CY098518."
+bs-serovar,Optional,"Taxonomy below subspecies; a variety (in bacteria, fungi or virus) usually based on its antigenic properties. Same as serovar and serotype. Sometimes used as species identifier in bacteria with shaky taxonomy, e.g. Leptospira, serovar saopaolo S76607 (65357 in Entrez)."
+bs-specimen_voucher,Optional,"Identifier for the physical specimen. Use format: ""[<institution-code>:[<collection-code>:]]<specimen_id>"", eg, ""UAM:Mamm:52179"". Intended as a reference to the physical specimen that remains after it was analyzed. If the specimen was destroyed in the process of analysis, electronic images (e-vouchers) are an adequate substitute for a physical voucher specimen. Ideally the specimens will be deposited in a curated museum, herbarium, or frozen tissue collection, but often they will remain in a personal or laboratory collection for some time before they are deposited in a curated collection. There are three forms of specimen_voucher qualifiers. If the text of the qualifier includes one or more colons it is a 'structured voucher'. Structured vouchers include institution-codes (and optional collection-codes) taken from a controlled vocabulary maintained by the INSDC that denotes the museum or herbarium collection where the specimen resides, please visit: http://www.insdc.org/controlled-vocabulary-specimenvoucher-qualifier."
+bs-subgroup,Optional,Taxonomy below subspecies; sometimes used in viruses to denote subgroups taken from a single isolate.
+bs-subtype,Optional,"Used as classifier in viruses (e.g. HIV type 1, Group M, Subtype A)."
+bs-title,Optional,"Optional internal field for how the BioSample submission should be named when viewed from the NCBI submission portal. If not provided, when performing submissions <--submission_name> with the suffix ""-BS"" will be used instead."
+bs-comment,Optional,Optional internal field explaining the purpose of the submission for when interacting and resolving submission issues with NCBI.
+sra-sample_name,Required,Identifier name used for SRA. Max length is 50 characters. Name must be unique from BioSample/Genbank submission.
+sra-file_location,Required,"Location of raw reads files. Options: ""local"" or ""cloud""."
+sra-file_1,Required,"All file names must be unique and not contain any sensitive information. Files can be compressed using gzip or bzip2, and may be submitted in a tar archive but archiving and/or compressing your files is not required. Do not use zip! If files are stored in the cloud, provide the full cloud url. If files are stored locally, if files are stored in the folder ""<--submission_dir>/raw_reads/"", then just the file name is required; otherwise, provide the full file path for the raw read."
+sra-file_#,Optional,"Repeatable column, replace the ""#"" with the file number for each file associated with the sample. (i.e. If you had 4 separate raw reads files associated with one sample, then you would have 4 columns named: ""sra-file_1"", ""sra-file_2"", ""sra-file_3"", and ""sra-file_4"".) All file names must be unique and not contain any sensitive information. Files can be compressed using gzip or bzip2, and may be submitted in a tar archive but archiving and/or compressing your files is not required. Do not use zip! If files are stored in the cloud, provide the full cloud url. If files are stored locally, if files are stored in the folder ""<--submission_dir>/raw_reads/"", then just the file name is required; otherwise, provide the full file path for the raw read."
+sra-library_name,Optional,Short unique identifier for sequencing library.
+sra-loader,Optional,"SRA loader selection. If NCBI says your SRA files need to be uploaded with a certain loader, you can select it here."
+sra-library_strategy,Required,The sequencing technique intended for the library.
+sra-library_source,Required,The type of source material that is being sequenced.
+sra-library_selection,Required,The method used to select and/or enrich the material being sequenced.
+sra-library_layout,Required,"Whether to expect SINGLE or PAIRED end reads. Options: ""single"" or ""paired""."
+sra-platform,Optional,Instrument platform.
+sra-instrument_model,Required,Instrument model used for sequencing.
+sra-design_description,Optional,Brief description of materials/methods used for creating sequencing library.
+sra-title,Optional,"Optional internal field for how the SRA submission should be named when viewed from the NCBI submission portal. If not provided, when performing submissions <--submission_name> with the suffix ""-SRA"" will be used instead."
+sra-comment,Optional,Optional internal field explaining the purpose of the submission for when interacting and resolving submission issues with NCBI.

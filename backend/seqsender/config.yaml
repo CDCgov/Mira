@@ -1,0 +1,39 @@
+Submission:
+  NCBI:
+    Username: 
+    Password: 
+    Spuid_Namespace: 
+    BioSample_Package: Pathogen.cl.1.0
+    GenBank_Auto_Remove_Failed_Samples: 'True'
+    Publication_Title: 
+    Publication_Status: Unpublished
+    Submission_Position: '1'
+    Specified_Release_Date: 
+    Link_Sample_Between_NCBI_Databases: 'True'
+    Add_Definition_Line_Accessions: 'True'
+    Description:
+      Organization:
+        Role: 
+        Type: 
+        Name: 
+        Address:
+          Affil: 
+          Div: 
+          Street: 
+          City: 
+          Sub: 
+          Postal_Code: 
+          Country: 
+          Email: 
+          Phone: 
+          Submitter:
+            Email: 
+            Alt_Email: 
+            Name:
+              First: 
+              Last: 
+  GISAID:
+    Client-Id: 
+    Username: 
+    Password: 
+    Submission_Position: '2'

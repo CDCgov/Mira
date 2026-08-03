@@ -5,7 +5,7 @@ ARG MICROMAMBA_IMAGE=${MICROMAMBA_IMAGE:-mambaorg/micromamba:2.8.0}
 
 # Define the base image for the Dockerfile
 ARG UBUNTU_IMAGE
-ARG UBUNTU_IMAGE=${UBUNTU_IMAGE:-ubuntu:26.04}
+ARG UBUNTU_IMAGE=${UBUNTU_IMAGE:-ubuntu:24.04}
 
 ############# micromamba image ##################
 FROM ${MICROMAMBA_IMAGE} as micromamba
@@ -43,23 +43,33 @@ RUN apt-get update --allow-releaseinfo-change --fix-missing \
   docker.io \
   && apt clean autoclean \
   && apt autoremove --yes \
-  && rm -rf /var/lib/{apt,dpkg,cache,log}/*
+  && rm -rf /var/lib/apt/lists/*
 
-# Required certs to download conda packages
-COPY ca.crt /usr/local/share/ca-certificates/ca.crt
-RUN update-ca-certificates
+# Default deployment type 
+ENV DEPLOY=Docker
 
-# Create a program variable
+# Default backend and data directories
 ENV BACKEND_DIR=/MIRA-backend
+ENV DATA_DIR=/data
 
-# Set up volume directory 
+# Default MIRA-NF image, it can be overridable at build-time (--build-arg)
+ARG MIRA_NF_IMAGE
+ARG MIRA_NF_IMAGE=${MIRA_NF_IMAGE:-cdcgov/mira-nf:v2.2.0}
+ENV MIRA_NF_IMAGE=${MIRA_NF_IMAGE}
+
+# Set up volume directories
 VOLUME ${BACKEND_DIR}
+VOLUME ${DATA_DIR}
 
 # Set up working directory 
-WORKDIR ${BACKEND_DIR}
+WORKDIR ${DATA_DIR}
 
 # Copy all scripts to docker images
 COPY . ${BACKEND_DIR}
+
+############# Set up certs ##################
+COPY ca.crt /usr/local/share/ca-certificates/ca.crt
+RUN update-ca-certificates
 
 ############# Set up micromamba environment ##################
 
@@ -88,5 +98,5 @@ ENV PATH="$PATH:${MAMBA_ROOT_PREFIX}/bin"
 EXPOSE 8080
 
 # Execute the pipeline 
-ENTRYPOINT ["/bin/bash", "-c", "${BACKEND_DIR}/api-kickoff"]
+ENTRYPOINT ["/bin/bash", "-c", "${BACKEND_DIR}/api-kickoff --deploy ${DEPLOY} --data_dir ${DATA_DIR} --mira_nf_image ${MIRA_NF_IMAGE}"]
 

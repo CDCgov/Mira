@@ -4,3 +4,4 @@ data/
 .nextflow/
 *.log
 app/__pycache__/
+*.env
