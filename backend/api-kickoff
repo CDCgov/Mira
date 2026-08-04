@@ -7,13 +7,15 @@
 set -euo pipefail
 
 usage() {
-    echo "Usage: $(basename "$0") --deploy <Local|Docker> --data_dir <DATA_ROOT> --mira_nf_image <MIRA_NF_IMAGE>" >&2
+    echo "Usage: $(basename "$0") --deploy <Local|Docker> --data_dir <DATA_ROOT> --mira_nf_image <MIRA_NF_IMAGE> [--host <HOST>] [--port <PORT>]" >&2
     exit 1
 }
 
 DEPLOY=""
 DATA_ROOT=""
 MIRA_NF_IMAGE=""
+HOST="0.0.0.0"
+PORT="8080"
 
 # Parse named arguments
 while [[ $# -gt 0 ]]; do
@@ -28,6 +30,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --mira_nf_image)
             MIRA_NF_IMAGE="$2"
+            shift 2
+            ;;
+        --host)
+            HOST="$2"
+            shift 2
+            ;;
+        --port)
+            PORT="$2"
             shift 2
             ;;
         *)
@@ -69,12 +79,6 @@ if [[ ! -d "${DATA_ROOT}" ]]; then
     exit 1
 fi
 
-# Check if MIRA-NF image exists
-if [[ -z "$(docker images -q "${MIRA_NF_IMAGE}" 2> /dev/null)" ]]; then
-    echo "Error: MIRA-NF image ${MIRA_NF_IMAGE} not found." >&2
-    exit 1
-fi
-
 # Generate config.yml to be used by the backend app
 CONFIG_FILE="${BACKEND_DIR}/config.yml"
 echo "Writing DEPLOY=${DEPLOY}, DATA_ROOT=${DATA_ROOT}, MIRA_NF_IMAGE=${MIRA_NF_IMAGE} to ${CONFIG_FILE}"
@@ -88,4 +92,4 @@ EOF
 cd "${BACKEND_DIR}"
 
 # Start the FastAPI app using Uvicorn
-exec uvicorn app.main:app --reload --reload-dir app --host 0.0.0.0 --port 8080
+exec uvicorn app.main:app --reload --reload-dir app --host "${HOST}" --port "${PORT}"

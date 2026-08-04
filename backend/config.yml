@@ -1,3 +1,3 @@
-DEPLOY: Local
-DATA_ROOT: /home/snu3/FLU_SC2_SEQUENCING
+DEPLOY: Docker
+DATA_ROOT: /data
 MIRA_NF_IMAGE: cdcgov/mira-nf:v2.2.0

@@ -941,6 +941,15 @@ def run_mira_docker(
             "-e", f"HOST_UID={os.getuid()}",
             "-e", f"HOST_GID={os.getgid()}",
             "-e", f"CONTAINER_RUN_DIR={container_run_dir}",
+        ]
+
+        # Cap the container to a minimum of 4 CPUs when more than 4 cores are
+        # available on the host; otherwise fall back to Docker's default (no limit).
+        # available_cpus = os.cpu_count() or 0
+        # if available_cpus > 4:
+        #     cmd.extend(["--cpus", "4"])
+
+        cmd.extend([
             f"{_HOST_MIRA_NF_IMAGE}",
             "bash", "-c", f"trap '{permission_cleanup}' EXIT; \"$@\"", "mira-entrypoint",
             "nextflow", "run", "/MIRA-NF/main.nf",
@@ -950,7 +959,7 @@ def run_mira_docker(
             "--runpath", container_run_dir,
             "--outdir",  container_output_dir,
             "--e",       experiment_type,
-        ]
+        ])
 
         # Add primer, subsample, parquet_files, and run_nextclade options to the command if specified
         if primer:

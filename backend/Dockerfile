@@ -43,7 +43,7 @@ RUN apt-get update --allow-releaseinfo-change --fix-missing \
   docker.io \
   && apt clean autoclean \
   && apt autoremove --yes \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* /var/cache/* /var/log/* /tmp/* /var/tmp/*
 
 # Default deployment type 
 ENV DEPLOY=Docker
@@ -68,8 +68,14 @@ WORKDIR ${DATA_DIR}
 COPY . ${BACKEND_DIR}
 
 ############# Set up certs ##################
-COPY ca.crt /usr/local/share/ca-certificates/ca.crt
+# bundle-ca.pem is the CDC-G2 root + CDC-G2-ZSH (Zscaler TLS-inspection) chain
+COPY bundle-ca.pem /usr/local/share/ca-certificates/cdc-zscaler-bundle.crt
 RUN update-ca-certificates
+
+# Point OpenSSL/pip/requests at the system store instead of certifi's bundled CAs
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+ENV CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
 ############# Set up micromamba environment ##################
 

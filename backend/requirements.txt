@@ -7,3 +7,4 @@ pandera[polars]==0.32.1
 fastexcel==0.15.1
 pydantic==2.13.4
 psutil==7.2.2
+requests==2.32.5

@@ -1,7 +1,5 @@
 ###########################    Description    ##################################
 # Pandera + Polars schema validation
-# Each pandera DataFrameSchema mirrors the corresponding *_tbl_schema dict in
-# global_var.py and provides richer, human-readable validation error messages.
 ################################################################################
 
 # Import packages for dataframe validation
@@ -16,6 +14,9 @@ from typing import Dict, List, Optional, Any
 import os
 import yaml
 import sqlite3
+
+# Define app version
+_MIRA_NF_VERSION_URL = "https://raw.githubusercontent.com/CDCgov/Mira-nf/master/DESCRIPTION"
 
 # Allow files created by this backend to be group-readable and group-writable.
 os.umask(0o002)
@@ -352,7 +353,7 @@ upload_fastq_files_pa_schema = pa.DataFrameSchema(
 )
 
 # ---------------------------------------------------------------------------
-# GLOBAL VARIABLES FOR MIRA
+# GLOBAL VARIABLES FOR SEQSENDER
 # ---------------------------------------------------------------------------
 database_targets = ["BioSample", "SRA", "GenBank", "GISAID"]
 

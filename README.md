@@ -63,14 +63,14 @@ micromamba activate mira_react_env
 
 ### Run MIRA backend
 
-With the virtual environment activated, start the FastAPI backend using the `api-kickoff` script from the `backend` directory. This generates the `config.yml` to be consumed by the app and then launches the Swagger UI.
+With the virtual environment activated, start the FastAPI backend using the `api-kickoff` bash script from the `backend` directory. This generates the `config.yml` to be used by the app and then launches the Swagger API.
 
 ```bash
 ./api-kickoff --deploy Local --data_dir /path/to/data --mira_nf_image cdcgov/mira-nf:v2.2.0 > mira-backend.log 2>&1 &
 ```
 
 - `--deploy` Options: Local/Docker. Must be `Local` for this workflow.
-- `--data_dir` is the directory on your machine used to store outputs from the app.
+- `--data_dir` is the directory on your machine used to store outputs from the app. **IMPORTANT**: Make sure the data directory has `rwx` permissions.
 - `--mira_nf_image` is the MIRA-NF Docker image to be used to run genome assembly (must already been pulled locally, see [Pull down the MIRA-NF image](#pull-down-the-mira-nf-image)).
 
 The API will be available at `http://localhost:8080`, with interactive docs at `http://localhost:8080/docs`.
@@ -108,7 +108,7 @@ cd MIRA
 ### Edit `docker-compose-dockerhub.yml` file
 
 - Change `mira-nf-image` to a specific MIRA-NF image that you want to use to run MIRA
-- Change `data-storage-path` to a directory on your machine that you would like to store outputs from the app
+- Change `data-storage-path` to a directory on your machine that you would like to store outputs from the app. **IMPORTANT**: Make sure the data directory has `rwx` permissions.
 
 ### Launch MIRA backend and frontend
 

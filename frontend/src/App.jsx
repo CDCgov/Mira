@@ -61,6 +61,7 @@ function cn(...classes) {
 /* ── API endpoints ───────────────────────────────── */
 const API_BASE = "http://localhost:8080";
 const API = {
+  checkVersion:     `${API_BASE}/version`,
   listRuns:         `${API_BASE}/list/runs`,
   retrieveRun:      `${API_BASE}/retrieve/run`,
   createRun:        `${API_BASE}/create/run`,
@@ -97,6 +98,9 @@ const API = {
   downloadSeqsenderMetadataTemplate: `${API_BASE}/download/seqsender_metadata_template`,
 };
 
+// Check Version of MIRA-NF
+
+
 /* ── simple dropdown hook ────────────────────────── */
 function useDropdown() {
   const [open, setOpen] = useState(false);
@@ -114,13 +118,13 @@ function useDropdown() {
 }
 
 /* ── Dropdown wrapper ────────────────────────────── */
-function Dropdown({ trigger, children }) {
+function Dropdown({ trigger, children, panelClassName = "w-48" }) {
   const { open, setOpen, ref } = useDropdown();
   return (
     <div ref={ref} className="relative">
       <div onClick={() => setOpen((v) => !v)}>{trigger}</div>
       {open && (
-        <div className="absolute right-0 mt-2 w-48 rounded-md border border-border bg-popover shadow-lg z-50 py-1">
+        <div className={cn("absolute right-0 mt-2 rounded-md border border-border bg-popover shadow-lg z-50 py-1", panelClassName)}>
           {children}
         </div>
       )}
@@ -551,6 +555,20 @@ function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colo
           <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="px-2 py-0.5 rounded text-xs border border-border disabled:opacity-40 hover:bg-muted/40 transition-colors">›</button>
           <button onClick={() => setPage(totalPages - 1)} disabled={page >= totalPages - 1} className="px-2 py-0.5 rounded text-xs border border-border disabled:opacity-40 hover:bg-muted/40 transition-colors">»</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Empty-state card matching ResultTable's header styling ──── */
+function EmptyResultTable({ title, message = "There is no data returned from this run." }) {
+  return (
+    <div className="rounded-xl border border-border overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
+        <p className="text-xs font-bold text-foreground uppercase tracking-wider">{title}</p>
+      </div>
+      <div className="px-3 py-6 text-center">
+        <p className="text-xs text-muted-foreground">{message}</p>
       </div>
     </div>
   );
@@ -990,7 +1008,7 @@ function AssemblyTab() {
 
     // Cancel any ongoing run if submitProcessId exists
     if (submitProcessId && selectedRun) {
-      fetch(`${API.cancelRun}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&pid=${submitProcessId}`)
+      fetch(`${API.miraCancel}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&pid=${submitProcessId}`)
         .catch(() => {});
     }
 
@@ -1083,10 +1101,16 @@ function AssemblyTab() {
     setExportSelectedRun(null);
     setExportRunSearch("");
     try {
+      // Cancel any ongoing run if submitProcessId exists
+      if (submitProcessId && selectedRun) {
+        fetch(`${API.miraCancel}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&pid=${submitProcessId}`)
+          .catch(() => {});
+      }      
       const res = await fetch(`${API.listRuns}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Failed to fetch runs");
-      setAvailableRuns(data.run_info ?? []);
+      // Only completed runs have reports available to export
+      setAvailableRuns((data.run_info ?? []).filter((r) => r.assembly_status === "COMPLETED"));
     } catch (err) {
       if (err.name !== "AbortError") setExportRunError(err.message);
     } finally {
@@ -1115,7 +1139,7 @@ function AssemblyTab() {
 
       // Cancel any ongoing run if submitProcessId exists
       if (submitProcessId && selectedRun) {
-        fetch(`${API.cancelRun}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&pid=${submitProcessId}`)
+        fetch(`${API.miraCancel}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&pid=${submitProcessId}`)
           .catch(() => {});
       }
 
@@ -1423,7 +1447,7 @@ function AssemblyTab() {
     { id: "result-section-summary",  label: "MIRA Summary",       show: resultMiraSummary !== null },
     { id: "result-section-coverage", label: "Sample Sankey & Coverage Plots",    show: resultSampleCoverageList !== null },
     { id: "result-section-variants", label: "AA Variants",        show: resultVariants !== null },
-    { id: "result-section-snvs",     label: "Minor SNVs",         show: resultMinorSnvs !== null },
+    { id: "result-section-snvs",     label: "Minor Variants",         show: resultMinorSnvs !== null },
     { id: "result-section-indels",   label: "Minor Indels & Deletions",             show: resultIndels !== null },
   ].filter(({ show }) => show);
 
@@ -2055,7 +2079,7 @@ function AssemblyTab() {
                             }[s] ?? { cls: "bg-muted text-muted-foreground", Icon: AlertCircle };
                             return (
                               <span className={cn("flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold shrink-0", cls)}>
-                                <Icon size={12} className={s === "PROCESSING" ? "animate-spin" : ""} />
+                                <Icon size={12} className={submitting === true ? "animate-spin" : ""} />
                                 {s}
                               </span>
                             );
@@ -2117,6 +2141,23 @@ function AssemblyTab() {
                             <div className="flex gap-x-4 flex-wrap gap-y-0.5">
                               <span>Started: <span className="text-foreground">{pipelineDAG?.workflows?.started_at || "—"}</span></span>
                               <span>Completed: <span className="text-foreground">{pipelineDAG?.workflows?.completed_at || "—"}</span></span>
+                              {(() => {
+                                const startedAt = pipelineDAG?.workflows?.started_at;
+                                const completedAt = pipelineDAG?.workflows?.completed_at;
+                                if (!startedAt || !completedAt) return null;
+                                const startMs = new Date(startedAt).getTime();
+                                const endMs = new Date(completedAt).getTime();
+                                if (isNaN(startMs) || isNaN(endMs) || endMs < startMs) return null;
+                                const totalSeconds = Math.floor((endMs - startMs) / 1000);
+                                const h = Math.floor(totalSeconds / 3600);
+                                const m = Math.floor((totalSeconds % 3600) / 60);
+                                const s = totalSeconds % 60;
+                                const parts = [];
+                                if (h > 0) parts.push(`${h}h`);
+                                if (h > 0 || m > 0) parts.push(`${m}m`);
+                                parts.push(`${s}s`);
+                                return <span>Duration: <span className="text-foreground font-mono">{parts.join(" ")}</span></span>;
+                              })()}
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
                               <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
@@ -2156,119 +2197,180 @@ function AssemblyTab() {
                     )}
 
                     {/* ── 1. Barcode Assignment ── */}
-                    {assembled && resultBarcodeAssignments !== null && (
-                      <div id="result-section-barcode" className="rounded-xl border border-border overflow-hidden">
-                        <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
-                          <p className="text-xs font-bold text-foreground uppercase tracking-wider">Barcode Assignment</p>
+                    {assembled && resultBarcodeAssignments !== null && (() => {
+                      if ((resultBarcodeAssignments.data ?? []).length === 0) {
+                        return (
+                          <div id="result-section-barcode">
+                            <EmptyResultTable title="Barcode Assignment" />
+                          </div>
+                        );
+                      }
+                      return (
+                        <div id="result-section-barcode" className="rounded-xl border border-border overflow-hidden">
+                          <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
+                            <p className="text-xs font-bold text-foreground uppercase tracking-wider">Barcode Assignment</p>
+                          </div>
+                          <div className="p-2 overflow-x-auto">
+                            <div style={{ minWidth: resultBarcodeAssignments.layout?.width ? `${resultBarcodeAssignments.layout.width}px` : "100%" }}>
+                              <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
+                                <Plot
+                                  data={resultBarcodeAssignments.data ?? []}
+                                  layout={{
+                                    ...(resultBarcodeAssignments.layout ?? {}),
+                                    autosize: true,
+                                    margin: { l: 20, r: 20, t: 40, b: 20 },
+                                    paper_bgcolor: "transparent",
+                                    plot_bgcolor: "transparent",
+                                    font: { size: 11 },
+                                    showlegend: true,
+                                    legend: { orientation: "h", x: 0.5, xanchor: "center", y: -0.1 },
+                                  }}
+                                  config={PLOT_CONFIG}
+                                  style={{ width: "100%", minHeight: 300 }}
+                                  useResizeHandler
+                                />
+                              </Suspense>
+                            </div>
+                          </div>
                         </div>
-                        <div className="p-2">
-                          <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
-                            <Plot
-                              data={resultBarcodeAssignments.data ?? []}
-                              layout={{
-                                ...(resultBarcodeAssignments.layout ?? {}),
-                                autosize: true,
-                                margin: { l: 20, r: 20, t: 40, b: 20 },
-                                paper_bgcolor: "transparent",
-                                plot_bgcolor: "transparent",
-                                font: { size: 11 },
-                                showlegend: true,
-                                legend: { orientation: "h", x: 0.5, xanchor: "center", y: -0.1 },
-                              }}
-                              config={PLOT_CONFIG}
-                              style={{ width: "100%", minHeight: 300 }}
-                              useResizeHandler
-                            />
-                          </Suspense>
-                        </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     {/* ── 2. Automatic QC Decisions heatmap ── */}
-                    {assembled && resultQcDecisions !== null && (
-                      <div id="result-section-qc" className="rounded-xl border border-border overflow-hidden">
-                        <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
-                          <p className="text-xs font-bold text-foreground uppercase tracking-wider">Automatic Quality Control Decisions</p>
-                        </div>
-                        {/* ── QC Statement ── */}
-                        {resultQcStatement && (() => {
-                          const fails = Object.entries(resultQcStatement["FAILS QC"] ?? {});
-                          const passes = Object.entries(resultQcStatement["passes QC"] ?? {});
-                          if (fails.length === 0 && passes.length === 0) return null;
-                          return (
-                            <div className="px-3 py-2 border-b border-border space-y-1 bg-muted/5">
-                              {fails.map(([sample, pct]) => (
-                                <div key={`fail-${sample}`} className="flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
-                                  <AlertCircle size={11} className="shrink-0 mt-0.5" />
-                                  <span>Your negative sample <strong>&ldquo;{sample}&rdquo; FAILS QC</strong> with {pct}% reads mapping to reference.</span>
-                                </div>
-                              ))}
-                              {passes.map(([sample, pct]) => (
-                                <div key={`pass-${sample}`} className="flex items-start gap-1.5 text-xs text-foreground">
-                                  <Check size={11} className="shrink-0 mt-0.5 text-emerald-500" />
-                                  <span>Your negative sample &ldquo;{sample}&rdquo; passes QC with {pct}% reads mapping to reference.</span>
-                                </div>
-                              ))}
+                    {assembled && resultQcDecisions !== null && (() => {
+                      if ((resultQcDecisions.data ?? []).length === 0) {
+                        return (
+                          <div id="result-section-qc">
+                            <EmptyResultTable title="Automatic Quality Control Decisions" />
+                          </div>
+                        );
+                      }
+                      return (
+                        <div id="result-section-qc" className="rounded-xl border border-border overflow-hidden">
+                          <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
+                            <p className="text-xs font-bold text-foreground uppercase tracking-wider">Automatic Quality Control Decisions</p>
+                          </div>
+                          {/* ── QC Statement ── */}
+                          {resultQcStatement && (() => {
+                            const fails = Object.entries(resultQcStatement["FAILS QC"] ?? {});
+                            const passes = Object.entries(resultQcStatement["passes QC"] ?? {});
+                            if (fails.length === 0 && passes.length === 0) return null;
+                            return (
+                              <div className="px-3 py-2 border-b border-border space-y-1 bg-muted/5">
+                                {fails.map(([sample, pct]) => (
+                                  <div key={`fail-${sample}`} className="flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
+                                    <AlertCircle size={11} className="shrink-0 mt-0.5" />
+                                    <span>Your negative sample <strong>&ldquo;{sample}&rdquo; FAILS QC</strong> with {pct}% reads mapping to reference.</span>
+                                  </div>
+                                ))}
+                                {passes.map(([sample, pct]) => (
+                                  <div key={`pass-${sample}`} className="flex items-start gap-1.5 text-xs text-foreground">
+                                    <Check size={11} className="shrink-0 mt-0.5 text-emerald-500" />
+                                    <span>Your negative sample &ldquo;{sample}&rdquo; passes QC with {pct}% reads mapping to reference.</span>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                          <div className="p-2 overflow-x-auto">
+                            <div style={{ minWidth: resultQcDecisions.layout?.width ? `${resultQcDecisions.layout.width}px` : "100%" }}>
+                              <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
+                                <Plot
+                                  data={resultQcDecisions.data ?? []}
+                                  layout={{
+                                    ...(resultQcDecisions.layout ?? {}),
+                                    autosize: true,
+                                    margin: { l: 60, r: 20, t: 40, b: 20 },
+                                    paper_bgcolor: "transparent",
+                                    plot_bgcolor: "transparent",
+                                    font: { size: 11 },
+                                    xaxis: { ...(resultQcDecisions.layout?.xaxis ?? {}), side: "top" },
+                                  }}
+                                  config={PLOT_CONFIG}
+                                  style={{ width: "100%", minHeight: 260 }}
+                                  useResizeHandler
+                                />
+                              </Suspense>
                             </div>
-                          );
-                        })()}
-                        <div className="p-2">
-                          <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
-                            <Plot
-                              data={resultQcDecisions.data ?? []}
-                              layout={{
-                                ...(resultQcDecisions.layout ?? {}),
-                                autosize: true,
-                                margin: { l: 60, r: 20, t: 40, b: 20 },
-                                paper_bgcolor: "transparent",
-                                plot_bgcolor: "transparent",
-                                font: { size: 11 },
-                                xaxis: { ...(resultQcDecisions.layout?.xaxis ?? {}), side: "top" },
-                              }}
-                              config={PLOT_CONFIG}
-                              style={{ width: "100%", minHeight: 260 }}
-                              useResizeHandler
-                            />
-                          </Suspense>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     {/* ── 5b. Coverage Heatmap ── */}
-                    {assembled && resultCoverageHeatmap !== null && (
-                      <div id="result-section-heatmap" className="rounded-xl border border-border overflow-hidden">
-                        <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
-                          <p className="text-xs font-bold text-foreground uppercase tracking-wider">Median Coverage Heatmap</p>
+                    {assembled && resultCoverageHeatmap !== null && (() => {
+                      if ((resultCoverageHeatmap.data ?? []).length === 0) {
+                        return (
+                          <div id="result-section-heatmap">
+                            <EmptyResultTable title="Median Coverage Heatmap" />
+                          </div>
+                        );
+                      }
+                      // Ensure every sample label along the x-axis, and every row label along
+                      // the y-axis, has enough room to render — size the scrollable container
+                      // to the number of columns/rows rather than trusting only the
+                      // backend-supplied layout dimensions, and force Plotly to draw every
+                      // tick (instead of auto-skipping ones that don't fit).
+                      const heatmapXLabels = resultCoverageHeatmap.data?.[0]?.x ?? [];
+                      const heatmapYLabels = resultCoverageHeatmap.data?.[0]?.y ?? [];
+                      const heatmapMinWidth = Math.max(
+                        resultCoverageHeatmap.layout?.width || 0,
+                        heatmapXLabels.length * 32 + 120
+                      );
+                      const heatmapMinHeight = Math.max(
+                        260,
+                        heatmapYLabels.length * 22 + 120
+                      );
+                      return (
+                        <div id="result-section-heatmap" className="rounded-xl border border-border overflow-hidden">
+                          <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
+                            <p className="text-xs font-bold text-foreground uppercase tracking-wider">Median Coverage Heatmap</p>
+                          </div>
+                          <div className="p-2 overflow-x-auto">
+                            <div style={{ minWidth: `${heatmapMinWidth}px` }}>
+                              <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
+                                <Plot
+                                  data={resultCoverageHeatmap.data ?? []}
+                                  layout={{
+                                    ...(resultCoverageHeatmap.layout ?? {}),
+                                    autosize: true,
+                                    margin: { l: 100, r: 20, t: 90, b: 20 },
+                                    paper_bgcolor: "transparent",
+                                    plot_bgcolor: "transparent",
+                                    font: { size: 11 },
+                                    xaxis: {
+                                      ...(resultCoverageHeatmap.layout?.xaxis ?? {}),
+                                      side: "top",
+                                      tickangle: 360,
+                                      automargin: true,
+                                      ...(heatmapXLabels.length > 0
+                                        ? { tickmode: "array", tickvals: heatmapXLabels, ticktext: heatmapXLabels }
+                                        : {}),
+                                    },
+                                    yaxis: {
+                                      ...(resultCoverageHeatmap.layout?.yaxis ?? {}),
+                                      automargin: true,
+                                      ...(heatmapYLabels.length > 0
+                                        ? { tickmode: "array", tickvals: heatmapYLabels, ticktext: heatmapYLabels }
+                                        : {}),
+                                    },
+                                  }}
+                                  config={PLOT_CONFIG}
+                                  style={{ width: "100%", height: heatmapMinHeight }}
+                                  useResizeHandler
+                                />
+                              </Suspense>
+                            </div>
+                          </div>
                         </div>
-                        <div className="p-2">
-                          <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
-                            <Plot
-                              data={resultCoverageHeatmap.data ?? []}
-                              layout={{
-                                ...(resultCoverageHeatmap.layout ?? {}),
-                                autosize: true,
-                                margin: { l: 60, r: 20, t: 40, b: 20 },
-                                paper_bgcolor: "transparent",
-                                plot_bgcolor: "transparent",
-                                font: { size: 11 },
-                                xaxis: { ...(resultCoverageHeatmap.layout?.xaxis ?? {}), side: "top" },
-                              }}
-                              config={PLOT_CONFIG}
-                              style={{ width: "100%", minHeight: 260 }}
-                              useResizeHandler
-                            />
-                          </Suspense>
-                        </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     {/* ── 4. MIRA Summary ── */}
                     {assembled && resultMiraSummary !== null && (
                       <div id="result-section-summary">
                         {resultMiraSummary.length === 0 ? (
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/20 rounded-lg px-3 py-2 border border-border">
-                            <Database size={13} className="shrink-0" /> <span><span className="font-semibold">MIRA Summary:</span> No data returned for this run.</span>
-                          </div>
+                          <EmptyResultTable title="Mira Summary Table" />
                         ) : (
                           <ResultTable title="Mira Summary Table" data={resultMiraSummary} page={miraSummaryPage} setPage={setMiraSummaryPage} colorize />
                         )}
@@ -2283,6 +2385,7 @@ function AssemblyTab() {
                         : Object.keys(resultSampleCoverageSankey ?? {}).sort();
                       const currentSample = selectedSampleForCoverage || sampleOptions[0] || "";
                       const figure = resultSampleCoverageSankey?.[currentSample] ?? null;
+                      const covFigure = resultSampleCoveragePlot?.[currentSample] ?? null;
                       return (
                         <div id="result-section-coverage" className="rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
@@ -2299,53 +2402,65 @@ function AssemblyTab() {
                             {figure ? (
                               <>
                                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1 pb-1">Sankey Plot - {currentSample}</p>
-                                <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
-                                <Plot
-                                  data={figure.data ?? []}
-                                  layout={{
-                                    ...(figure.layout ?? {}),
-                                    autosize: true,
-                                    margin: { l: 20, r: 20, t: 30, b: 20 },
-                                    paper_bgcolor: "transparent",
-                                    plot_bgcolor: "transparent",
-                                    font: { size: 11 },
-                                  }}
-                                  config={PLOT_CONFIG}
-                                  style={{ width: "100%", minHeight: 280 }}
-                                  useResizeHandler
-                                />
-                                </Suspense>
+                                <div className="overflow-x-auto">
+                                  <div style={{ minWidth: figure.layout?.width ? `${figure.layout.width}px` : "100%" }}>
+                                    <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
+                                    <Plot
+                                      data={figure.data ?? []}
+                                      layout={{
+                                        ...(figure.layout ?? {}),
+                                        autosize: true,
+                                        margin: { l: 20, r: 20, t: 30, b: 20 },
+                                        paper_bgcolor: "transparent",
+                                        plot_bgcolor: "transparent",
+                                        font: { size: 11 },
+                                      }}
+                                      config={PLOT_CONFIG}
+                                      style={{ width: "100%", minHeight: 280 }}
+                                      useResizeHandler
+                                    />
+                                    </Suspense>
+                                  </div>
+                                </div>
                               </>
                             ) : (
                               <div className="flex items-center gap-2 text-xs text-muted-foreground px-3 py-4">
-                                <Database size={13} className="shrink-0" /> No coverage figure available for this sample.
+                                <Database size={13} className="shrink-0" /> No sankey plot found for this sample.
                               </div>
                             )}
                           </div>
 
                           {/* ── Linear Coverage Plot ── */}
                           {(() => {
-                            const covFigure = resultSampleCoveragePlot?.[currentSample] ?? null;
-                            if (!covFigure) return null;
                             return (
                               <div className="border-t border-border p-2">
                                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1 pb-1">Coverage Plot - {currentSample}</p>
-                                <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
-                                  <Plot
-                                    data={covFigure.data ?? []}
-                                    layout={{
-                                      ...(covFigure.layout ?? {}),
-                                      autosize: true,
-                                      margin: { l: 50, r: 20, t: 30, b: 40 },
-                                      paper_bgcolor: "transparent",
-                                      plot_bgcolor: "transparent",
-                                      font: { size: 11 },
-                                    }}
-                                    config={{ ...(covFigure.config ?? {}), ...PLOT_CONFIG }}
-                                    style={{ width: "100%", minHeight: 260 }}
-                                    useResizeHandler
-                                  />
-                                </Suspense>
+                                {covFigure ? (
+                                  <div className="overflow-x-auto">
+                                    <div style={{ minWidth: covFigure.layout?.width ? `${covFigure.layout.width}px` : "100%" }}>
+                                      <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
+                                        <Plot
+                                          data={covFigure.data ?? []}
+                                          layout={{
+                                            ...(covFigure.layout ?? {}),
+                                            autosize: true,
+                                            margin: { l: 50, r: 20, t: 30, b: 40 },
+                                            paper_bgcolor: "transparent",
+                                            plot_bgcolor: "transparent",
+                                            font: { size: 11 },
+                                          }}
+                                          config={{ ...(covFigure.config ?? {}), ...PLOT_CONFIG }}
+                                          style={{ width: "100%", minHeight: 260 }}
+                                          useResizeHandler
+                                        />
+                                      </Suspense>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2 text-xs text-muted-foreground px-3 py-4">
+                                    <Database size={13} className="shrink-0" /> No coverage plot found for this sample.
+                                  </div>
+                                )}
                               </div>
                             );
                           })()}
@@ -2358,9 +2473,7 @@ function AssemblyTab() {
                     {assembled && resultVariants !== null && (
                       <div id="result-section-variants">
                         {resultVariants.length === 0 ? (
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/20 rounded-lg px-3 py-2 border border-border">
-                            <Database size={13} className="shrink-0" /> <span><span className="font-semibold">AA Variants Table:</span> No data returned for this run.</span>
-                          </div>
+                          <EmptyResultTable title="AA Variants Table" />
                         ) : (
                           <ResultTable title="AA Variants Table" data={resultVariants} page={variantsPage} setPage={setVariantsPage} />
                         )}
@@ -2371,12 +2484,7 @@ function AssemblyTab() {
                     {assembled && resultMinorSnvs !== null && (
                       <div id="result-section-snvs">
                         {resultMinorSnvs.length === 0 ? (
-                          <div className="flex items-start justify-between gap-3 p-3 rounded-xl border border-border bg-muted/10">
-                            <div>
-                              <p className="text-sm font-semibold text-foreground">MINOR SNVs</p>
-                              <p className="text-xs text-muted-foreground mt-3">No Minor SNVs found for this run.</p>
-                            </div>
-                          </div>                      
+                          <EmptyResultTable title="Minor Variants Table" message="No Minor Variants found for this run." />
                         ) : (
                           <ResultTable title="Minor Variants Table" data={resultMinorSnvs} page={minorSnvsPage} setPage={setMinorSnvsPage} />
                         )}
@@ -2387,9 +2495,7 @@ function AssemblyTab() {
                     {assembled && resultIndels !== null && (
                       <div id="result-section-indels">
                         {resultIndels.length === 0 ? (
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/20 rounded-lg px-3 py-2 border border-border">
-                            <Database size={13} className="shrink-0" /> <span><span className="font-semibold">Reference Indels:</span> No data returned for this run.</span>
-                          </div>
+                          <EmptyResultTable title="Minor Indels Table" message="No Minor Indels found for this run." />
                         ) : (
                           <ResultTable title="Minor Indels Table" data={resultIndels} page={indelsPage} setPage={setIndelsPage} />
                         )}
@@ -2573,7 +2679,7 @@ function AssemblyTab() {
 
             {!exportRunLoading && !exportRunError && (
               availableRuns.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-4">There are no runs found in storage.</p>
+                <p className="text-xs text-muted-foreground text-center py-4">There are no runs with status of "COMPLETED" found in storage.</p>
               ) : (() => {
                 const q = exportRunSearch.trim().toLowerCase();
                 const filtered = (q
@@ -2586,7 +2692,7 @@ function AssemblyTab() {
                 return (
                   <>
                     <p className="text-xs text-muted-foreground">
-                      Select a run to download its MIRA report files as a <span className="font-mono">.zip</span> archive.
+                      Select a run to download its MIRA results as a <span className="font-mono">zip</span> archive.
                     </p>                  
                     <div className="relative">
                       <FileSearch size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
@@ -2644,7 +2750,7 @@ function AssemblyTab() {
             {exportSelectedRun && (
               <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/20 border border-border text-xs">
                 <Download size={11} className="text-primary shrink-0" />
-                <span className="text-muted-foreground">Will download:</span>
+                <span className="text-muted-foreground">Will download as:</span>
                 <span className="font-mono font-semibold text-foreground">{exportSelectedRun.run_name}_mira_reports.zip</span>
               </div>
             )}
@@ -3267,14 +3373,27 @@ function TabContent({ tab }) {
 
 /* ── Main App ────────────────────────────────────── */
 export default function App() {
+
+  // Determine the initial tab based on the URL hash
   const getInitialTab = () => {
     const hash = window.location.hash.slice(1);
     return TABS.find((t) => t.id === hash) ? hash : "home";
   };
 
+  // State for the active tab, dark mode, and version info
   const [activeTab, setActiveTab] = useState(getInitialTab);
   const [darkMode, setDarkMode]   = useState(false);
+  const [versionInfo, setVersionInfo] = useState(null);
 
+  // Check MIRA-NF version on app startup so we can alert users if it's out-of-date
+  useEffect(() => {
+    fetch(API.checkVersion)
+      .then((res) => res.json())
+      .then(setVersionInfo)
+      .catch(() => {});
+  }, []);
+
+  // Update the URL hash when the active tab changes
   const updateUrl = (tabId) => {
     window.history.pushState({ tab: tabId }, "", tabId === "home" ? location.pathname : `#${tabId}`);
   };
@@ -3324,7 +3443,7 @@ export default function App() {
           <div className="flex flex-col leading-tight">
             <div className="flex items-baseline gap-2">
               <span className="text-2xl tracking-widest text-white" style={{ fontFamily: "'Cinzel', serif", fontWeight: 700 }}>MIRA</span>
-              <span className="text-xs text-white/50 font-mono">v2.0.0</span>
+              <span className="text-xs text-white/50 font-mono">{versionInfo?.current_version ?? "..."}</span>
             </div>
             <span className="text-xs text-white/80 hidden sm:inline tracking-wider normalcase">
               Influenza, SARS-CoV-2, and RSV Genome Assembly &amp; Curation
@@ -3337,16 +3456,34 @@ export default function App() {
 
           {/* Notifications */}
           <Dropdown
+            panelClassName="w-80"
             trigger={
-              <button className="p-2 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition-colors">
+              <button className="relative p-2 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition-colors">
                 <Bell size={16} />
+                {versionInfo?.status === "out-of-date" && (
+                  <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500" />
+                )}
               </button>
             }
           >
             <div className="px-4 py-2 text-xs text-muted-foreground font-medium border-b border-border">
               Notifications
             </div>
-            <DropdownItem>There are no new notifications</DropdownItem>
+            {versionInfo?.status === "out-of-date" ? (
+              <div className="px-4 py-3 text-sm text-foreground">
+                <p className="mb-1">A new version of MIRA-NF is available.</p>
+                <a
+                  href="https://cdcgov.github.io/MIRA/articles/upgrading-mira.html"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  Click here to see how to upgrade MIRA to the latest version
+                </a>
+              </div>
+            ) : (
+              <DropdownItem>There are no new notifications</DropdownItem>
+            )}
           </Dropdown>
 
           {/* Settings */}

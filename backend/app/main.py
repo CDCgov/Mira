@@ -10,9 +10,11 @@ from fastapi.responses import FileResponse, StreamingResponse
 # Import general python packages
 import os
 import io
+import re
 import json
 import shutil
 import zipfile
+import requests
 
 # Import asyncio for running blocking operations in a thread
 import asyncio
@@ -33,6 +35,8 @@ from .schema import (
 # Import schema validation
 from .schema_validator import (
     _DEFAULT_MIRA_STORAGE_PATH,
+    _MIRA_NF_VERSION_URL,
+    _HOST_MIRA_NF_IMAGE,
     validate_tbl,
     experiment_types,
     assembly_pa_schema,
@@ -192,11 +196,40 @@ def upload_fastq_files_to_storage(
 def health():
     return {"ok": True}
 
+# ---------- Helper: parse a dotted version string into a comparable tuple of ints ----------
+def _version_tuple(version: str) -> tuple:
+    return tuple(int(part) for part in re.findall(r"\d+", version))
+
 ##############################################
 # 
 # MIRA SECTION
 # 
 ##############################################
+
+# --------- Get MIRA version ----------
+@app.get("/version", response_model=Dict[str, str], summary="Get MIRA version", tags=["MIRA"])
+async def update_mira_version():
+    # Get current version from Docker image tag without the v
+    current_version = re.findall(r"[^:]+$", _HOST_MIRA_NF_IMAGE)[0].lstrip("v")
+    # Get available version on Github
+    github_version = requests.get(_MIRA_NF_VERSION_URL)
+    if github_version.status_code == 200:
+        version_match = re.search(r"Version:\s*(\S+)", github_version.text)
+        available_version = version_match.group(1) if version_match else "0.0.0"
+        # Check if current version is lesser than available version online
+        if _version_tuple(current_version) < _version_tuple(available_version):
+            status = "out-of-date"
+        else:
+            status = "up-to-date"
+    else:
+        available_version = "unknown"
+        status = "unknown"
+    # Return the current version, available version, and status
+    return {
+        "current_version": f"v{current_version}",
+        "available_version": f"v{available_version}",
+        "status": status
+    }
 
 # ---------- List all runs ----------
 @app.get("/list/runs", response_model=RunResponse, summary="List all assembly runs", tags=["MIRA"])
