@@ -586,7 +586,7 @@ function AssemblyTab() {
   const [assembled, setAssembled]             = useState(false);
   const [rightWidth, setRightWidth]           = useState(260);
   const [sampleSearch, setSampleSearch]       = useState("");
-  const [sortConfig, setSortConfig]           = useState({ key: null, dir: "asc" });
+  const [sortConfig, setSortConfig]           = useState({ key: "sample_id", dir: "asc" });
   const [submitting, setSubmitting]           = useState(false);
   const [submitError, setSubmitError]         = useState(null);
   const [submitSuccess, setSubmitSuccess]     = useState(null);
@@ -826,7 +826,7 @@ function AssemblyTab() {
     return () => { cancelled = true; clearInterval(timer); };
   }, [pipelinePolling, submitProcessId, selectedRun, cancelRun]);
 
-  // Sync fastq_location in rows whenever runName changes
+  // ── Sample sheet state ───────────────────────
   const SAMPLE_TYPES = ["- Control", "+ Control", "Test"];
   const [ontSampleRows, setOntSampleRows]           = useState([]);
   const [illuminaSampleRows, setIlluminaSampleRows] = useState([]);
@@ -920,6 +920,12 @@ function AssemblyTab() {
 
   // Ref to track whether the user is currently dragging the right panel for resizing
   const dragging = useRef(false);
+
+  // Ref-based (synchronous) guard against double-submission — React state updates
+  // (e.g. `submitting`) are batched, so a fast double-click can invoke submitAssembly
+  // twice before the button's `disabled` prop takes effect, launching two MIRA-NF
+  // pipelines for the same run.
+  const submitLockRef = useRef(false);
 
   // Define experiment types options for the dropdowns
   const EXPERIMENT_TYPES = [
@@ -1021,7 +1027,7 @@ function AssemblyTab() {
     setNextclade(true);
     setExportFmt("fasta");
     setAssembled(false);
-    setSortConfig({ key: null, dir: "asc" });
+    setSortConfig({ key: "sample_id", dir: "asc" });
     setSampleSearch("");
     setUploadedOntFileObjects({});
     setUploadedIlluminaFileObjects({});
@@ -1253,7 +1259,7 @@ function AssemblyTab() {
       return;
     }
 
-    // Validate Illumina samples: must have both fastq_1 and fastq_2, and single_end must be "false"
+    // Validate Illumina samples: must have both fastq_1 and fastq_2 and single_end must be "false"
     if (!isOnt) {
       const badRows = samplesheet.filter(r => !r.fastq_1 || !r.fastq_2 || r.single_end !== "false");
       if (badRows.length > 0) {
@@ -1305,21 +1311,26 @@ function AssemblyTab() {
       samplesheet:        formattedSamplesheet,
     };
 
-    // Check if the run name already exists in the database (for new runs only)
-    if (isNewRun) {
-      const checkRes = await fetch(`${API.retrieveRun}?run_name=${encodeURIComponent(runName)}&experiment_type=${encodeURIComponent(experimentType)}`);
-      const checkData = await checkRes.json();
-      if (!checkRes.ok) throw new Error(checkData.detail || "Failed to check run name");
-      const duplicate = Array.isArray(checkData.run_info) && checkData.run_info.find(r => r.run_name === runName);
-      if (duplicate) {
-        setSubmitError({ title: "Assembly Error", items: [`Run name "${runName}" already exists. Please enter a different name or use "Load Run" on the right menu to reload it.`], missing: null });
-        return;
-      }
-    }   
-
     // Run the submission in a try/catch block to handle errors
     try {
-      
+
+      // Reflect the in-flight submission in the UI immediately, rather than waiting
+      // for all the sequential API calls below to finish.
+      setSubmitting(true);
+
+      // Check if the run name already exists in the database (for new runs only)
+      if (isNewRun) {
+        const checkRes = await fetch(`${API.retrieveRun}?run_name=${encodeURIComponent(runName)}&experiment_type=${encodeURIComponent(experimentType)}`);
+        const checkData = await checkRes.json();
+        if (!checkRes.ok) throw new Error(checkData.detail || "Failed to check run name");
+        const duplicate = Array.isArray(checkData.run_info) && checkData.run_info.find(r => r.run_name === runName);
+        if (duplicate) {
+          setSubmitError({ title: "Assembly Error", items: [`Run name "${runName}" already exists. Please enter a different name or use "Load Run" on the right menu to reload it.`], missing: null });
+          setSubmitting(false);
+          return;
+        }
+      }
+
       // ── Step 1: register the run in the database ──
       const res = await fetch(API.createRun, {
         method: "POST",
@@ -1363,6 +1374,7 @@ function AssemblyTab() {
       if (valData.validation_status !== "passed") {
         const valItems = Array.isArray(valData.message) ? valData.message : [valData.message || valData.validation_status];
         setSubmitError({ title: "Validation Error", items: valItems, missing: valData.missing_fastq_files?.length ? { title: "Missing Samples", samples: valData.missing_fastq_files } : null });
+        setSubmitting(false);
         return;
       }
 
@@ -1384,7 +1396,6 @@ function AssemblyTab() {
         // Stage the submission status, error, and success messages
         setSubmitSuccess("MIRA assembly launched successfully! You can monitor its progress in the 'Processing' step.");
         setSubmitError(null);
-        setSubmitting(true);
 
         // Clear previous results now that a new run has started
         setResultBarcodeAssignments(null);
@@ -1410,12 +1421,15 @@ function AssemblyTab() {
         setResultNextcladeFasta(null);
 
         // Update the selected run for the UI state
-        setShowDAG(true);
+        setSubmitProcessId(miraData.pid);
         setAssembled(false);
         setCancelRun(false);
-        setSubmitProcessId(miraData.pid);
+        setShowDAG(true);
         setPipelinePolling(true);
 
+      } else {
+        // No pid to poll — nothing further will clear the "Processing..." state, so reset it now.
+        setSubmitting(false);
       }
 
     } catch (err) {
@@ -1866,17 +1880,21 @@ function AssemblyTab() {
                                   {colKeys.map((key, ci) => (
                                     <td key={ci} className="px-3 py-2 font-mono text-foreground">
                                       {key === "sample_type" ? (
-                                        isOnt ? (
-                                          <span className="px-2 py-0.5 rounded bg-muted text-muted-foreground font-mono text-xs">Test</span>
-                                        ) : (
                                         <select
                                           value={row.sample_type}
-                                          onChange={(e) => setIlluminaSampleRows((prev) => prev.map((r, i) => i === idx ? { ...r, sample_type: e.target.value } : r))}
+                                          onChange={(e) => {
+                                            const newType = e.target.value;
+                                            // ONT: a barcode can span multiple fastq rows — keep them all in sync
+                                            if (isOnt) {
+                                              setOntSampleRows((prev) => prev.map((r) => r.barcode === row.barcode ? { ...r, sample_type: newType } : r));
+                                            } else {
+                                              setIlluminaSampleRows((prev) => prev.map((r, i) => i === idx ? { ...r, sample_type: newType } : r));
+                                            }
+                                          }}
                                           className="h-7 px-2 rounded border border-border bg-background text-xs font-mono focus:outline-none focus:ring-1 focus:ring-ring"
                                         >
                                           {SAMPLE_TYPES.map((opt) => <option key={opt}>{opt}</option>)}
                                         </select>
-                                        )
                                       ) : (
                                         key.startsWith("fastq") ? (
                                           <span className="flex items-center gap-1">
@@ -2005,7 +2023,15 @@ function AssemblyTab() {
                     <div className="flex items-center gap-2">
                       <button
                         disabled={submitting}
-                        onClick={submitAssembly}
+                        onClick={async () => {
+                          if (submitLockRef.current) return;
+                          submitLockRef.current = true;
+                          try {
+                            await submitAssembly();
+                          } finally {
+                            submitLockRef.current = false;
+                          }
+                        }}
                         className="flex items-center gap-2 px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {submitting ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
@@ -2021,7 +2047,7 @@ function AssemblyTab() {
                               setCancelRun(true);
                               setSubmitting(false);
                               setSubmitError({
-                                title: "Cancelled Status",
+                                title: "Canceled Status",
                                 items: Array.isArray(data.message) ? data.message : [data.message || "MIRA run was canceled or interrupted."],
                                 missing: null,
                               });
@@ -2605,6 +2631,33 @@ function AssemblyTab() {
             </button>
           ))}
         </div>
+
+        {(runName || experimentType) && (
+          <div className="border-t border-border pt-3 space-y-1.5">
+            <p className="text-xs font-bold tracking-wider text-muted-foreground uppercase mb-2">Run Information</p>
+            {runName && (
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Name:</span>
+                <span className="font-mono font-semibold text-foreground truncate">{runName}</span>
+              </div>
+            )}
+            {experimentType && (
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Type:</span>
+                <span className="font-mono text-foreground truncate">{experimentType}</span>
+              </div>
+            )}
+            {primer && (
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Primer:</span>
+                <span className="font-mono text-foreground truncate">
+                  {(experimentType?.startsWith("SC2") ? SC2_PRIMERS : experimentType?.startsWith("RSV") ? RSV_PRIMERS : [])
+                    .find(p => p.value === primer)?.label || primer}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="border-t border-border pt-3 space-y-1">
           <p className="text-xs font-bold tracking-wider text-muted-foreground uppercase mb-2">Jump To</p>

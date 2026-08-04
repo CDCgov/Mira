@@ -21,7 +21,6 @@ from .schema_validator import (
     _DEFAULT_MIRA_STORAGE_PATH,
     _HOST_MIRA_NF_IMAGE,
     _HOST_MIRA_STORAGE_PATH,
-    nextclade_pathogen_aliases,
     assembly_pa_schema,
     assembly_db_schema,
     ont_samplesheet_pa_schema,
@@ -871,6 +870,28 @@ def run_mira_docker(
         # Extract assembly_id, parquet_files, run_nextclade, and subsample from assembly info
         assembly_row  = db_assembly_tbl.row(0, named=True)
         assembly_id   = assembly_row.get("assembly_id", 0)
+
+        # Guard against launching a second pipeline for a run that is already
+        # in-flight — this would otherwise wipe the shared output directory
+        # (see _remove_previous_pipeline_outputs below) out from under the
+        # first, still-running process, corrupting the trace/DAG files and
+        # leaving an orphaned process that "Cancel Run" can't reach.
+        if assembly_row.get("assembly_status") == "PROCESSING":
+            raise ValueError(
+                f"Run '{run_name}' already has a pipeline in progress. "
+                "Please wait for it to finish or cancel it before starting a new run."
+            )
+
+        # Update run to PROCESSING in the assembly table to prevent multiple pipelines from running for the same run
+        update_tbl_in_database(
+            db_tbl_name = ["assembly"],
+            table = pl.DataFrame({"assembly_status": ["PROCESSING"]}),
+            filter_coln_var  = ["run_name", "experiment_type"],
+            filter_coln_val  = {"run_name": [run_name], "experiment_type": [experiment_type]},
+            filter_var_by    = ["AND", "AND"]
+        )
+
+        # Extract primer, parquet_files, run_nextclade, and subsample from assembly_row
         if pathogen.lower() == "sc2":
             primer = assembly_row.get("sc2_primer", None)
         elif pathogen.lower() == "rsv":
@@ -903,7 +924,7 @@ def run_mira_docker(
 
         # Check if samplesheet has rows to process
         if keep_samplesheet_rows.is_empty():
-            raise ValueError(f"No samples with status 'Keep' found in samplesheet for run '{run_name}'.")
+            raise ValueError(f"No samples with status 'Keep' found in the samplesheet for run '{run_name}'.")
         
         # Write samplesheet CSV to run directory
         run_dir = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name)                   
@@ -980,15 +1001,6 @@ def run_mira_docker(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
-        )
-
-        # Update status of assembly to "SUBMITTED" in database
-        update_tbl_in_database(
-            db_tbl_name = ["assembly"],
-            table = pl.DataFrame({"assembly_status": ["SUBMITTED"]}),
-            filter_coln_var  = ["run_name", "experiment_type"],
-            filter_coln_val  = {"run_name": [run_name], "experiment_type": [experiment_type]},
-            filter_var_by    = ["AND", "AND"]
         )
 
         # Return the process ID and command for reference

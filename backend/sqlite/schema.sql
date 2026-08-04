@@ -159,7 +159,7 @@ CREATE TABLE ont_samplesheet (
   assembly_id   INTEGER NOT NULL REFERENCES assembly(assembly_id) ON DELETE CASCADE,
   barcode       TEXT NOT NULL,
   sample_id     TEXT NOT NULL,
-  sample_type   TEXT NOT NULL CHECK (sample_type IN ('Test')),
+  sample_type   TEXT NOT NULL CHECK (sample_type IN ('- Control', '+ Control', 'Test')),
   single_end    BOOLEAN NOT NULL DEFAULT 1 CHECK (single_end IN (0, 1)),
   fastq         TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('Keep', 'Exclude')),

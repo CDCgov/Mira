@@ -74,14 +74,6 @@ _ensure_storage_directory(_DEFAULT_SQLITE_PATH)
 
 # Create sqlite database if it doesn't exist, using schema.sql
 _DEFAULT_SQLITE_FILE = os.path.join(_DEFAULT_SQLITE_PATH, "mira.db")
-if not os.path.exists(_DEFAULT_SQLITE_FILE):
-    with open(_DEFAULT_SCHEMA_FILE, "r") as f:
-        schema_sql = f.read()
-    conn = sqlite3.connect(_DEFAULT_SQLITE_FILE)
-    conn.executescript(schema_sql)
-    conn.commit()
-    conn.close()
-os.chmod(_DEFAULT_SQLITE_FILE, 0o664)
 
 # Define storage path for MIRA data, allowing override via environment variable
 _DEFAULT_MIRA_STORAGE_PATH = os.path.join(_DEFAULT_DATA_STORAGE_PATH, "MIRA")
