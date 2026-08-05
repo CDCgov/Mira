@@ -17,6 +17,7 @@ import sqlite3
 
 # Define app version
 _MIRA_NF_VERSION_URL = "https://raw.githubusercontent.com/CDCgov/Mira-nf/master/DESCRIPTION"
+_MIRA_VERSION_URL = "https://raw.githubusercontent.com/CDCgov/MIRA/prod/DESCRIPTION"
 
 # Allow files created by this backend to be group-readable and group-writable.
 os.umask(0o002)
@@ -61,9 +62,6 @@ def get_mira_nf_image() -> str:
         raise ValueError("MIRA_NF_IMAGE must be set in config.yml.")
     return mira_nf_image
 
-# Define storage paths for sqlite database and schema file
-_DEFAULT_SCHEMA_FILE = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "sqlite/schema.sql"))
-
 # Define data storage path for MIRA and SeqSender, allowing override via environment variable
 _DEFAULT_DATA_STORAGE_PATH = get_data_storage_path()
 _ensure_storage_directory(_DEFAULT_DATA_STORAGE_PATH)
@@ -71,9 +69,6 @@ _ensure_storage_directory(_DEFAULT_DATA_STORAGE_PATH)
 # Define storage path for sqlite database, allowing override via environment variable
 _DEFAULT_SQLITE_PATH = os.path.realpath(os.path.join(_DEFAULT_DATA_STORAGE_PATH, "SQlite"))
 _ensure_storage_directory(_DEFAULT_SQLITE_PATH)
-
-# Create sqlite database if it doesn't exist, using schema.sql
-_DEFAULT_SQLITE_FILE = os.path.join(_DEFAULT_SQLITE_PATH, "mira.db")
 
 # Define storage path for MIRA data, allowing override via environment variable
 _DEFAULT_MIRA_STORAGE_PATH = os.path.join(_DEFAULT_DATA_STORAGE_PATH, "MIRA")
@@ -102,10 +97,10 @@ if deploy_type == "Docker":
 elif deploy_type == "Local":
     _HOST_MIRA_NF_IMAGE = _DEFAULT_MIRA_NF_IMAGE
 
-print(f"Using MIRA-NF Docker Image: {_HOST_MIRA_NF_IMAGE}")
-print(f"Using {deploy_type} Data Storage Path: {_DEFAULT_DATA_STORAGE_PATH}")
-print(f"Using {deploy_type} MIRA Storage Path: {_DEFAULT_MIRA_STORAGE_PATH}")
-print(f"Using Host MIRA Storage Path: {_HOST_MIRA_STORAGE_PATH}")
+# print(f"Using MIRA-NF Docker Image: {_HOST_MIRA_NF_IMAGE}")
+# print(f"Using {deploy_type} Data Storage Path: {_DEFAULT_DATA_STORAGE_PATH}")
+# print(f"Using {deploy_type} MIRA Storage Path: {_DEFAULT_MIRA_STORAGE_PATH}")
+# print(f"Using Host MIRA Storage Path: {_HOST_MIRA_STORAGE_PATH}")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -201,12 +196,6 @@ assembly_status = ['SUBMITTED', 'PROCESSING', 'FAILED', 'CANCELED', 'COMPLETED']
 # Segments not listed here (e.g. flu h3n2/h1n1pdm pb1/pb2/np/mp/ns) have no
 # shortcut and must be referenced by their full dataset `path` instead
 # (e.g. "nextstrain/flu/h3n2/pb2").
-nextclade_pathogen_aliases = {
-    "flu": "flu",
-    "rsv": "rsv",
-    "sc2": "sars-cov-2",
-    "mpox": "mpox",
-}
 NEXTCLADE_DATASET_SHORTCUTS = {
     "flu": {
         "h3n2":     {"ha": "flu_h3n2_ha",     "na": "flu_h3n2_na",     "pa": "flu_h3n2_pa"},

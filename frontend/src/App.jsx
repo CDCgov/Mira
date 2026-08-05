@@ -47,10 +47,12 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowUpDown,
+  ArrowRight,
   MessageSquare,
   X,
   Square,
   Trash2,
+  Pencil,
 } from "lucide-react";
 
 /* ── utility ─────────────────────────────────────── */
@@ -66,6 +68,9 @@ const API = {
   retrieveRun:      `${API_BASE}/retrieve/run`,
   createRun:        `${API_BASE}/create/run`,
   deleteSample:     `${API_BASE}/delete/sample`,
+  renameRun:        `${API_BASE}/rename/run`,
+  deleteRun:        `${API_BASE}/delete/run`,
+  copyRun:          `${API_BASE}/copy/run`,
   uploadFastqs:     `${API_BASE}/upload/fastqs`,
   validateRun:      `${API_BASE}/validate/run`,
   runMIRA:          `${API_BASE}/run/MIRA`,
@@ -595,19 +600,35 @@ function AssemblyTab() {
   const [loadRunLoading, setLoadRunLoading]   = useState(false);
   const [loadRunError, setLoadRunError]       = useState(null);
   const [availableRuns, setAvailableRuns]     = useState([]);
-  const [selectedRun, setSelectedRun]         = useState(null);
+  const [selectedRun, setSelectedRun]         = useState(null); // the run currently loaded/polled on the page
+  const [loadRunSelectedRow, setLoadRunSelectedRow] = useState(null); // row highlighted inside the Load Run modal only
   const [runSearch, setRunSearch]             = useState("");
+  const [runSortDir, setRunSortDir]           = useState("asc"); // "asc" | "desc" — run_name sort order
   const [uploadedOntFileObjects, setUploadedOntFileObjects]           = useState({}); // ONT filename → File object
   const [uploadedIlluminaFileObjects, setUploadedIlluminaFileObjects] = useState({}); // Illumina filename → File object
 
   // ── Export Run modal state ────────────────
   const [exportRunModal, setExportRunModal]           = useState(false);
   const [exportRunSearch, setExportRunSearch]         = useState("");
+  const [exportRunSortDir, setExportRunSortDir]       = useState("asc"); // "asc" | "desc" — run_name sort order
   const [exportSelectedRun, setExportSelectedRun]     = useState(null);
   const [exportRunLoading, setExportRunLoading]       = useState(false);
   const [exportRunError, setExportRunError]           = useState(null);
   const [exportDownloading, setExportDownloading]     = useState(false);
   const [cancelRun, setCancelRun]                     = useState(false);    // whether the run has been cancelled
+
+  // ── Edit Run modal state ───────────────────
+  const [editRunModal, setEditRunModal]               = useState(false);
+  const [editRunSearch, setEditRunSearch]             = useState("");
+  const [editRunSortDir, setEditRunSortDir]           = useState("asc"); // "asc" | "desc" — run_name sort order
+  const [editRunLoading, setEditRunLoading]           = useState(false);
+  const [editRunError, setEditRunError]               = useState(null);
+  const [editSelectedRun, setEditSelectedRun]         = useState(null); // run row chosen from the list
+  const [editMode, setEditMode]                       = useState(null); // null | "rename" | "copy" | "delete"
+  const [editNewName, setEditNewName]                 = useState("");  // new name input for rename/copy
+  const [editActionLoading, setEditActionLoading]     = useState(false);
+  const [editActionError, setEditActionError]         = useState(null);
+
   const [isNewRun, setIsNewRun]                       = useState(true);   // true = new run, false = loaded existing run
   const [confirmRemoveIdx, setConfirmRemoveIdx]       = useState(null); // index of sample row pending removal confirmation
   const [uploadOntFastq, setUploadOntFastq]           = useState([]);      // list of sanitized ONT fastq filenames uploaded this session
@@ -648,6 +669,13 @@ function AssemblyTab() {
     const poll = async () => {
       try {
 
+        // Guard against polling with a stale/missing run identity (e.g. selectedRun
+        // was cleared elsewhere) — hammering the API with "undefined" params otherwise
+        if (!selectedRun?.run_name || !selectedRun?.experiment_type) {
+          if (!cancelled) setPipelinePolling(false);
+          return;
+        }
+
         // If the run is still active, poll /pipeline/status for the DAG
         if (submitProcessId && cancelRun === false) {
           const statusRes = await fetch(`${API.miraStatus}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}&pid=${submitProcessId}`);
@@ -679,144 +707,143 @@ function AssemblyTab() {
           setPipelineDAG(data);
           const done = data?.workflows?.status === "COMPLETED" || data?.workflows?.status === "FAILED" || data?.workflows?.status === "CANCELED" || data?.workflows?.status === "UNKNOWN";
           if (done || cancelRun === true) { 
-           try {
-
-            // Fetch all result tables and plots
-            const barcodeRes = await fetch(
-              `${API.retrieveBarcodeAssignment}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
-            );
-            const barcodeData = await barcodeRes.json();
-            setResultBarcodeAssignments(barcodeRes.ok && barcodeData && typeof barcodeData === "object" ? barcodeData : null);
-
-            const indelsRes = await fetch(
-              `${API.retrieveIndels}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
-            );
-            const indelsData = await indelsRes.json();
-            if (!indelsRes.ok) throw new Error(indelsData.detail || "Failed to load indels");
-            setResultIndels(Array.isArray(indelsData) ? indelsData : null);
-            setIndelsPage(0);
-
-            const minorSnvsRes = await fetch(
-              `${API.retrieveMinorSnvs}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
-            );
-            const minorSnvsData = await minorSnvsRes.json();
-            if (!minorSnvsRes.ok) throw new Error(minorSnvsData.detail || "Failed to load minor SNVs");
-            setResultMinorSnvs(Array.isArray(minorSnvsData) ? minorSnvsData : null);
-            setMinorSnvsPage(0);
-
-            const variantsData = await fetch(
-              `${API.retrieveVariants}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
-            );
-            const variantsJson = await variantsData.json();
-            if (!variantsData.ok) throw new Error(variantsJson.detail || "Failed to load variants");
-            setResultVariants(Array.isArray(variantsJson) ? variantsJson : null);
-            setVariantsPage(0);
-
-            const heatmapRes = await fetch(
-              `${API.retrieveCoverageHeatmap}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
-            );
-            const heatmapData = await heatmapRes.json();
-            setResultCoverageHeatmap(heatmapRes.ok && heatmapData && typeof heatmapData === "object" ? heatmapData : null);
-
-            const qcDecisionsRes = await fetch(
-              `${API.retrieveQcDecisions}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
-            );
-            const qcDecisionsData = await qcDecisionsRes.json();
-            setResultQcDecisions(qcDecisionsRes.ok && qcDecisionsData && typeof qcDecisionsData === "object" ? qcDecisionsData : null);
-
-            const qcStatementRes = await fetch(
-              `${API.retrieveQcStatement}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
-            );
-            const qcStatementData = await qcStatementRes.json();
-            setResultQcStatement(qcStatementRes.ok && qcStatementData && typeof qcStatementData === "object" ? qcStatementData : null);
-
-            const sampleCoverageListRes = await fetch(
-              `${API.retrieveSampleCoverageList}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
-            );
-            const sampleCoverageListData = await sampleCoverageListRes.json();
-            setResultSampleCoverageList(sampleCoverageListRes.ok ? sampleCoverageListData : null);
-
-            // Fetch sankey for the first available sample
-            const _sankeyInitSamples = sampleCoverageListData?.columns && sampleCoverageListData?.data
-              ? [...new Set(sampleCoverageListData.data.map(r => r[sampleCoverageListData.columns.indexOf("Sample")]))].sort()
-              : [];
-            const _sankeyFirst = _sankeyInitSamples[0] ?? null;
-            if (_sankeyFirst) {
-              const sampleCoverageSankeyRes = await fetch(
-                `${API.retrieveSampleCoverageSankey}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}&sample_id=${encodeURIComponent(_sankeyFirst)}`
+            try {
+              // Fetch all result tables and plots
+              const barcodeRes = await fetch(
+                `${API.retrieveBarcodeAssignment}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
               );
-              const sampleCoverageSankeyData = await sampleCoverageSankeyRes.json();
-              if (sampleCoverageSankeyRes.ok && sampleCoverageSankeyData) {
-                setResultSampleCoverageSankey({ [_sankeyFirst]: sampleCoverageSankeyData });
-                setSelectedSampleForCoverage(_sankeyFirst);
-              }
-            }
+              const barcodeData = await barcodeRes.json();
+              setResultBarcodeAssignments(barcodeRes.ok && barcodeData && typeof barcodeData === "object" ? barcodeData : null);
 
-            // Also fetch linear coverage plot for the first sample
-            if (_sankeyFirst) {
-              const coveragePlotRes = await fetch(
-                `${API.retrieveSampleCoveragePlot}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}&sample_id=${encodeURIComponent(_sankeyFirst)}`
+              const indelsRes = await fetch(
+                `${API.retrieveIndels}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
               );
-              const coveragePlotData = await coveragePlotRes.json();
-              if (coveragePlotRes.ok && coveragePlotData) {
-                setResultSampleCoveragePlot({ [_sankeyFirst]: coveragePlotData });
+              const indelsData = await indelsRes.json();
+              if (!indelsRes.ok) throw new Error(indelsData.detail || "Failed to load indels");
+              setResultIndels(Array.isArray(indelsData) ? indelsData : null);
+              setIndelsPage(0);
+
+              const minorSnvsRes = await fetch(
+                `${API.retrieveMinorSnvs}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+              );
+              const minorSnvsData = await minorSnvsRes.json();
+              if (!minorSnvsRes.ok) throw new Error(minorSnvsData.detail || "Failed to load minor SNVs");
+              setResultMinorSnvs(Array.isArray(minorSnvsData) ? minorSnvsData : null);
+              setMinorSnvsPage(0);
+
+              const variantsData = await fetch(
+                `${API.retrieveVariants}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+              );
+              const variantsJson = await variantsData.json();
+              if (!variantsData.ok) throw new Error(variantsJson.detail || "Failed to load variants");
+              setResultVariants(Array.isArray(variantsJson) ? variantsJson : null);
+              setVariantsPage(0);
+
+              const heatmapRes = await fetch(
+                `${API.retrieveCoverageHeatmap}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+              );
+              const heatmapData = await heatmapRes.json();
+              setResultCoverageHeatmap(heatmapRes.ok && heatmapData && typeof heatmapData === "object" ? heatmapData : null);
+
+              const qcDecisionsRes = await fetch(
+                `${API.retrieveQcDecisions}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+              );
+              const qcDecisionsData = await qcDecisionsRes.json();
+              setResultQcDecisions(qcDecisionsRes.ok && qcDecisionsData && typeof qcDecisionsData === "object" ? qcDecisionsData : null);
+
+              const qcStatementRes = await fetch(
+                `${API.retrieveQcStatement}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+              );
+              const qcStatementData = await qcStatementRes.json();
+              setResultQcStatement(qcStatementRes.ok && qcStatementData && typeof qcStatementData === "object" ? qcStatementData : null);
+
+              const sampleCoverageListRes = await fetch(
+                `${API.retrieveSampleCoverageList}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+              );
+              const sampleCoverageListData = await sampleCoverageListRes.json();
+              setResultSampleCoverageList(sampleCoverageListRes.ok ? sampleCoverageListData : null);
+
+              // Fetch sankey for the first available sample
+              const _sankeyInitSamples = sampleCoverageListData?.columns && sampleCoverageListData?.data
+                ? [...new Set(sampleCoverageListData.data.map(r => r[sampleCoverageListData.columns.indexOf("Sample")]))].sort()
+                : [];
+              const _sankeyFirst = _sankeyInitSamples[0] ?? null;
+              if (_sankeyFirst) {
+                const sampleCoverageSankeyRes = await fetch(
+                  `${API.retrieveSampleCoverageSankey}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}&sample_id=${encodeURIComponent(_sankeyFirst)}`
+                );
+                const sampleCoverageSankeyData = await sampleCoverageSankeyRes.json();
+                if (sampleCoverageSankeyRes.ok && sampleCoverageSankeyData) {
+                  setResultSampleCoverageSankey({ [_sankeyFirst]: sampleCoverageSankeyData });
+                  setSelectedSampleForCoverage(_sankeyFirst);
+                }
               }
+
+              // Also fetch linear coverage plot for the first sample
+              if (_sankeyFirst) {
+                const coveragePlotRes = await fetch(
+                  `${API.retrieveSampleCoveragePlot}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}&sample_id=${encodeURIComponent(_sankeyFirst)}`
+                );
+                const coveragePlotData = await coveragePlotRes.json();
+                if (coveragePlotRes.ok && coveragePlotData) {
+                  setResultSampleCoveragePlot({ [_sankeyFirst]: coveragePlotData });
+                }
+              }
+
+              const miraSummaryRes = await fetch(
+                `${API.retrieveMiraSummary}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+              );
+              const miraSummaryData = await miraSummaryRes.json();
+              if (!miraSummaryRes.ok) throw new Error(miraSummaryData.detail || "Failed to load MIRA summary");
+              setResultMiraSummary(miraSummaryData ?? null);
+
+              // Populate downloadable fasta files (if they exist)
+              const ntPassedRes = await fetch(
+                `${API.retrieveNtPassedFasta}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+              );
+              const ntPassedData = await ntPassedRes.json();
+              if (!ntPassedRes.ok) throw new Error(ntPassedData.detail || "Failed to load NT passed fasta");
+              setResultNtPassedFasta(ntPassedData?.location ?? null);
+
+              const ntFailedRes = await fetch(
+                `${API.retrieveNtFailedFasta}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+              );
+              const ntFailedData = await ntFailedRes.json();
+              if (!ntFailedRes.ok) throw new Error(ntFailedData.detail || "Failed to load NT failed fasta");
+              setResultNtFailedFasta(ntFailedData?.location ?? null);
+
+              const aaPassedRes = await fetch(
+                `${API.retrieveAaPassedFasta}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+              );
+              const aaPassedData = await aaPassedRes.json();
+              if (!aaPassedRes.ok) throw new Error(aaPassedData.detail || "Failed to load AA passed fasta");
+              setResultAaPassedFasta(aaPassedData?.location ?? null);
+
+              const aaFailedRes = await fetch(
+                `${API.retrieveAaFailedFasta}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+              );
+              const aaFailedData = await aaFailedRes.json();
+              if (!aaFailedRes.ok) throw new Error(aaFailedData.detail || "Failed to load AA failed fasta");
+              setResultAaFailedFasta(aaFailedData?.location ?? null);
+
+              const nextcladeRes = await fetch(
+                `${API.retrieveNextcladeFasta}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
+              );
+              const nextcladeData = await nextcladeRes.json();
+              if (!nextcladeRes.ok) throw new Error(nextcladeData.detail || "Failed to load Nextclade fasta");
+              setResultNextcladeFasta(nextcladeData?.location ?? null);
+
+            } catch (resultErr) {
+              // A single missing/failed result endpoint shouldn't keep the run stuck
+              // in "Processing..." forever — log it and still mark the run as done.
+              console.error("Failed to load one or more result sets:", resultErr);
+            } finally {
+              // If the run is done, stop polling regardless of individual result-fetch outcomes
+              setAssembled(true);
+              setSubmitting(false);
+              setSubmitSuccess(null);
+              setPipelinePolling(false);
             }
-
-            const miraSummaryRes = await fetch(
-              `${API.retrieveMiraSummary}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
-            );
-            const miraSummaryData = await miraSummaryRes.json();
-            if (!miraSummaryRes.ok) throw new Error(miraSummaryData.detail || "Failed to load MIRA summary");
-            setResultMiraSummary(miraSummaryData ?? null);
-
-            // Populate downloadable fasta files (if they exist)
-            const ntPassedRes = await fetch(
-              `${API.retrieveNtPassedFasta}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
-            );
-            const ntPassedData = await ntPassedRes.json();
-            if (!ntPassedRes.ok) throw new Error(ntPassedData.detail || "Failed to load NT passed fasta");
-            setResultNtPassedFasta(ntPassedData?.location ?? null);
-
-            const ntFailedRes = await fetch(
-              `${API.retrieveNtFailedFasta}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
-            );
-            const ntFailedData = await ntFailedRes.json();
-            if (!ntFailedRes.ok) throw new Error(ntFailedData.detail || "Failed to load NT failed fasta");
-            setResultNtFailedFasta(ntFailedData?.location ?? null);
-
-            const aaPassedRes = await fetch(
-              `${API.retrieveAaPassedFasta}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
-            );
-            const aaPassedData = await aaPassedRes.json();
-            if (!aaPassedRes.ok) throw new Error(aaPassedData.detail || "Failed to load AA passed fasta");
-            setResultAaPassedFasta(aaPassedData?.location ?? null);
-
-            const aaFailedRes = await fetch(
-              `${API.retrieveAaFailedFasta}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
-            );
-            const aaFailedData = await aaFailedRes.json();
-            if (!aaFailedRes.ok) throw new Error(aaFailedData.detail || "Failed to load AA failed fasta");
-            setResultAaFailedFasta(aaFailedData?.location ?? null);
-
-            const nextcladeRes = await fetch(
-              `${API.retrieveNextcladeFasta}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}`
-            );
-            const nextcladeData = await nextcladeRes.json();
-            if (!nextcladeRes.ok) throw new Error(nextcladeData.detail || "Failed to load Nextclade fasta");
-            setResultNextcladeFasta(nextcladeData?.location ?? null);
-
-           } catch (resultErr) {
-             // A single missing/failed result endpoint shouldn't keep the run stuck
-             // in "Processing..." forever — log it and still mark the run as done.
-             console.error("Failed to load one or more result sets:", resultErr);
-           } finally {
-             // If the run is done, stop polling regardless of individual result-fetch outcomes
-             setAssembled(true);
-             setSubmitting(false);
-             setSubmitSuccess(null);
-             setPipelinePolling(false);
-           }
           }
         }
       } catch (_) { /* network error — keep polling */ }
@@ -824,6 +851,22 @@ function AssemblyTab() {
     poll(); // immediate first fetch
     const timer = setInterval(poll, 5000);
     return () => { cancelled = true; clearInterval(timer); };
+  }, [pipelinePolling, submitProcessId, selectedRun, cancelRun]);
+
+  // ── Cancel the in-flight MIRA run if the tab is closed/refreshed while it's still running ──
+  useEffect(() => {
+    if (!pipelinePolling || !submitProcessId || cancelRun) return;
+    const cancelOnExit = () => {
+      const url = `${API.miraCancel}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}&pid=${submitProcessId}`;
+      // keepalive lets the request survive page unload; response is never read
+      fetch(url, { keepalive: true }).catch(() => {});
+    };
+    window.addEventListener("beforeunload", cancelOnExit);
+    window.addEventListener("pagehide", cancelOnExit);
+    return () => {
+      window.removeEventListener("beforeunload", cancelOnExit);
+      window.removeEventListener("pagehide", cancelOnExit);
+    };
   }, [pipelinePolling, submitProcessId, selectedRun, cancelRun]);
 
   // ── Sample sheet state ───────────────────────
@@ -940,7 +983,6 @@ function AssemblyTab() {
 
   // Define SC2 primers options for the dropdowns
   const SC2_PRIMERS = [
-    { value: "",            label: "None" },
     { value: "articv3",     label: "Artic V3" },
     { value: "articv4",     label: "Artic V4" },
     { value: "articv4.1",   label: "Artic V4.1" },
@@ -948,23 +990,12 @@ function AssemblyTab() {
     { value: "qiagen",      label: "Qiagen QIAseq" },
     { value: "swift",       label: "xGen\u2122 SARS-CoV-2 Amplicon Panel" },
     { value: "swift_211206",label: "xGen\u2122 SARS-CoV-2 Amplicon Panel (CDC customized)" },
-    { value: "varSkip",     label: "VarSkip" },
   ];
 
   // Define RSV primers options for the dropdowns
   const RSV_PRIMERS = [
     { value: "RSV_CDC_8amplicon_230901", label: "RSV CDC 8 amplicon 230901" },
-    { value: "dong_et_al",               label: "Dong et al. 230312" },
-    { value: "davina_nunez_wgs",         label: "Davina-Nunez et al. - WG pools" },
   ];
-
-  // Define constant for Nextclade dataset names
-  const NEXTCLADE_DATASETS = {
-    "sc2": "sars-cov-2",
-    "flu": "flu",
-    "rsv": "rsv",
-    "mpox": "mpox",
-  };
 
   // Handle mouse down event for resizing the right panel
   const onMouseDown = useCallback(() => {
@@ -1048,6 +1079,15 @@ function AssemblyTab() {
     setExportRunLoading(false);
     setExportRunError(null);
     setExportDownloading(false);
+    setEditRunModal(false);
+    setEditRunSearch("");
+    setEditRunLoading(false);
+    setEditRunError(null);
+    setEditSelectedRun(null);
+    setEditMode(null);
+    setEditNewName("");
+    setEditActionLoading(false);
+    setEditActionError(null);
     setShowDAG(false);
     setUploadOntError(null);
     setUploadIlluminaError(null);
@@ -1086,7 +1126,7 @@ function AssemblyTab() {
     setLoadRunModal(true);
     setLoadRunLoading(true);
     setLoadRunError(null);
-    setSelectedRun(null);
+    setLoadRunSelectedRow(null);
     setRunSearch("");
     try {
       const res = await fetch(`${API.listRuns}`);
@@ -1106,12 +1146,7 @@ function AssemblyTab() {
     setExportRunError(null);
     setExportSelectedRun(null);
     setExportRunSearch("");
-    try {
-      // Cancel any ongoing run if submitProcessId exists
-      if (submitProcessId && selectedRun) {
-        fetch(`${API.miraCancel}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&pid=${submitProcessId}`)
-          .catch(() => {});
-      }      
+    try {      
       const res = await fetch(`${API.listRuns}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Failed to fetch runs");
@@ -1136,8 +1171,143 @@ function AssemblyTab() {
     setTimeout(() => setExportDownloading(false), 2000);
   }, [exportSelectedRun]);
 
+  const openEditRunModal = useCallback(async () => {
+    setEditRunModal(true);
+    setEditRunLoading(true);
+    setEditRunError(null);
+    setEditSelectedRun(null);
+    setEditRunSearch("");
+    setEditMode(null);
+    setEditNewName("");
+    setEditActionError(null);
+    try {
+      const res = await fetch(`${API.listRuns}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to fetch runs");
+      setAvailableRuns(data.run_info ?? []);
+    } catch (err) {
+      if (err.name !== "AbortError") setEditRunError(err.message);
+    } finally {
+      setEditRunLoading(false);
+    }
+  }, []);
+
+  const closeEditRunModal = useCallback(() => {
+    setEditRunModal(false);
+    setEditSelectedRun(null);
+    setEditMode(null);
+    setEditNewName("");
+    setEditActionError(null);
+  }, []);
+
+  // selects a run and its action in one click, so the rename/copy/delete form shows immediately
+  const selectRunForEdit = useCallback((run, mode) => {
+    setEditSelectedRun(run);
+    setEditMode(mode);
+    setEditNewName(mode === "copy" ? `${run.run_name}_copy` : run.run_name);
+    setEditActionError(null);
+  }, []);
+
+  const handleRenameRun = useCallback(async () => {
+    if (!editSelectedRun) return;
+    const trimmed = editNewName.trim().replace(/\s+/g, "_");
+    if (!trimmed) { setEditActionError("Please enter a new run name."); return; }
+    setEditActionLoading(true);
+    setEditActionError(null);
+    try {
+      const res = await fetch(API.renameRun, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          run_name: editSelectedRun.run_name,
+          experiment_type: editSelectedRun.experiment_type,
+          new_run_name: trimmed,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to rename run");
+      // Keep the currently loaded run's session state in sync if it's the one being renamed
+      if (selectedRun?.assembly_id === editSelectedRun.assembly_id) {
+        setRunName(trimmed);
+        setSelectedRun((prev) => prev && ({ ...prev, run_name: trimmed }));
+      }
+      setAvailableRuns((prev) => prev.map((r) => r.assembly_id === editSelectedRun.assembly_id ? { ...r, run_name: trimmed } : r));
+      setEditSelectedRun(null);
+      setEditMode(null);
+      setEditNewName("");
+    } catch (err) {
+      setEditActionError(err.message);
+    } finally {
+      setEditActionLoading(false);
+    }
+  }, [editSelectedRun, editNewName, selectedRun]);
+
+  const handleCopyRun = useCallback(async () => {
+    if (!editSelectedRun) return;
+    const trimmed = editNewName.trim().replace(/\s+/g, "_");
+    if (!trimmed) { setEditActionError("Please enter a name for the copy."); return; }
+    setEditActionLoading(true);
+    setEditActionError(null);
+    try {
+      const res = await fetch(API.copyRun, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          run_name: editSelectedRun.run_name,
+          experiment_type: editSelectedRun.experiment_type,
+          new_run_name: trimmed,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to copy run");
+
+      // Refresh the run list so the new copy shows up
+      const listRes = await fetch(`${API.listRuns}`);
+      const listData = await listRes.json();
+      if (listRes.ok) setAvailableRuns(listData.run_info ?? []);
+
+      setEditMode(null);
+      setEditNewName("");
+      setEditSelectedRun(null);
+    } catch (err) {
+      setEditActionError(err.message);
+    } finally {
+      setEditActionLoading(false);
+    }
+  }, [editSelectedRun, editNewName]);
+
+  const handleDeleteRun = useCallback(async () => {
+    if (!editSelectedRun) return;
+    setEditActionLoading(true);
+    setEditActionError(null);
+    try {
+      const res = await fetch(API.deleteRun, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          run_name: editSelectedRun.run_name,
+          experiment_type: editSelectedRun.experiment_type,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to delete run");
+
+      // If the currently loaded run was deleted, reset the active session
+      if (selectedRun?.assembly_id === editSelectedRun.assembly_id) {
+        resetRun();
+      }
+      setAvailableRuns((prev) => prev.filter((r) => r.assembly_id !== editSelectedRun.assembly_id));
+      setEditMode(null);
+      setEditSelectedRun(null);
+    } catch (err) {
+      setEditActionError(err.message);
+    } finally {
+      setEditActionLoading(false);
+    }
+  }, [editSelectedRun, selectedRun, resetRun]);
+
   const handleLoadRun = useCallback(async (runOverride) => {
-    const run = runOverride ?? selectedRun;
+    const run = runOverride ?? loadRunSelectedRow;
     if (!run) return;
     setLoadRunLoading(true);
     setLoadRunError(null);
@@ -1192,6 +1362,10 @@ function AssemblyTab() {
       setUploadedOntFileObjects({});
       setUploadedIlluminaFileObjects({});
 
+      // This run is now the page's actively loaded/polled run — set it here rather than
+      // relying on the modal's row-selection state, which resets whenever the modal reopens
+      setSelectedRun(run);
+
       // Update state to reflect loaded run
       setSubmitSuccess(null);
       setSubmitError(null);
@@ -1211,7 +1385,7 @@ function AssemblyTab() {
     } finally {
       setLoadRunLoading(false);
     }
-  }, [selectedRun]);
+  }, [loadRunSelectedRow]);
 
   // ── Submit assembly to backend API ─────────────
   const submitAssembly = useCallback(async () => {
@@ -1523,7 +1697,7 @@ function AssemblyTab() {
                         {EXPERIMENT_TYPES.map((p) => <option key={p}>{p}</option>)}
                       </select>
                     </div>
-                    {(experimentType?.startsWith("SC2") || experimentType?.startsWith("RSV")) && (
+                    {(experimentType?.startsWith("SC2") || experimentType?.startsWith("RSV")) && experimentType?.endsWith("Illumina") && (
                       <div>
                         <FieldLabel>Primers <span className="text-destructive">*</span></FieldLabel>
                         <p className="mb-2 text-xs text-muted-foreground">Select the appropriate primer for the chosen experiment type.</p>
@@ -1587,7 +1761,7 @@ function AssemblyTab() {
                       <label className="flex flex-col items-center justify-center gap-2 h-28 rounded-xl border-2 border-dashed border-border bg-muted/10 hover:bg-muted/20 cursor-pointer transition-colors text-muted-foreground text-sm">
                         <Upload size={22} />
                         <span>Drag &amp; drop or <span className="text-primary underline">browse</span></span>
-                        <span className="text-xs opacity-60">.fastq, .fastq.gz accepted, and sample names must not contain any spaces. If exists, spaces will be replaced with underscores.</span>
+                        <span className="text-xs opacity-60">.fastq, .fastq.gz, .fq, .fq.gz accepted, and sample names must not contain any spaces. If exists, spaces will be replaced with underscores.</span>
                         <input type="file" className="hidden" multiple
                           onChange={(e) => {
                             
@@ -2138,20 +2312,21 @@ function AssemblyTab() {
                             <div className="divide-y divide-border/50 max-h-[360px] overflow-y-auto">
                               {pipelineDAG?.tasks?.map(task => {
                                 const done   = task.status === "COMPLETED";
-                                const failed = task.status === "FAILED";
+                                // PASSFAILED means the sample failed the QC pass/fail check, regardless of the task's own run status
+                                const failed = task.status === "FAILED" || task.process_name === "PASSFAILED";
                                 return (
-                                  <div key={task.task_id} className="flex items-center justify-between gap-3 px-3 py-1.5">
+                                  <div key={task.task_id} className={cn("flex items-center justify-between gap-3 px-3 py-1.5", failed && "bg-red-50 dark:bg-red-950/20")}>
                                     <div className="flex items-center gap-2 min-w-0">
-                                      {done   && <Check size={10} className="text-emerald-500 shrink-0" />}
-                                      {failed  && <AlertCircle size={10} className="text-destructive shrink-0" />}
+                                      {done && !failed && <Check size={10} className="text-emerald-500 shrink-0" />}
+                                      {failed && <AlertCircle size={10} className="text-destructive shrink-0" />}
                                       {!done && !failed && <AlertCircle size={10} className="text-destructive shrink-0" />}
-                                      <span className="text-xs font-mono text-foreground truncate">{task.process_name}</span>
+                                      <span className={cn("text-xs font-mono truncate", failed ? "text-destructive font-semibold" : "text-foreground")}>{task.process_name}</span>
                                       {task.sample && <span className="text-xs text-muted-foreground shrink-0">({task.sample})</span>}
                                     </div>
                                     <span className={cn(
                                       "px-1.5 py-0.5 rounded font-mono text-xs shrink-0",
-                                      done   ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                                      : failed ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                                      failed ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                                      : done ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
                                       : "bg-muted text-muted-foreground"
                                     )}>{task.status}</span>
                                   </div>
@@ -2624,6 +2799,7 @@ function AssemblyTab() {
           {[
             [PlusCircle, "New Run",  resetRun],
             [FolderOpen, "Load Run", openLoadRunModal],
+            [Pencil,     "Edit Run", openEditRunModal],
             [Download,   "Export Run", openExportRunModal],
           ].map(([Icon, label, action]) => (
             <button key={label} onClick={action} className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/60 transition-colors border border-transparent hover:border-border">
@@ -2741,13 +2917,16 @@ function AssemblyTab() {
                         .some(v => (v ?? "").toLowerCase().includes(q))
                     )
                   : availableRuns
-                ).sort((a, b) => (a.run_name ?? "").localeCompare(b.run_name ?? ""));
+                ).sort((a, b) => exportRunSortDir === "asc"
+                  ? (a.run_name ?? "").localeCompare(b.run_name ?? "")
+                  : (b.run_name ?? "").localeCompare(a.run_name ?? ""));
                 return (
                   <>
                     <p className="text-xs text-muted-foreground">
                       Select a run to download its MIRA results as a <span className="font-mono">zip</span> archive.
                     </p>                  
-                    <div className="relative">
+                    <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
                       <FileSearch size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                       <input
                         value={exportRunSearch}
@@ -2755,6 +2934,15 @@ function AssemblyTab() {
                         placeholder="Search runs…"
                         className="w-full h-8 pl-8 pr-3 rounded-lg border border-border bg-background text-xs font-mono focus:outline-none focus:ring-1 focus:ring-ring"
                       />
+                    </div>
+                    <button
+                      type="button"
+                      title={`Sort ${exportRunSortDir === "asc" ? "Z→A" : "A→Z"}`}
+                      onClick={() => setExportRunSortDir(d => d === "asc" ? "desc" : "asc")}
+                      className="h-8 w-8 shrink-0 flex items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-primary hover:border-primary transition-colors"
+                    >
+                      {exportRunSortDir === "asc" ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
+                    </button>
                     </div>
                     {filtered.length === 0 ? (
                       <p className="text-xs text-muted-foreground text-center py-3">No runs match your search.</p>
@@ -2866,17 +3054,29 @@ function AssemblyTab() {
                         .some(v => (v ?? "").toLowerCase().includes(q))
                     )
                   : availableRuns
-                ).sort((a, b) => (a.run_name ?? "").localeCompare(b.run_name ?? ""));
+                ).sort((a, b) => runSortDir === "asc"
+                  ? (a.run_name ?? "").localeCompare(b.run_name ?? "")
+                  : (b.run_name ?? "").localeCompare(a.run_name ?? ""));
                 return (
                   <>
-                    <div className="relative">
+                    <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
                       <FileSearch size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                       <input
                         value={runSearch}
-                        onChange={(e) => { setRunSearch(e.target.value); setSelectedRun(null); }}
+                        onChange={(e) => { setRunSearch(e.target.value); setLoadRunSelectedRow(null); }}
                         placeholder="Search runs…"
                         className="w-full h-8 pl-8 pr-3 rounded-lg border border-border bg-background text-xs font-mono focus:outline-none focus:ring-1 focus:ring-ring"
                       />
+                    </div>
+                    <button
+                      type="button"
+                      title={`Sort ${runSortDir === "asc" ? "Z→A" : "A→Z"}`}
+                      onClick={() => setRunSortDir(d => d === "asc" ? "desc" : "asc")}
+                      className="h-8 w-8 shrink-0 flex items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-primary hover:border-primary transition-colors"
+                    >
+                      {runSortDir === "asc" ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
+                    </button>
                     </div>
                     {filtered.length === 0 ? (
                       <p className="text-xs text-muted-foreground text-center py-3">No runs match your search.</p>
@@ -2885,11 +3085,11 @@ function AssemblyTab() {
                         {filtered.map(run => (
                           <button
                             key={run.assembly_id}
-                            onClick={() => setSelectedRun(run)}
-                            onDoubleClick={() => { setSelectedRun(run); handleLoadRun(run); }}
+                            onClick={() => setLoadRunSelectedRow(run)}
+                            onDoubleClick={() => { setLoadRunSelectedRow(run); handleLoadRun(run); }}
                             className={cn(
                               "w-full text-left px-4 py-3 text-xs transition-colors",
-                              selectedRun?.assembly_id === run.assembly_id
+                              loadRunSelectedRow?.assembly_id === run.assembly_id
                                 ? "bg-primary/10 border-l-2 border-primary"
                                 : "hover:bg-muted/40"
                             )}
@@ -2937,13 +3137,218 @@ function AssemblyTab() {
               </button>
               <button
                 onClick={() => handleLoadRun()}
-                disabled={!selectedRun || loadRunLoading}
+                disabled={!loadRunSelectedRow || loadRunLoading}
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loadRunLoading ? <RefreshCw size={11} className="animate-spin" /> : <FolderOpen size={11} />}
                 Load Selected Run
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit Run modal ────────────────────── */}
+      {editRunModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-background border border-border rounded-xl p-6 max-w-2xl w-full mx-4 shadow-xl flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-foreground">{editSelectedRun ? "Edit Run" : "Select a Run to Edit"}</h3>
+              <button onClick={closeEditRunModal} className="text-muted-foreground hover:text-foreground transition-colors">
+                <X size={14} />
+              </button>
+            </div>
+
+            {editRunLoading && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground py-4 justify-center">
+                <RefreshCw size={13} className="animate-spin" /> Loading runs…
+              </div>
+            )}
+
+            {editRunError && (
+              <div className="rounded-lg border bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-800 px-3 py-2 space-y-1 text-xs">
+                <p className="font-semibold text-destructive mb-1">Load Error:</p>
+                <div className="flex items-start gap-2">
+                  <AlertCircle size={12} className="shrink-0 mt-0.5 text-destructive" />
+                  <span className="text-destructive">{editRunError}</span>
+                </div>
+              </div>
+            )}
+
+            {!editRunLoading && !editRunError && !editSelectedRun && (
+              availableRuns.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-4">There are no runs found in storage.</p>
+              ) : (() => {
+                const q = editRunSearch.trim().toLowerCase();
+                const filtered = (q
+                  ? availableRuns.filter(r =>
+                      [r.run_name, r.experiment_type, r.assembly_status, r.run_date]
+                        .some(v => (v ?? "").toLowerCase().includes(q))
+                    )
+                  : availableRuns
+                ).sort((a, b) => editRunSortDir === "asc"
+                  ? (a.run_name ?? "").localeCompare(b.run_name ?? "")
+                  : (b.run_name ?? "").localeCompare(a.run_name ?? ""));
+                return (
+                  <>
+                    <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <FileSearch size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                      <input
+                        value={editRunSearch}
+                        onChange={(e) => setEditRunSearch(e.target.value)}
+                        placeholder="Search runs…"
+                        className="w-full h-8 pl-8 pr-3 rounded-lg border border-border bg-background text-xs font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      title={`Sort ${editRunSortDir === "asc" ? "Z→A" : "A→Z"}`}
+                      onClick={() => setEditRunSortDir(d => d === "asc" ? "desc" : "asc")}
+                      className="h-8 w-8 shrink-0 flex items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-primary hover:border-primary transition-colors"
+                    >
+                      {editRunSortDir === "asc" ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
+                    </button>
+                    </div>
+                    {filtered.length === 0 ? (
+                      <p className="text-xs text-muted-foreground text-center py-3">No runs match your search.</p>
+                    ) : (
+                      <div className={cn("rounded-xl border border-border divide-y divide-border", availableRuns.length > 10 && "max-h-96 overflow-y-auto")}>
+                        {filtered.map(run => {
+                          const locked = run.assembly_status === "PROCESSING";
+                          return (
+                            <div key={run.assembly_id} className="flex items-center justify-between gap-3 px-4 py-3 text-xs hover:bg-muted/40 transition-colors">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Name:</span>
+                                  <span className="font-semibold text-foreground font-mono truncate">{run.run_name}</span>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Type:</span>
+                                  <span className="font-mono text-foreground">{run.experiment_type}</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <span className={cn(
+                                  "px-2 py-0.5 rounded-full text-xs font-medium",
+                                  run.assembly_status === "SUBMITTED"  ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400" :
+                                  run.assembly_status === "PROCESSING" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" :
+                                  run.assembly_status === "COMPLETED"  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" :
+                                  "bg-muted text-muted-foreground"
+                                )}>{run.assembly_status}</span>
+                                <button
+                                  title="Rename"
+                                  onClick={() => selectRunForEdit(run, "rename")}
+                                  disabled={locked}
+                                  className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                  <Pencil size={13} />
+                                </button>
+                                <button
+                                  title="Duplicate"
+                                  onClick={() => selectRunForEdit(run, "copy")}
+                                  disabled={locked}
+                                  className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                  <Copy size={13} />
+                                </button>
+                                <button
+                                  title="Delete"
+                                  onClick={() => selectRunForEdit(run, "delete")}
+                                  disabled={locked}
+                                  className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
+                );
+              })()
+            )}
+
+            {editSelectedRun && (
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/20 border border-border text-xs flex-wrap">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Name:</span>
+                  <span className="font-mono font-semibold text-foreground truncate">{editSelectedRun.run_name}</span>
+                  <span className="w-px h-4 bg-border shrink-0 mx-1" />
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Type:</span>
+                  <span className="font-mono text-foreground">{editSelectedRun.experiment_type}</span>
+                </div>
+
+                {editSelectedRun.assembly_status === "PROCESSING" && (
+                  <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 dark:bg-red-950/30 rounded-lg px-3 py-2">
+                    <AlertCircle size={13} /> This run has a pipeline in progress. Cancel or wait for it to finish before editing.
+                  </div>
+                )}
+
+                {editActionError && (
+                  <div className="rounded-lg border bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-800 px-3 py-2 space-y-1 text-xs">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle size={12} className="shrink-0 mt-0.5 text-destructive" />
+                      <span className="text-destructive">{editActionError}</span>
+                    </div>
+                  </div>
+                )}
+
+                {(editMode === "rename" || editMode === "copy") && (
+                  <div className="flex flex-col gap-2">
+                    <FieldLabel>{editMode === "rename" ? "New Run Name" : "Name for the Copy"}</FieldLabel>
+                    <input
+                      value={editNewName}
+                      onChange={(e) => setEditNewName(e.target.value.replace(/\s+/g, "_"))}
+                      placeholder="e.g. Flu_Illumina_2024-01-01"
+                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <div className="flex gap-2 justify-end pt-1">
+                      <button
+                        onClick={() => { setEditSelectedRun(null); setEditMode(null); setEditActionError(null); }}
+                        className="px-4 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-muted/60 transition-colors"
+                      >
+                        Back
+                      </button>
+                      <button
+                        onClick={editMode === "rename" ? handleRenameRun : handleCopyRun}
+                        disabled={editActionLoading}
+                        className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {editActionLoading ? <RefreshCw size={11} className="animate-spin" /> : (editMode === "rename" ? <Pencil size={11} /> : <Copy size={11} />)}
+                        {editMode === "rename" ? "Rename" : "Duplicate"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {editMode === "delete" && (
+                  <div className="flex flex-col gap-3">
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Are you sure you want to delete <span className="font-mono font-semibold text-foreground">{editSelectedRun.run_name}</span> from the data storage?
+                    </p>
+                    <div className="flex gap-2 justify-end pt-1">
+                      <button
+                        onClick={() => { setEditSelectedRun(null); setEditMode(null); setEditActionError(null); }}
+                        className="px-4 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-muted/60 transition-colors"
+                      >
+                        Back
+                      </button>
+                      <button
+                        onClick={handleDeleteRun}
+                        disabled={editActionLoading}
+                        className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-destructive text-destructive-foreground text-xs font-semibold hover:bg-destructive/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {editActionLoading ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -2967,7 +3372,7 @@ function AssemblyTab() {
                 from the sample sheet?
                 {!isNewRun && (
                   <>
-                    {" This will permanently remove the sample from storage. To deselect a sample, just toggle the "}
+                    {" This will permanently remove the sample from the database storage. To deselect a sample, just toggle the "}
                     <span className="font-mono font-semibold text-foreground">'Keep'</span> status to switch its status to <span className="font-mono font-semibold text-foreground">'exclude'</span>.
                   </>
                 )}
@@ -3496,7 +3901,7 @@ export default function App() {
           <div className="flex flex-col leading-tight">
             <div className="flex items-baseline gap-2">
               <span className="text-2xl tracking-widest text-white" style={{ fontFamily: "'Cinzel', serif", fontWeight: 700 }}>MIRA</span>
-              <span className="text-xs text-white/50 font-mono">{versionInfo?.current_version ?? "..."}</span>
+              <span className="text-xs text-white/50 font-mono">{versionInfo?.current_mira_version ?? "..."}</span>
             </div>
             <span className="text-xs text-white/80 hidden sm:inline tracking-wider normalcase">
               Influenza, SARS-CoV-2, and RSV Genome Assembly &amp; Curation
@@ -3523,16 +3928,53 @@ export default function App() {
               Notifications
             </div>
             {versionInfo?.status === "out-of-date" ? (
-              <div className="px-4 py-3 text-sm text-foreground">
-                <p className="mb-1">A new version of MIRA-NF is available.</p>
-                <a
-                  href="https://cdcgov.github.io/MIRA/articles/upgrading-mira.html"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-primary hover:underline"
-                >
-                  Click here to see how to upgrade MIRA to the latest version
-                </a>
+              <div className="divide-y divide-border">
+                {versionInfo?.mira_status === "out-of-date" && (
+                  <div className="px-4 py-3 text-sm text-foreground">
+                    <p className="mb-1 flex items-center gap-1.5">
+                      <AlertCircle size={13} className="text-amber-500 shrink-0" />
+                      A new version of MIRA is available
+                    </p>
+                    <div className="flex items-center gap-1.5 mb-1.5 text-xs">
+                      <span className="text-muted-foreground">Current:</span>
+                      <span className="font-mono font-semibold text-foreground">{versionInfo.current_mira_version}</span>
+                      <ArrowRight size={11} className="text-muted-foreground shrink-0" />
+                      <span className="text-muted-foreground">Available:</span>
+                      <span className="font-mono font-semibold text-primary">{versionInfo.available_mira_version}</span>
+                    </div>
+                    <a
+                      href="https://github.com/CDCgov/MIRA/releases"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline"
+                    >
+                      Click here to see how to upgrade MIRA to the latest version
+                    </a>
+                  </div>
+                )}
+                {versionInfo?.mira_nf_status === "out-of-date" && (
+                  <div className="px-4 py-3 text-sm text-foreground">
+                    <p className="mb-1 flex items-center gap-1.5">
+                      <AlertCircle size={13} className="text-amber-500 shrink-0" />
+                      A new version of MIRA-NF is available
+                    </p>
+                    <div className="flex items-center gap-1.5 mb-1.5 text-xs">
+                      <span className="text-muted-foreground">Current:</span>
+                      <span className="font-mono font-semibold text-foreground">{versionInfo.current_mira_nf_version}</span>
+                      <ArrowRight size={11} className="text-muted-foreground shrink-0" />
+                      <span className="text-muted-foreground">Available:</span>
+                      <span className="font-mono font-semibold text-primary">{versionInfo.available_mira_nf_version}</span>
+                    </div>
+                    <a
+                      href="https://cdcgov.github.io/MIRA/articles/upgrading-mira.html"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline"
+                    >
+                      Click here to see how to upgrade MIRA-NF to the latest version
+                    </a>
+                  </div>
+                )}
               </div>
             ) : (
               <DropdownItem>There are no new notifications</DropdownItem>

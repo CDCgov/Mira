@@ -202,9 +202,9 @@ def update_tbl_in_database(
         raise ValueError("The length of 'filter_coln_var' must equal to the length of 'filter_coln_val'.")
     elif any([var not in filter_coln_val.keys() for var in filter_coln_var]):
         raise ValueError("'filter_coln_val' must a dictionary with names or labels that match the values of 'filter_coln_var'.")
-    elif len(filter_coln_var) > 1 and len(filter_var_by) < len(filter_coln_var):
-        raise ValueError("The length of 'filter_var_by' must equal to the length of 'filter_coln_var'.")
-    elif len(filter_coln_var) > 1 and any([val.upper() not in ["OR", "AND"] for val in filter_var_by]):
+    elif len(filter_coln_var) > 2 and len(filter_var_by) >= (len(filter_coln_var) - 1):
+        raise ValueError("The length of 'filter_var_by' must be one less than the length of 'filter_coln_var'.")
+    elif len(filter_coln_var) > 2 and any([val.upper() not in ["OR", "AND"] for val in filter_var_by]):
         raise ValueError("'filter_var_by' must contain a list of AND/OR logical operators.")
     else:
         # Create a place hodler to store the where clause to look up values
@@ -279,9 +279,9 @@ def delete_val_in_database(
         raise ValueError("The length of 'delete_coln_var' must equal to the length of 'delete_coln_val'.")
     elif any([var not in delete_coln_val.keys() for var in delete_coln_var]):
         raise ValueError("'delete_coln_val' must a dictionary with names or labels that match the values of 'delete_coln_var'.")
-    elif len(delete_coln_var) > 1 and len(delete_var_by) < len(delete_coln_var):
+    elif len(delete_coln_var) > 2 and len(delete_var_by) >= (len(delete_coln_var) - 1):
         raise ValueError("The length of 'delete_var_by' must equal to the length of 'delete_coln_var'.")
-    elif len(delete_coln_var) > 1 and any([val.upper() not in ["OR", "AND"] for val in delete_var_by]):
+    elif len(delete_coln_var) > 2 and any([val.upper() not in ["OR", "AND"] for val in delete_var_by]):
         raise ValueError("'delete_var_by' must contain a list of AND/OR logical operators.")
     else:        
         # Create a place hodler to store the where clause to look up values

@@ -30,12 +30,15 @@ from .schema import (
     AssemblyRequest,
     DownloadFastaRequest,
     DeleteSampleRequest,
+    RenameRunRequest,
+    CopyRunRequest,
 )
 
 # Import schema validation
 from .schema_validator import (
     _DEFAULT_MIRA_STORAGE_PATH,
     _MIRA_NF_VERSION_URL,
+    _MIRA_VERSION_URL,
     _HOST_MIRA_NF_IMAGE,
     validate_tbl,
     experiment_types,
@@ -49,6 +52,9 @@ from .mira_handler import (
     create_mira_run,
     retrieve_run,
     delete_sample_from_run,
+    rename_mira_run,
+    delete_mira_run,
+    copy_mira_run,
     run_mira_docker,
     create_mira_dag,
     check_mira_status,
@@ -129,8 +135,8 @@ def upload_fastq_files_to_storage(
     db_assembly_tbl = lookup_tbl_in_database(
         db_tbl_name = ["assembly"],
         return_var = ["*"],
-        filter_coln_var = ["run_name"],
-        filter_coln_val = {"run_name": [run_name]},
+        filter_coln_var = ["run_name", "experiment_type"],
+        filter_coln_val = {"run_name": [run_name], "experiment_type": [experiment_type]},
         filter_var_by = ["AND"]
     )
 
@@ -156,7 +162,7 @@ def upload_fastq_files_to_storage(
         )
 
     # Filter fastq_files to only include files that exist and have the correct extension
-    fastq_files = [f for f in fastq_files if (f.filename or "").lower().endswith(".fastq.gz")]
+    fastq_files = [f for f in fastq_files if re.search(r"\.(fastq|fq)(\.gz)?$", (f.filename or "").lower())]
 
     # Create a placeholder list to store the paths of successfully saved files
     saved: List[str] = []
@@ -191,14 +197,14 @@ def upload_fastq_files_to_storage(
         "count": len(saved)
     }
 
+# ---------- Helper: parse a dotted version string into a comparable tuple of ints ----------
+def _version_tuple(version: str) -> tuple:
+    return tuple(int(part) for part in re.findall(r"\d+", version))
+
 # ---------- Health Check ----------
 @app.get("/health", tags=["Health"], summary="Health check", response_model=Dict[str, bool])
 def health():
     return {"ok": True}
-
-# ---------- Helper: parse a dotted version string into a comparable tuple of ints ----------
-def _version_tuple(version: str) -> tuple:
-    return tuple(int(part) for part in re.findall(r"\d+", version))
 
 ##############################################
 # 
@@ -208,28 +214,60 @@ def _version_tuple(version: str) -> tuple:
 
 # --------- Get MIRA version ----------
 @app.get("/version", response_model=Dict[str, str], summary="Get MIRA version", tags=["MIRA"])
-async def update_mira_version():
+async def check_mira_version():
     # Get current version from Docker image tag without the v
-    current_version = re.findall(r"[^:]+$", _HOST_MIRA_NF_IMAGE)[0].lstrip("v")
+    current_mira_nf_version = re.findall(r"[^:]+$", _HOST_MIRA_NF_IMAGE)[0].lstrip("v")
     # Get available version on Github
-    github_version = requests.get(_MIRA_NF_VERSION_URL)
-    if github_version.status_code == 200:
-        version_match = re.search(r"Version:\s*(\S+)", github_version.text)
-        available_version = version_match.group(1) if version_match else "0.0.0"
+    github_mira_nf_version = requests.get(_MIRA_NF_VERSION_URL)
+    if github_mira_nf_version.status_code == 200:
+        version_match = re.search(r"Version:\s*(\S+)", github_mira_nf_version.text)
+        available_mira_nf_version = version_match.group(1) if version_match else "0.0.0"
         # Check if current version is lesser than available version online
-        if _version_tuple(current_version) < _version_tuple(available_version):
-            status = "out-of-date"
+        if _version_tuple(current_mira_nf_version) < _version_tuple(available_mira_nf_version):
+            mira_nf_status = "out-of-date"
         else:
-            status = "up-to-date"
+            mira_nf_status = "out-of-date"
     else:
-        available_version = "unknown"
-        status = "unknown"
-    # Return the current version, available version, and status
-    return {
-        "current_version": f"v{current_version}",
-        "available_version": f"v{available_version}",
+        available_mira_nf_version = "unknown"
+        mira_nf_status = "unknown"
+
+    # Read in the DESCRIPTION file from the MIRA repo to get the current version of MIRA
+    # (kept inside backend/ so it is included in the Docker build context / dev bind mount)
+    current_mira_version_file = f"{os.path.dirname(os.path.realpath(__file__))}/../DESCRIPTION"
+    current_mira_version = "unknown"
+    with open(current_mira_version_file, "r") as f:
+        current_mira_version = re.search(r"Version:\s*(\S+)", f.read()).group(1)
+    # Get available version on Github
+    github_mira_version = requests.get(_MIRA_VERSION_URL)
+    if github_mira_version.status_code == 200:
+        version_match = re.search(r"Version:\s*(\S+)", github_mira_version.text)
+        available_mira_version = version_match.group(1) if version_match else "0.0.0"
+        # Check if current version is lesser than available version online
+        if current_mira_version != "unknown" and _version_tuple(current_mira_version) < _version_tuple(available_mira_version):
+            mira_status = "out-of-date"
+        else:
+            mira_status = "up-to-date"
+    else:
+        available_mira_version = "unknown"
+        mira_status = "unknown"
+
+    # Overall status is out-of-date if either MIRA or MIRA-NF is out-of-date
+    status = "out-of-date" if "out-of-date" in (mira_status, mira_nf_status) else (
+        "unknown" if "unknown" in (mira_status, mira_nf_status) else "up-to-date"
+    )
+
+    # Return the current version, available version, and status for MIRA and MIRA-NF
+    check_result = {
+        "current_mira_nf_version": f"v{current_mira_nf_version}",
+        "available_mira_nf_version": f"v{available_mira_nf_version}",
+        "mira_nf_status": mira_nf_status,
+        "current_mira_version": f"v{current_mira_version}",
+        "available_mira_version": f"v{available_mira_version}",
+        "mira_status": mira_status,
         "status": status
     }
+    print(check_result)
+    return check_result
 
 # ---------- List all runs ----------
 @app.get("/list/runs", response_model=RunResponse, summary="List all assembly runs", tags=["MIRA"])
@@ -340,13 +378,72 @@ async def delete_sample(req: DeleteSampleRequest):
     except ValueError as err:
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))    
+        raise HTTPException(status_code=500, detail=str(err))
+
+# ---------- Rename an existing MIRA run ----------
+@app.patch("/rename/run", response_model=Dict[str, Any], summary="Rename a run (updates DB record and on-disk run directory)", tags=["MIRA"])
+async def rename_run(req: RenameRunRequest):
+    """
+    Rename an existing MIRA run. Updates the run_name in the database and renames
+    the on-disk run directory (uploaded FASTQs + outputs) to match.
+    """
+    try:
+        result = await asyncio.to_thread(
+            rename_mira_run,
+            run_name = req.run_name,
+            experiment_type = req.experiment_type,
+            new_run_name = req.new_run_name,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+# ---------- Delete an existing MIRA run ----------
+@app.delete("/delete/run", response_model=Dict[str, Any], summary="Delete a run's database record (files on disk are kept)", tags=["MIRA"])
+async def delete_run(req: RunRequest):
+    """
+    Remove a run's assembly record (and its samplesheet rows) from the database.
+    Files already on disk (uploaded FASTQs, pipeline outputs) are left untouched.
+    """
+    try:
+        result = await asyncio.to_thread(
+            delete_mira_run,
+            run_name = req.run_name,
+            experiment_type = req.experiment_type,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+# ---------- Copy an existing MIRA run ----------
+@app.post("/copy/run", response_model=Dict[str, Any], summary="Copy a run to a new name (duplicates DB record, samplesheet, FASTQs and outputs)", tags=["MIRA"])
+async def copy_run(req: CopyRunRequest):
+    """
+    Duplicate an existing MIRA run — including its database record, samplesheet,
+    and on-disk FASTQ/output files — under a new run name.
+    """
+    try:
+        result = await asyncio.to_thread(
+            copy_mira_run,
+            run_name = req.run_name,
+            experiment_type = req.experiment_type,
+            new_run_name = req.new_run_name,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
 
 # ---------- Create a MIRA run (with file uploads) ----------
 @app.post(
     "/create/run/upload",
     response_model=Dict[str, Any],
-    summary="Create a MIRA run (with File Uploads, Accepted Formats: JSON/CSV/Excel for samplesheet; .fastq.gz for raw reads)",
+    summary="Create a MIRA run (with File Uploads, Accepted Formats: JSON/CSV/Excel for samplesheet; .fastq/.fastq.gz/.fq/.fq.gz for raw reads)",
     tags=["MIRA"],
     openapi_extra={
         "requestBody": {
@@ -363,7 +460,7 @@ async def delete_sample(req: DeleteSampleRequest):
                             "fastq_files": {
                                 "type": "array",
                                 "items": {"type": "string", "format": "binary", "title": "another file"},
-                                "description": "One or more .fastq.gz files — Select `Add string item` to add another import field for additional files.",
+                                "description": "One or more .fastq/.fastq.gz/.fq/.fq.gz files — Select `Add string item` to add another import field for additional files.",
                             },
                         },
                     }
@@ -377,11 +474,11 @@ async def create_run_upload(
     experiment_type: str = Form("Flu-ONT", description="Type of sequencing experiments."),
     assembly_file: UploadFile = File(..., description="Assembly file (JSON)."),
     samplesheet_file: UploadFile = File(..., description="Samplesheet file (Excel or CSV)."),
-    fastq_files: List[UploadFile] = File(default=[], description="One or more .fastq.gz files to upload.")
+    fastq_files: List[UploadFile] = File(default=[], description="One or more .fastq/.fastq.gz/.fq/.fq.gz files to upload.")
 ):
     """
     Submit a MIRA assembly run via **file uploads**.
-    Accepted formats: JSON / CSV / Excel for assembly and samplesheet; .fastq.gz for reads.
+    Accepted formats: JSON / CSV / Excel for assembly and samplesheet; .fastq/.fastq.gz/.fq/.fq.gz for reads.
     """
     try:
         # ── Assembly ───────────────────────────────────────────────
@@ -488,7 +585,7 @@ async def create_run(req: AssemblyRequest):
                             "fastq_files": {
                                 "type": "array",
                                 "items": {"type": "string", "format": "binary", "title": "another file"},
-                                "description": "One or more .fastq.gz files — Select `Add string item` to add another import field for additional files.",
+                                "description": "One or more .fastq/.fastq.gz/.fq/.fq.gz files — Select `Add string item` to add another import field for additional files.",
                             },
                         },
                     }
@@ -500,7 +597,7 @@ async def create_run(req: AssemblyRequest):
 async def upload_fastqs(
     run_name:        str                    = Form(..., description="Name of the sequencing run."),
     experiment_type: str                    = Form(..., description="Type of sequencing experiments."),
-    fastq_files:     List[UploadFile]       = File(default=[], description="One or more .fastq.gz files to upload."),
+    fastq_files:     List[UploadFile]       = File(default=[], description="One or more .fastq/.fastq.gz/.fq/.fq.gz files to upload."),
 ):
     """
     Upload FASTQ files to a specific sequencing run.

@@ -112,6 +112,14 @@ class DeleteSampleRequest(RunRequest):
     fastq_1: Optional[str] = Field(None, description="R1 FASTQ filename identifying the row to remove (required for Illumina experiments).")
     fastq_2: Optional[str] = Field(None, description="R2 FASTQ filename identifying the row to remove (required for Illumina experiments).")
 
+# ------  RENAME RUN REQUEST (REQUIRED: RUN NAME, EXPERIMENT TYPE, NEW RUN NAME) ----------
+class RenameRunRequest(RunRequest):
+    new_run_name: str = Field(..., description="New name for the sequencing run.")
+
+# ------  COPY RUN REQUEST (REQUIRED: RUN NAME, EXPERIMENT TYPE, NEW RUN NAME) ----------
+class CopyRunRequest(RunRequest):
+    new_run_name: str = Field(..., description="Name for the duplicated sequencing run.")
+
 # ------ ASSEMBLY REQUEST (REQUIRED: ASSEMBLY INFO, SAMPLESHEET) ----------
 class AssemblyRequest(AssemblyInfo):
     samplesheet: List[OntSamplesheet] | List[IlluminaSamplesheet] = Field(..., description="Samplesheet for the sequencing run.")

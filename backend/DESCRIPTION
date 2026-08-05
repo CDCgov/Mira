@@ -1,0 +1,26 @@
+Package: MIRA
+Type: Package
+Title: Portable, Interactive Application for High-Quality Influenza, SARS-CoV-2, & RSV Genome Assembly, Annotation, and Curation
+Version: 1.0.0
+Date: 2024-09-23
+Authors@R: 
+  c(person(given="Kristine", family="Lacek", role=c("cre", "aut"), 
+           email="qgx6@cdc.gov", comment=c(ORCID="0000-0002-6247-5082")),
+    person(given="Reina", family="Chau", role=c("aut"), 
+           email="snu3@cdc.gov", comment=c(ORCID="0000-0003-3012-1404")),
+    person(given="Amanda", family="Sullivan", role=c("aut"), 
+           email="xpa3@cdc.gov", comment=c(ORCID="0000-0003-2007-4210")),
+    person(given="Ben", family="Rambo-Martin", role=c("led", "aut"), 
+           email="nbx0@cdc.gov", comment=c(ORCID="0000-0002-8591-3954"))
+  )
+Description: MIRA is an interactive dashboard created using Dash, a python framework 
+  written on the top of Flask, Plotly.js and React.js. The Dash dashboard 
+  allows users to interactively create a metadata and config file for Influenza
+  , SARS-COV-2 and RSV Assembly. Subsequently, it generates files necessary 
+  to upload via FTP to NCBI’s databases Genbank, BioSample, and SRA, as well as, GISAID.
+RoxygenNote: 7.2.3
+License: GPL-3 + file LICENSE
+URL: https://github.com/CDCgov/MIRA
+Encoding: UTF-8
+VignetteBuilder: knitr
+BugReports: https://github.com/CDCgov/MIRA/issues

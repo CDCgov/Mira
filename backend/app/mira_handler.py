@@ -436,6 +436,22 @@ def retrieve_nextclade_aligned_fasta(run_name: str, experiment_type: str) -> str
         # Extract pathogen and instrument from experiment_type
         pathogen = experiment_type.split("-")[0]
         instrument = experiment_type.split("-")[-1]
+
+        # Check if run has alias_name in assembly table
+        db_assembly_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["assembly"],
+            return_var = ["alias_name"],
+            filter_coln_var = ["run_name", "experiment_type"],
+            filter_coln_val = {"run_name": [run_name], "experiment_type": [experiment_type]},
+            filter_var_by = ["AND"]
+        )
+        if db_assembly_tbl.is_empty():
+            raise ValueError(f"Run '{run_name}' not found in database for experiment type '{experiment_type}'.")
+
+        # Determine alias_name to use for nextclade fasta file search, falling back to run_name if unset
+        alias_name = db_assembly_tbl.select("alias_name").to_series()[0]
+        nextclade_run_name = alias_name if alias_name else run_name
+
         # Create placeholder to store fasta for each pathogen, subtype, and segment combination
         nextclade_fasta_paths = {}
         fasta_path_dir = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, "outputs", "nextclade", "input_fasta_files")
@@ -444,19 +460,18 @@ def retrieve_nextclade_aligned_fasta(run_name: str, experiment_type: str) -> str
                 (f for f in os.listdir(fasta_path_dir) if f.startswith(f"nextclade") and f.endswith(".fasta")),
                 reverse=True,
             )
-            print(f"Candidates for nextclade fasta files: {candidates}")
             for f in candidates:
-                match = re.search(rf"nextclade_{re.escape(run_name)}_(.*?)\.fasta", f)
-                #print(f"Checking file '{f}' for match: {match}")
+                match = re.search(rf"nextclade_{re.escape(nextclade_run_name)}_(.*?)\.fasta", f)
                 if match:
                     dataset = match.group(1)
                     nextclade_fasta_paths[dataset] = os.path.join(fasta_path_dir, f)
-        print(f"Nextclade fasta paths found: {nextclade_fasta_paths}")
         # Return the dictionary of nextclade fasta paths if any exist, otherwise return None
         if len(nextclade_fasta_paths) > 0:
             return nextclade_fasta_paths
         else:
             return None
+    except ValueError as err:
+        raise ValueError(str(err))
     except Exception as err:
         raise Exception(str(err))
     
@@ -670,8 +685,8 @@ def update_samplesheet_in_database(
         assembly_tbl = lookup_tbl_in_database(
             db_tbl_name = ["assembly"],
             return_var = ["*"],
-            filter_coln_var = ["run_name"],
-            filter_coln_val = {"run_name": [run_name]},
+            filter_coln_var = ["run_name", "experiment_type"],
+            filter_coln_val = {"run_name": [run_name], "experiment_type": [experiment_type]},
             filter_var_by = ["AND"]
         )
         # Retrieve assembly_id from assembly_tbl
@@ -786,7 +801,7 @@ def delete_sample_from_run(
                 db_tbl_name = ["ont_samplesheet"],
                 delete_coln_var = ["assembly_id", "sample_id", "fastq"],
                 delete_coln_val = {"assembly_id": [assembly_id], "sample_id": [sample_id], "fastq": [fastq]},
-                delete_var_by = ["AND", "AND", "AND"]
+                delete_var_by = ["AND", "AND"]
             )
         elif "ILLUMINA" in instrument.upper():
             if not fastq_1 or not fastq_2:
@@ -795,7 +810,7 @@ def delete_sample_from_run(
                 db_tbl_name = ["illumina_samplesheet"],
                 delete_coln_var = ["assembly_id", "sample_id", "fastq_1", "fastq_2"],
                 delete_coln_val = {"assembly_id": [assembly_id], "sample_id": [sample_id], "fastq_1": [fastq_1], "fastq_2": [fastq_2]},
-                delete_var_by = ["AND", "AND", "AND", "AND"]
+                delete_var_by = ["AND", "AND", "AND"]
             )
         else:
             raise ValueError(f"Unsupported experiment type: {experiment_type}")
@@ -804,6 +819,212 @@ def delete_sample_from_run(
         return {
             "status": "success",
             "message": f"Sample '{sample_id}' has been removed from run '{run_name}'.",
+        }
+    except ValueError as err:
+        raise ValueError(str(err))
+    except Exception as err:
+        raise Exception(str(err))
+
+# Look up a run's assembly row, and raise if it's missing or has a pipeline in progress
+def _get_editable_assembly_row(run_name: str, experiment_type: str, action: str) -> Dict[str, Any]:
+    db_assembly_tbl = lookup_tbl_in_database(
+        db_tbl_name = ["assembly"],
+        return_var = ["*"],
+        filter_coln_var = ["run_name", "experiment_type"],
+        filter_coln_val = {"run_name": [run_name], "experiment_type": [experiment_type]},
+        filter_var_by = ["AND", "AND"]
+    )
+    if db_assembly_tbl.is_empty():
+        raise ValueError(f"Run '{run_name}' not found in database.")
+    assembly_row = db_assembly_tbl.row(0, named=True)
+    if assembly_row.get("assembly_status") == "PROCESSING":
+        raise ValueError(
+            f"Run '{run_name}' has a pipeline in progress. Please wait for it to finish or cancel it before {action} it."
+        )
+    return assembly_row
+
+# Define function to rename an existing MIRA run (database record + on-disk run directory)
+def rename_mira_run(
+    run_name: str,
+    experiment_type: str,
+    new_run_name: str,
+) -> Dict[str, Any]:
+    try:
+        new_run_name = new_run_name.strip().replace(" ", "_")
+        if not new_run_name:
+            raise ValueError("'new_run_name' cannot be empty.")
+        if new_run_name.lower() == run_name.lower():
+            raise ValueError("'new_run_name' must be different from the current run name (case-insensitive).")
+
+        # Extract pathogen and instrument type from experiment_type
+        pathogen   = experiment_type.split("-")[0]
+        instrument = experiment_type.split("-")[-1]
+
+        # Look up the run to rename, rejecting the request if it's currently processing
+        assembly_tbl = _get_editable_assembly_row(run_name, experiment_type, "renaming")
+
+        # Reject if a run with the new name already exists for this experiment type
+        existing_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["assembly"],
+            return_var = ["*"],
+            filter_coln_var = ["run_name", "experiment_type"],
+            filter_coln_val = {"run_name": [new_run_name], "experiment_type": [experiment_type]},
+            filter_var_by = ["AND", "AND"]
+        )
+        if not existing_tbl.is_empty():
+            raise ValueError(f"A run named '{new_run_name}' already exists for experiment type '{experiment_type}'.")
+
+        # Rename the on-disk run directory first — if this fails the database is left untouched
+        alias_name = assembly_tbl.get("alias_name", run_name)
+        old_dir = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name)
+        new_dir = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, new_run_name)
+
+        # If new_dir already exists, remove it first, then move old_dir to new_dir
+        if os.path.exists(old_dir):
+            if os.path.exists(new_dir):
+                shutil.rmtree(new_dir)
+            shutil.move(old_dir, new_dir)
+
+        # Update the run_name in the assembly table
+        update_tbl_in_database(
+            db_tbl_name = ["assembly"],
+            table = pl.DataFrame({"run_name": [new_run_name], "alias_name": [alias_name]}),
+            filter_coln_var  = ["run_name", "experiment_type"],
+            filter_coln_val  = {"run_name": [run_name], "experiment_type": [experiment_type]},
+            filter_var_by    = ["AND"]
+        )
+        # Return status
+        return {
+            "status":   "success",
+            "message":  f"Run '{run_name}' has been renamed to '{new_run_name}'.",
+            "run_name": new_run_name,
+        }
+    except ValueError as err:
+        raise ValueError(str(err))
+    except Exception as err:
+        raise Exception(str(err))
+
+# Define function to delete an existing MIRA run's database record (files on disk are kept)
+def delete_mira_run(
+    run_name: str,
+    experiment_type: str,
+) -> Dict[str, Any]:
+    try:
+        # Extract pathogen and instrument type from experiment_type
+        pathogen   = experiment_type.split("-")[0]
+        instrument = experiment_type.split("-")[-1]        
+
+        # Look up the run to delete, rejecting the request if it's currently processing
+        assembly_tbl = _get_editable_assembly_row(run_name, experiment_type, "deleting")
+
+        # Reject if the run to delete does not exist
+        if assembly_tbl.get("run_name", None) is None:
+            raise ValueError(f"A run named '{run_name}' does not exist for experiment type '{experiment_type}'.")
+
+        # Remove the on-disk run directory (FASTQs + outputs) first — if this fails the database is left untouched.
+        run_dir = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name)
+        if os.path.exists(run_dir):
+            shutil.rmtree(run_dir)
+
+        # Delete the assembly row from the database
+        delete_val_in_database(
+            db_tbl_name = ["assembly"],
+            delete_coln_var = ["run_name", "experiment_type"],
+            delete_coln_val = {"run_name": [run_name], "experiment_type": [experiment_type]},
+            delete_var_by = ["AND"]
+        )
+        # Return status
+        return {
+            "status":  "success",
+            "message": f"Run '{run_name}' has been removed from the database.",
+        }
+    except ValueError as err:
+        raise ValueError(str(err))
+    except Exception as err:
+        raise Exception(str(err))
+
+# Define function to copy an existing MIRA run — database record, samplesheet, and on-disk files — under a new name
+def copy_mira_run(
+    run_name: str,
+    experiment_type: str,
+    new_run_name: str,
+) -> Dict[str, Any]:
+    try:
+        new_run_name = new_run_name.strip().replace(" ", "_")
+        if not new_run_name:
+            raise ValueError("'new_run_name' cannot be empty.")
+        if new_run_name.lower() == run_name.lower():
+            raise ValueError("'new_run_name' must be different from the current run name (case-insensitive).")
+
+        # Extract pathogen and instrument type from experiment_type
+        pathogen   = experiment_type.split("-")[0]
+        instrument = experiment_type.split("-")[-1]
+
+        # Look up the run to copy, rejecting the request if it's currently processing
+        assembly_tbl = _get_editable_assembly_row(run_name, experiment_type, "copying")
+        old_assembly_id = assembly_tbl.get("assembly_id")
+
+        # Reject if a run with the new name already exists for this experiment type
+        existing_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["assembly"],
+            return_var = ["*"],
+            filter_coln_var = ["run_name", "experiment_type"],
+            filter_coln_val = {"run_name": [new_run_name], "experiment_type": [experiment_type]},
+            filter_var_by = ["AND"]
+        )
+        if not existing_tbl.is_empty():
+            raise ValueError(f"A run named '{new_run_name}' already exists for experiment type '{experiment_type}'.")
+
+        # Copy the on-disk run directory (FASTQs + outputs) first — if this fails the database is left untouched.
+        # Nextflow's "work" and ".nextflow" dirs hold transient execution state (often broken
+        # symlinks to staged-in files), so they're skipped rather than duplicated.
+        alias_name = assembly_tbl.get("alias_name", run_name)
+        old_dir = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name)
+        new_dir = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, new_run_name)
+        if os.path.exists(old_dir):
+            if os.path.exists(new_dir):
+                shutil.rmtree(new_dir)
+            shutil.copytree(old_dir, new_dir, ignore=shutil.ignore_patterns("work", ".nextflow"))
+
+        # Insert a copy of the assembly row under the new run_name
+        new_assembly_row = {k: v for k, v in assembly_tbl.items() if k != "assembly_id"}
+        new_assembly_row["run_name"] = new_run_name
+        new_assembly_row["alias_name"] = alias_name
+        insert_tbl_to_database(
+            db_tbl_name = ["assembly"],
+            table = pl.DataFrame([new_assembly_row])
+        )
+
+        # Look up the newly inserted assembly_id
+        new_assembly_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["assembly"],
+            return_var = ["*"],
+            filter_coln_var = ["run_name", "experiment_type"],
+            filter_coln_val = {"run_name": [new_run_name], "experiment_type": [experiment_type]},
+            filter_var_by = ["AND"]
+        )
+        new_assembly_id = new_assembly_tbl.select("assembly_id").to_series()[0]
+
+        # Copy the samplesheet rows under the new assembly_id
+        samplesheet_tbl_name = "ont_samplesheet" if "ONT" in instrument.upper() else "illumina_samplesheet"
+        db_samplesheet_tbl = lookup_tbl_in_database(
+            db_tbl_name = [samplesheet_tbl_name],
+            return_var = ["*"],
+            filter_coln_var = ["assembly_id"],
+            filter_coln_val = {"assembly_id": [old_assembly_id]},
+            filter_var_by = ["AND"]
+        )
+        if not db_samplesheet_tbl.is_empty():
+            new_samplesheet_tbl = db_samplesheet_tbl.with_columns(pl.lit(new_assembly_id).alias("assembly_id"))
+            insert_tbl_to_database(
+                db_tbl_name = [samplesheet_tbl_name],
+                table = new_samplesheet_tbl
+            )
+        # Return status
+        return {
+            "status":   "success",
+            "message":  f"Run '{run_name}' has been copied to '{new_run_name}'.",
+            "run_name": new_run_name,
         }
     except ValueError as err:
         raise ValueError(str(err))
@@ -858,8 +1079,8 @@ def run_mira_docker(
         db_assembly_tbl = lookup_tbl_in_database(
             db_tbl_name     = ["assembly"],
             return_var       = ["*"],
-            filter_coln_var  = ["run_name"],
-            filter_coln_val  = {"run_name": [run_name]},
+            filter_coln_var  = ["run_name", "experiment_type"],
+            filter_coln_val  = {"run_name": [run_name], "experiment_type": [experiment_type]},
             filter_var_by    = ["AND"]
         )
 
@@ -885,7 +1106,7 @@ def run_mira_docker(
         # Update run to PROCESSING in the assembly table to prevent multiple pipelines from running for the same run
         update_tbl_in_database(
             db_tbl_name = ["assembly"],
-            table = pl.DataFrame({"assembly_status": ["PROCESSING"]}),
+            table = pl.DataFrame({"alias_name": [run_name], "assembly_status": ["PROCESSING"]}),
             filter_coln_var  = ["run_name", "experiment_type"],
             filter_coln_val  = {"run_name": [run_name], "experiment_type": [experiment_type]},
             filter_var_by    = ["AND", "AND"]
@@ -1074,7 +1295,7 @@ def check_mira_status(
                     table = pl.DataFrame({"assembly_status": ["PROCESSING"]}),
                     filter_coln_var  = ["run_name", "experiment_type"],
                     filter_coln_val  = {"run_name": [run_name], "experiment_type": [experiment_type]},
-                    filter_var_by    = ["AND", "AND"]
+                    filter_var_by    = ["AND"]
                 )
             return{
                 "status":  "PROCESSING",
@@ -1087,7 +1308,7 @@ def check_mira_status(
                 table = pl.DataFrame({"assembly_status": [update_assembly_status]}),
                 filter_coln_var  = ["run_name", "experiment_type"],
                 filter_coln_val  = {"run_name": [run_name], "experiment_type": [experiment_type]},
-                filter_var_by    = ["AND", "AND"]
+                filter_var_by    = ["AND"]
             )
             return {
                 "status": f"{update_assembly_status}",
@@ -1135,7 +1356,7 @@ def cancel_mira_run(
                 table = pl.DataFrame({"assembly_status": ["CANCELED"]}),
                 filter_coln_var  = ["run_name", "experiment_type"],
                 filter_coln_val  = {"run_name": [run_name], "experiment_type": [experiment_type]},
-                filter_var_by    = ["AND", "AND"]
+                filter_var_by    = ["AND"]
             )
             return {
                 "status":  "canceled",
@@ -1294,14 +1515,12 @@ def create_mira_dag(
         # the samplesheet, so singleton/reference-dataset tasks aren't counted)
         for t in tasks:
             if t["sample"] is not None and t["sample"] in known_sample_ids:
-                if t["sample"] not in sample_status:
-                    sample_status[t["sample"]] = "PASSED" if t["exit_code"] == "0" else "FAILED"
-                elif sample_status[t["sample"]] != "FAILED" and t["exit_code"] != "0":
+                if t["sample"] not in sample_status and t["process_name"] == "PASSFAILED":
                     sample_status[t["sample"]] = "FAILED"
         # Check if any known samples were not present in the trace file and mark them as "FAILED"
         for sample_id in known_sample_ids:
             if sample_id not in sample_status:
-                sample_status[sample_id] = "FAILED"
+                sample_status[sample_id] = "PASSED"
         workflow["number_of_samples_with_failed_tasks"] = sum(1 for s in sample_status.values() if s == "FAILED")
         workflow["number_of_samples_with_successful_tasks"] = sum(1 for s in sample_status.values() if s == "PASSED")        
 

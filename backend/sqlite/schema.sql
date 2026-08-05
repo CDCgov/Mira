@@ -95,6 +95,7 @@ DROP TABLE IF EXISTS assembly;
 CREATE TABLE assembly (
   assembly_id         INTEGER PRIMARY KEY AUTOINCREMENT,
   run_name            TEXT NOT NULL,
+  alias_name          TEXT DEFAULT NULL,
   experiment_type     TEXT NOT NULL
                         CHECK (experiment_type IN (
                           'Flu-ONT',
