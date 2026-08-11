@@ -1,7 +1,7 @@
 Package: MIRA
 Type: Package
 Title: Portable, Interactive Application for High-Quality Influenza, SARS-CoV-2, & RSV Genome Assembly, Annotation, and Curation
-Version: 1.0.0
+Version: 1.2.0
 Date: 2024-09-23
 Authors@R: 
   c(person(given="Kristine", family="Lacek", role=c("cre", "aut"), 
