@@ -10,8 +10,6 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  BACKEND_IMAGE_NAME: ${{ github.repository }}-backend
-  FRONTEND_IMAGE_NAME: ${{ github.repository }}-frontend
 
 jobs:
   prepare:
@@ -20,6 +18,7 @@ jobs:
     outputs:
       match: ${{ steps.check_msg.outputs.match }}
       version: ${{ steps.check_msg.outputs.version }}
+      repo_lc: ${{ steps.check_msg.outputs.repo_lc }}
     steps:
       - name: Check commit message and extract version
         id: check_msg
@@ -34,6 +33,7 @@ jobs:
           fi
           VERSION=$(grep -oP 'v[0-9]+\.[0-9]+\.[0-9]+' <<< "$COMMIT_MSG" | head -n1 || true)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "repo_lc=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
   build-backend:
     name: Build and Push Backend Image (amd64/arm64)
@@ -49,7 +49,7 @@ jobs:
       # Emulation needed to cross-build linux/arm64 on this amd64 runner.
       # NOTE: pin this to a specific commit SHA to match the other actions below.
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
 
@@ -68,9 +68,9 @@ jobs:
         run: |
           {
             echo "tags<<EOF"
-            echo "${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE_NAME }}:latest"
+            echo "${{ env.REGISTRY }}/${{ needs.prepare.outputs.repo_lc }}-backend:latest"
             if [ -n "${{ needs.prepare.outputs.version }}" ]; then
-              echo "${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE_NAME }}:${{ needs.prepare.outputs.version }}"
+              echo "${{ env.REGISTRY }}/${{ needs.prepare.outputs.repo_lc }}-backend:${{ needs.prepare.outputs.version }}"
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
@@ -100,7 +100,7 @@ jobs:
       # Emulation needed to cross-build linux/arm64 on this amd64 runner.
       # NOTE: pin this to a specific commit SHA to match the other actions below.
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
 
@@ -119,9 +119,9 @@ jobs:
         run: |
           {
             echo "tags<<EOF"
-            echo "${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE_NAME }}:latest"
+            echo "${{ env.REGISTRY }}/${{ needs.prepare.outputs.repo_lc }}-frontend:latest"
             if [ -n "${{ needs.prepare.outputs.version }}" ]; then
-              echo "${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ needs.prepare.outputs.version }}"
+              echo "${{ env.REGISTRY }}/${{ needs.prepare.outputs.repo_lc }}-frontend:${{ needs.prepare.outputs.version }}"
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
