@@ -1,0 +1,14 @@
+# backend
+backend/.venv
+backend/__pycache__
+backend/data
+*.log
+
+# frontend
+frontend/node_modules
+frontend/dist
+
+# shared
+.git
+.gitignore
+README.md

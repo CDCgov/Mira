@@ -62,6 +62,14 @@ def get_mira_nf_image() -> str:
         raise ValueError("MIRA_NF_IMAGE must be set in config.yml.")
     return mira_nf_image
 
+# Get REACT base URL from config.yml or environment variable
+def get_react_base_url() -> str:
+    config = _read_config_yml()
+    react_base_url = config.get("REACT_BASE_URL", None)
+    if not react_base_url:
+        raise ValueError("REACT_BASE_URL must be set in config.yml.")
+    return react_base_url
+
 # Define data storage path for MIRA and SeqSender, allowing override via environment variable
 _DEFAULT_DATA_STORAGE_PATH = get_data_storage_path()
 _ensure_storage_directory(_DEFAULT_DATA_STORAGE_PATH)
@@ -89,38 +97,39 @@ elif deploy_type == "Local":
     _HOST_MIRA_STORAGE_PATH = _DEFAULT_DATA_STORAGE_PATH
 
 # DEFINE MIRA-NF DOCKER IMAGE FOR THE APP
-_DEFAULT_MIRA_NF_IMAGE = get_mira_nf_image()
-if deploy_type == "Docker":
-    _HOST_MIRA_NF_IMAGE = os.getenv("HOST_MIRA_NF_IMAGE", None)
-    if not _HOST_MIRA_NF_IMAGE:
-        raise ValueError("HOST_MIRA_NF_IMAGE must be set in docker-compose.yml as an environment variable.")
-elif deploy_type == "Local":
-    _HOST_MIRA_NF_IMAGE = _DEFAULT_MIRA_NF_IMAGE
+_HOST_MIRA_NF_IMAGE = get_mira_nf_image()
 
+# Define React base URL for the app
+_REACT_BASE_URL = get_react_base_url()
+
+# print(f"Deploy Type: {deploy_type}")
 # print(f"Using MIRA-NF Docker Image: {_HOST_MIRA_NF_IMAGE}")
-# print(f"Using {deploy_type} Data Storage Path: {_DEFAULT_DATA_STORAGE_PATH}")
-# print(f"Using {deploy_type} MIRA Storage Path: {_DEFAULT_MIRA_STORAGE_PATH}")
-# print(f"Using Host MIRA Storage Path: {_HOST_MIRA_STORAGE_PATH}")
+# print(f"Using Data Storage Path: {_DEFAULT_DATA_STORAGE_PATH}")
+# print(f"Using MIRA Storage Path: {_DEFAULT_MIRA_STORAGE_PATH}")
+# print(f"Using Docker MIRA Storage Path: {_HOST_MIRA_STORAGE_PATH}")
+# print(f"Using React Base URL: {_REACT_BASE_URL}")
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _nullable_str(checks=None, required: bool = True) -> pa.Column:
+def _nullable_str(checks=None, required: bool = True, description: str = None) -> pa.Column:
     """Shorthand: nullable String column."""
-    return pa.Column(pl.String, checks=checks, nullable=True, required=required)
+    return pa.Column(pl.String, checks=checks, nullable=True, required=required, description=description)
 
-def _required_str(checks=None, required: bool = True) -> pa.Column:
+def _required_str(checks=None, required: bool = True, description: str = None) -> pa.Column:
     """Shorthand: non-nullable String column."""
-    return pa.Column(pl.String, checks=checks, nullable=False, required=required)
+    return pa.Column(pl.String, checks=checks, nullable=False, required=required, description=description)
 
-def _enum_col(levels: list, nullable: bool = False, required: bool = True) -> pa.Column:
+def _required_enum_col(levels: list, nullable: bool = False, required: bool = True, checks=None, description: str = None) -> pa.Column:
     """String column restricted to *levels* (mirrors pl.Enum)."""
-    return pa.Column(pl.String, pa.Check.isin(levels), nullable=nullable, required=required)
+    all_checks = [pa.Check.isin(levels), *([checks] if checks is not None else [])]
+    return pa.Column(pl.String, all_checks, nullable=nullable, required=required, description=description)
 
-def _nullable_enum_col(levels: list, required: bool = True) -> pa.Column:
+def _nullable_enum_col(levels: list, required: bool = True, checks=None, description: str = None) -> pa.Column:
     """String column allowing NULL, empty string, or a value from *levels*."""
-    return pa.Column(pl.String, pa.Check.isin([*levels, ""]), nullable=True, required=required)
+    all_checks = [pa.Check.isin([*levels, ""]), *([checks] if checks is not None else [])]
+    return pa.Column(pl.String, all_checks, nullable=True, required=required, description=description)
 
 def validate_tbl(
     df: pl.DataFrame,
@@ -249,28 +258,117 @@ _MIRA_STAGE_MAP = [
 ]
 
 # ---------------------------------------------------------------------------
+# VARIANTS OF INTEREST
+# ---------------------------------------------------------------------------
+
+variants_of_interest = pa.DataFrameSchema(
+    columns={
+        "subtype": _required_str(),
+        "protein": _required_str(),
+        "position": pa.Column(pl.Int64, nullable=False, required=True),
+        "mutation_of_interest": _required_str(),
+        "phenotypic_consensus": _required_str(),
+    },
+    name="variants_of_interest"
+)
+
+# ---------------------------------------------------------------------------
 # ASSEMBLY SCHEMA
 # ---------------------------------------------------------------------------
 assembly_pa_schema = pa.DataFrameSchema(
     columns={
-        "run_name": _required_str(),
-        "experiment_type": _required_str(),
-        "sc2_primer": _nullable_enum_col(sc2_primers, required=False),
-        "rsv_primer": _nullable_enum_col(rsv_primers, required=False),
-        "subsample": pa.Column(pl.Int64, nullable=False, required=True),
-        "parquet_files": pa.Column(pl.Boolean, nullable=False, required=True),
-        "run_nextclade": pa.Column(pl.Boolean, nullable=False, required=True),
-        "irma_module": _nullable_enum_col(irma_modules, required=False),
-        "custom_irma_config": _nullable_str(required=False),
-        "custom_qc_settings": _nullable_str(required=False),
-        "assembly_status": _enum_col(assembly_status, nullable=True, required=False),
+        "run_name": _required_str(description="Name of the sequencing run."),
+        "experiment_type": _required_str(description=f"Type of the experiment. Options: {experiment_types}"),
+        "sc2_primer": _nullable_enum_col(
+            sc2_primers, required=False,
+            checks=pa.Check(
+                lambda data: data.lazyframe.select(
+                    (~pl.col("experiment_type").str.contains("SC2") | pl.col("sc2_primer").is_not_null())
+                    .alias("sc2_primer_required_for_sc2")
+                ),
+                error="sc2_primer is required when experiment_type contains 'SC2'.",
+            ),
+            description=f"Provide a SC2 primer if experiment type is SC2. Options: {sc2_primers}"
+        ),
+        "rsv_primer": _nullable_enum_col(
+            rsv_primers, required=False,
+            checks=pa.Check(
+                lambda data: data.lazyframe.select(
+                    (~pl.col("experiment_type").str.contains("RSV") | pl.col("rsv_primer").is_not_null())
+                    .alias("rsv_primer_required_for_rsv")
+                ),
+                error="rsv_primer is required when experiment_type contains 'RSV'.",
+            ),
+            description=f"Provide a RSV primer if experiment type is RSV. Options: {rsv_primers}"
+        ),
+        "subsample_reads": pa.Column(
+            pl.Int64, nullable=False, required=True,
+            checks=pa.Check.ge(0),
+            description="Number of reads to subsample for MIRA assembly."
+        ),
+        "custom_primers": _nullable_str(
+            required=False,
+            description="Whether to use a custom primer file for assembly. If provided, primer_kmer_len and primer_restrict_window must also be specified."
+        ),
+        "primer_kmer_len": pa.Column(
+            pl.Int64, nullable=True, required=False, 
+            checks=[
+                pa.Check.ge(0),
+                pa.Check(
+                    lambda data: data.lazyframe.select(
+                        (pl.col("primer_kmer_len").is_null() | (pl.col("primer_kmer_len") == 0) | pl.col("custom_primers").is_not_null())
+                        .alias("primer_kmer_len_requires_custom_primers")
+                    ),
+                    error="custom_primers must be provided when primer_kmer_len is specified.",
+                ),
+            ],
+            description="K-mer length for primer trimming. custom_primers must be provided if primer_kmer_len is specified."
+        ),
+        "primer_restrict_window": pa.Column(
+            pl.Int64, nullable=True, required=False, 
+            checks=[
+                pa.Check.ge(0),
+                pa.Check(
+                    lambda data: data.lazyframe.select(
+                        (pl.col("primer_restrict_window").is_null() | (pl.col("primer_restrict_window") == 0) | pl.col("custom_primers").is_not_null())
+                        .alias("primer_restrict_window_requires_custom_primers")
+                    ),
+                    error="custom_primers must be provided when primer_restrict_window is specified.",
+                ),
+            ],
+            description="Window size for primer trimming. custom_primers must be provided if primer_restrict_window is specified."
+        ),
+        "irma_module": _nullable_enum_col(
+            irma_modules, required=False,
+            description=f"Specify the IRMA module to use for assembly. Options: {irma_modules}"
+        ),
+        "custom_irma_config": _nullable_str(
+            required=False,
+            description="Provide a custom IRMA configuration file if needed."
+        ),
+        "custom_qc_settings": _nullable_str(
+            required=False,
+            description="Provide custom QC settings if needed."
+        ),
+        "parquet_files": pa.Column(
+            pl.Boolean, nullable=False, required=True,
+            description="Whether to generate parquet files."
+        ),
+        "nextclade": pa.Column(
+            pl.Boolean, nullable=False, required=True,
+            description="Whether to run Nextclade analysis."
+        ),
+        "assembly_status": _required_enum_col(
+            assembly_status, nullable=False, required=False,
+            description=f"Status of the assembly. Options: {assembly_status}"
+        ),
     },
     name="assembly",
 )
 # ---------------------------------------------------------------------------
 assembly_db_schema = pa.DataFrameSchema(
     columns={
-        "assembly_id": pa.Column(pl.Int64, nullable=False, required=False),
+        "assembly_id": pa.Column(pl.Int64, nullable=False, required=False, description="Foreign key linking to the assembly table in database."),
         **{col: pa.Column(assembly_pa_schema.columns[col].dtype.type, nullable=assembly_pa_schema.columns[col].nullable, required=assembly_pa_schema.columns[col].required) for col in assembly_pa_schema.columns}
     },
     name="assembly_db",
@@ -281,19 +379,28 @@ assembly_db_schema = pa.DataFrameSchema(
 # ---------------------------------------------------------------------------
 ont_samplesheet_pa_schema = pa.DataFrameSchema(
     columns={
-        "barcode": _required_str(),
-        "sample_id": _required_str(),
-        "sample_type": _enum_col(sample_types, nullable=False, required=True),
-        "single_end": pa.Column(pl.Boolean, nullable=False, required=True),
-        "fastq": _required_str(),
-        "status": _enum_col(sample_status, nullable=False, required=True),
+        "barcode": _required_str(description="ONT barcode identifier (e.g. barcode01)."),
+        "sample_id": _required_str(description="Sample identifier."),
+        "sample_type": _required_enum_col(
+            sample_types, nullable=False, required=True,
+            description=f"Type of the sample. Options: {sample_types}"
+        ),
+        "single_end": pa.Column(
+            pl.Boolean, nullable=False, required=True, 
+            description="Whether the sequencing is single-end. Default is True for ONT samples."
+        ),
+        "fastq": _required_str(description="Path to the FASTQ file for the sample."),
+        "status": _required_enum_col(
+            sample_status, nullable=False, required=True,
+            description=f"Status of the sample. Options: {sample_status}"
+        ),
     },
     name="ont_samplesheet",
 )
 # ---------------------------------------------------------------------------
 ont_samplesheet_db_schema = pa.DataFrameSchema(
     columns={
-        "assembly_id": pa.Column(pl.Int64, nullable=False, required=False),
+        "assembly_id": pa.Column(pl.Int64, nullable=False, required=False, description="Foreign key linking to the assembly table in database."),
         **{col: pa.Column(ont_samplesheet_pa_schema.columns[col].dtype.type, nullable=ont_samplesheet_pa_schema.columns[col].nullable, required=ont_samplesheet_pa_schema.columns[col].required) for col in ont_samplesheet_pa_schema.columns}
     },
     name="ont_samplesheet_db",
@@ -304,19 +411,28 @@ ont_samplesheet_db_schema = pa.DataFrameSchema(
 # ---------------------------------------------------------------------------
 illumina_samplesheet_pa_schema = pa.DataFrameSchema(
     columns={
-        "sample_id": _required_str(),
-        "sample_type": _enum_col(sample_types, nullable=False, required=True),
-        "single_end": pa.Column(pl.Boolean, nullable=False, required=True),
-        "fastq_1": _required_str(),
-        "fastq_2": _nullable_str(),
-        "status": _enum_col(sample_status, nullable=False, required=True),
+        "sample_id": _required_str(description="Sample identifier."),
+        "sample_type": _required_enum_col(
+            sample_types, nullable=False, required=True,
+            description=f"Type of the sample. Options: {sample_types}"
+        ),
+        "single_end": pa.Column(
+            pl.Boolean, nullable=False, required=True,
+            description="Whether the sequencing is single-end. Default is False for Illumina samples."
+        ),
+        "fastq_1": _required_str(description="Path to the first FASTQ file for the sample."),
+        "fastq_2": _nullable_str(description="Path to the second FASTQ file for the sample (if paired-end)."),
+        "status": _required_enum_col(
+            sample_status, nullable=False, required=True,
+            description=f"Status of the sample. Options: {sample_status}"
+        ),
     },
     name="illumina_samplesheet",
 )
 # ---------------------------------------------------------------------------
 illumina_samplesheet_db_schema = pa.DataFrameSchema(
     columns={
-        "assembly_id": pa.Column(pl.Int64, nullable=False, required=False),
+        "assembly_id": pa.Column(pl.Int64, nullable=False, required=False, description="Foreign key linking to the assembly table in database."),
         **{col: pa.Column(illumina_samplesheet_pa_schema.columns[col].dtype.type, nullable=illumina_samplesheet_pa_schema.columns[col].nullable, required=illumina_samplesheet_pa_schema.columns[col].required) for col in illumina_samplesheet_pa_schema.columns}
     },
     name="illumina_samplesheet_db",
@@ -327,8 +443,8 @@ illumina_samplesheet_db_schema = pa.DataFrameSchema(
 # ---------------------------------------------------------------------------
 upload_fastq_files_pa_schema = pa.DataFrameSchema(
     columns={
-        "sample_id": _required_str(),
-        "fastq_path": pa.Column(pl.String, nullable=False, required=True),
+        "sample_id": _required_str(description="Sample identifier."),
+        "fastq_path": pa.Column(pl.String, nullable=False, required=True, description="Path to the uploaded FASTQ file."),
     },
     name="upload_fastq_files",
 )

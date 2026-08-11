@@ -2,10 +2,10 @@
 from typing import List, Optional, Literal, Dict, Any
 
 # Import FastAPI and related packages
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Query
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 
 # Import general python packages
 import os
@@ -39,6 +39,7 @@ from .schema_validator import (
     _DEFAULT_MIRA_STORAGE_PATH,
     _MIRA_NF_VERSION_URL,
     _MIRA_VERSION_URL,
+    _REACT_BASE_URL,
     _HOST_MIRA_NF_IMAGE,
     validate_tbl,
     experiment_types,
@@ -77,12 +78,16 @@ from .mira_handler import (
     retrieve_passed_amended_consensus,
     retrieve_nextclade_aligned_fasta,
     validate_samplesheet_and_fastqs_in_storage,
+    validate_custom_configs_in_storage,
 )
 
 # Import sqlite handler for database operations
 from .sqlite_handler import (
     lookup_tbl_in_database,
 )
+
+# Import shared logger (INFO/DEBUG -> stdout, WARNING/ERROR/CRITICAL -> stderr)
+from .logging_config import logger
 
 # Define FastAPI app
 app = FastAPI(title = "MIRA Backend")
@@ -94,10 +99,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
     allow_origins = [
-        "http://localhost:5175",
-        "http://127.0.0.1:5175",
-        "http://localhost:5176",
-        "http://127.0.0.1:5176",
+        _REACT_BASE_URL,
         "https://clades.nextstrain.org",
         "https://nextclade.org",
     ],
@@ -105,6 +107,37 @@ app.add_middleware(
     allow_methods = ["*"],
     allow_headers = ["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Global exception logging
+# ---------------------------------------------------------------------------
+# Every route below catches its own exceptions and re-raises as HTTPException(detail=str(err)),
+# which discards the traceback on the wire. Python's implicit exception chaining still attaches
+# the original exception (with its traceback) to `__context__`, so recover and log it here —
+# this makes 500s fully diagnosable from the stderr stream without touching every route.
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    if exc.status_code >= 500:
+        original = exc.__context__ or exc
+        logger.error(
+            "%s %s -> %s %s", request.method, request.url.path, exc.status_code, exc.detail,
+            exc_info=(type(original), original, original.__traceback__),
+        )
+    elif exc.status_code >= 400:
+        logger.warning("%s %s -> %s %s", request.method, request.url.path, exc.status_code, exc.detail)
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+# Catch anything that escapes a route's own try/except (e.g. middleware/dependency bugs)
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error("%s %s -> unhandled exception", request.method, request.url.path, exc_info=exc)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error."})
+
+##############################################
+# 
+# HELPERS FUNCTIONS
+# 
+##############################################
 
 # ---------- Helper: parse uploaded JSON/CSV/EXCEL files → Polars DataFrame ----------
 async def _parse_upload_to_df(file: UploadFile) -> pl.DataFrame:
@@ -120,7 +153,7 @@ async def _parse_upload_to_df(file: UploadFile) -> pl.DataFrame:
     else:
         raise ValueError(f"Unsupported file type '{file.filename}'. Accepted: .json, .csv, .xlsx, .xls")
     
-# Define function to upload fastq files to MIRA storage location
+# ---------- Helper: upload fastq files to MIRA storage location ----------
 def upload_fastq_files_to_storage(
     run_name: str,  
     experiment_type: str,
@@ -201,19 +234,33 @@ def upload_fastq_files_to_storage(
 def _version_tuple(version: str) -> tuple:
     return tuple(int(part) for part in re.findall(r"\d+", version))
 
+##############################################
+# 
+# MIRA HEALTH SECTION
+# 
+##############################################
+
 # ---------- Health Check ----------
-@app.get("/health", tags=["Health"], summary="Health check", response_model=Dict[str, bool])
+@app.get("/health", tags=["Health"], summary="Health check", response_model=Dict[str, Any])
 def health():
-    return {"ok": True}
+    try:
+        resp = requests.get(_REACT_BASE_URL, timeout=2)
+        react_reachable = resp.status_code < 500
+        if not react_reachable:
+            logger.error("Health check: REACT_BASE_URL '%s' returned status %s.", _REACT_BASE_URL, resp.status_code)
+    except requests.RequestException as err:
+        react_reachable = False
+        logger.error("Health check: REACT_BASE_URL '%s' is unreachable: %s", _REACT_BASE_URL, err)
+    return {"ok": True, "react_base_url": _REACT_BASE_URL, "react_reachable": react_reachable}
 
 ##############################################
 # 
-# MIRA SECTION
+# MIRA UTILS SECTION
 # 
 ##############################################
 
 # --------- Get MIRA version ----------
-@app.get("/version", response_model=Dict[str, str], summary="Get MIRA version", tags=["MIRA"])
+@app.get("/version", response_model=Dict[str, str], summary="Get MIRA version", tags=["MIRA Utils"])
 async def check_mira_version():
     # Get current version from Docker image tag without the v
     current_mira_nf_version = re.findall(r"[^:]+$", _HOST_MIRA_NF_IMAGE)[0].lstrip("v")
@@ -266,11 +313,10 @@ async def check_mira_version():
         "mira_status": mira_status,
         "status": status
     }
-    print(check_result)
     return check_result
 
 # ---------- List all runs ----------
-@app.get("/list/runs", response_model=RunResponse, summary="List all assembly runs", tags=["MIRA"])
+@app.get("/list/runs", response_model=RunResponse, summary="List all assembly runs", tags=["MIRA Utils"])
 async def get_runs():
     """
     Return a list of assembly runs in storage.
@@ -291,39 +337,8 @@ async def get_runs():
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
 
-# ---------- Search for a specific run----------
-@app.get("/search/run", response_model=RunResponse, summary="Search for a specific assembly run", tags=["MIRA"])
-async def look_up_run(req: RunRequest = Depends()):
-    """
-    Search for a specific assembly run based on run name and experiment type.
-    """
-    # Define filter variables for database query
-    filter_coln_var = []; filter_coln_val = {}; filter_var_by = [];
-    if req.run_name is not None:
-        filter_coln_var.append("run_name")  
-        filter_coln_val["run_name"] = [req.run_name]
-        filter_var_by.append("AND")
-    if req.experiment_type is not None:
-        filter_coln_var.append("experiment_type")
-        filter_coln_val["experiment_type"] = [req.experiment_type]
-        filter_var_by.append("AND")
-    # Query the database for assembly runs based on the provided filters
-    try:
-        db_assembly_tbl = lookup_tbl_in_database(
-            db_tbl_name = ["assembly"],
-            return_var  = ["*"],
-            filter_coln_var = filter_coln_var if filter_coln_var else None,
-            filter_coln_val = filter_coln_val if filter_coln_val else None,
-            filter_var_by = filter_var_by if filter_var_by else None
-        )
-        return {"run_info": db_assembly_tbl.to_dicts()}
-    except ValueError as err:
-        raise HTTPException(status_code=404, detail=str(err))
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))
-        
 # ---------- Retrieve Specific Run Information ----------
-@app.get("/retrieve/run", response_model=Optional[Dict[str, Any]], summary="Retrieve a run information", tags=["MIRA"])
+@app.get("/retrieve/run", response_model=Optional[Dict[str, Any]], summary="Retrieve a run information", tags=["MIRA Utils"])
 async def get_run_info(req: RunRequest = Depends()):
     """
     Retrieve assembly information, samplesheet, QC decisions, coverage, variants, etc., for a given sequencing run.
@@ -339,112 +354,19 @@ async def get_run_info(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
-    
-# ---------- Validate samplesheet and all FASTQ files exist for a given sequencing run. ----------
-@app.get("/validate/run", response_model=Dict[str, Any], summary="Validate samplesheet and FASTQ files exist for a given sequencing run", tags=["MIRA"])
-async def validate_run(req: RunRequest = Depends()):
-    """
-    Validate samplesheet and all FASTQ files exist for a given sequencing run.
-    """
-    try:
-        validation_result = await asyncio.to_thread(
-            validate_samplesheet_and_fastqs_in_storage,
-            run_name = req.run_name,
-            experiment_type = req.experiment_type,
-        )
-        return validation_result
-    except ValueError as err:
-        raise HTTPException(status_code=404, detail=str(err))
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))
-    
-# ---------- Delete a single sample from a run's samplesheet ----------
-@app.delete("/delete/sample", response_model=Dict[str, Any], summary="Remove a sample from a run's samplesheet", tags=["MIRA"])
-async def delete_sample(req: DeleteSampleRequest):
-    """
-    Remove a single sample row from the ONT or Illumina samplesheet of an existing run in the database.
-    """
-    try:
-        result = await asyncio.to_thread(
-            delete_sample_from_run,
-            run_name = req.run_name,
-            experiment_type = req.experiment_type,
-            sample_id = req.sample_id,
-            fastq = req.fastq,
-            fastq_1 = req.fastq_1,
-            fastq_2 = req.fastq_2,
-        )
-        return result
-    except ValueError as err:
-        raise HTTPException(status_code=404, detail=str(err))
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))
 
-# ---------- Rename an existing MIRA run ----------
-@app.patch("/rename/run", response_model=Dict[str, Any], summary="Rename a run (updates DB record and on-disk run directory)", tags=["MIRA"])
-async def rename_run(req: RenameRunRequest):
-    """
-    Rename an existing MIRA run. Updates the run_name in the database and renames
-    the on-disk run directory (uploaded FASTQs + outputs) to match.
-    """
-    try:
-        result = await asyncio.to_thread(
-            rename_mira_run,
-            run_name = req.run_name,
-            experiment_type = req.experiment_type,
-            new_run_name = req.new_run_name,
-        )
-        return result
-    except ValueError as err:
-        raise HTTPException(status_code=404, detail=str(err))
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))
-
-# ---------- Delete an existing MIRA run ----------
-@app.delete("/delete/run", response_model=Dict[str, Any], summary="Delete a run's database record (files on disk are kept)", tags=["MIRA"])
-async def delete_run(req: RunRequest):
-    """
-    Remove a run's assembly record (and its samplesheet rows) from the database.
-    Files already on disk (uploaded FASTQs, pipeline outputs) are left untouched.
-    """
-    try:
-        result = await asyncio.to_thread(
-            delete_mira_run,
-            run_name = req.run_name,
-            experiment_type = req.experiment_type,
-        )
-        return result
-    except ValueError as err:
-        raise HTTPException(status_code=404, detail=str(err))
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))
-
-# ---------- Copy an existing MIRA run ----------
-@app.post("/copy/run", response_model=Dict[str, Any], summary="Copy a run to a new name (duplicates DB record, samplesheet, FASTQs and outputs)", tags=["MIRA"])
-async def copy_run(req: CopyRunRequest):
-    """
-    Duplicate an existing MIRA run — including its database record, samplesheet,
-    and on-disk FASTQ/output files — under a new run name.
-    """
-    try:
-        result = await asyncio.to_thread(
-            copy_mira_run,
-            run_name = req.run_name,
-            experiment_type = req.experiment_type,
-            new_run_name = req.new_run_name,
-        )
-        return result
-    except ValueError as err:
-        raise HTTPException(status_code=404, detail=str(err))
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))
+##############################################
+# 
+# MIRA WORKFLOWS SECTION
+# 
+##############################################    
 
 # ---------- Create a MIRA run (with file uploads) ----------
 @app.post(
     "/create/run/upload",
     response_model=Dict[str, Any],
     summary="Create a MIRA run (with File Uploads, Accepted Formats: JSON/CSV/Excel for samplesheet; .fastq/.fastq.gz/.fq/.fq.gz for raw reads)",
-    tags=["MIRA"],
+    tags=["MIRA Workflows"],
     openapi_extra={
         "requestBody": {
             "content": {
@@ -516,10 +438,10 @@ async def create_run_upload(
     except ValueError as err:
         raise HTTPException(status_code=422, detail=str(err))
     except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))    
-    
+        raise HTTPException(status_code=500, detail=str(err))
+
 # ---------- Create a MIRA assembly run ----------
-@app.post("/create/run", response_model=Dict[str, Any], summary="Create a MIRA run with appropriate samplesheet (Part 1)", tags=["MIRA"])
+@app.post("/create/run", response_model=Dict[str, Any], summary="Create a MIRA run with appropriate samplesheet", tags=["MIRA Workflows"])
 async def create_run(req: AssemblyRequest):
     """
     Create a MIRA run via a **JSON request body**.
@@ -528,18 +450,40 @@ async def create_run(req: AssemblyRequest):
     try:
         # Create assembly table from request data and validate it
         assembly_tbl    = pl.DataFrame({
-            "run_name":          [req.run_name],
-            "experiment_type":   [req.experiment_type],
-            "subsample":         [req.subsample],
-            "sc2_primer":        [req.sc2_primer],
-            "rsv_primer":        [req.rsv_primer],
-            "parquet_files":     [req.parquet_files],
-            "run_nextclade":     [req.run_nextclade],
-            "irma_module":       [req.irma_module],
-            "custom_irma_config":[req.custom_irma_config],
-            "custom_qc_settings":[req.custom_qc_settings],
-            "assembly_status":   [req.assembly_status],
+            "run_name":                 [req.run_name],
+            "experiment_type":          [req.experiment_type],
+            "subsample_reads":          [req.subsample_reads],
+            "sc2_primer":               [req.sc2_primer],
+            "rsv_primer":               [req.rsv_primer],
+            "custom_primers":           [req.custom_primers],
+            "primer_kmer_len":          [req.primer_kmer_len if req.custom_primers and req.primer_kmer_len > 0 else None],
+            "primer_restrict_window":   [req.primer_restrict_window if req.custom_primers and req.primer_restrict_window > 0 else None],
+            "irma_module":              [req.irma_module],
+            "custom_irma_config":       [req.custom_irma_config],
+            "custom_qc_settings":       [req.custom_qc_settings],
+            "parquet_files":            [req.parquet_files],
+            "nextclade":                [req.nextclade],
+            "assembly_status":          [req.assembly_status],
         })
+        # Log the request parameters for debugging and auditing purposes
+        logger.info(
+            "Create MIRA run:\n" +
+            f"run_name='{req.run_name}'\n"
+            f"experiment_type='{req.experiment_type}'\n"
+            f"subsample_reads='{req.subsample_reads}'\n"
+            f"sc2_primer='{req.sc2_primer}'\n"
+            f"rsv_primer='{req.rsv_primer}'\n"
+            f"custom_primers='{req.custom_primers}'\n"
+            f"primer_kmer_len='{req.primer_kmer_len if req.custom_primers and req.primer_kmer_len > 0 else ""}'\n"
+            f"primer_restrict_window='{req.primer_restrict_window if req.custom_primers and req.primer_restrict_window > 0 else ""}'\n"
+            f"irma_module='{req.irma_module}'\n"
+            f"custom_irma_config='{req.custom_irma_config}'\n"
+            f"custom_qc_settings='{req.custom_qc_settings}'\n"
+            f"parquet_files='{req.parquet_files}'\n"
+            f"nextclade='{req.nextclade}'\n"
+            f"assembly_status='{req.assembly_status}'\n",
+        )
+        # Validate assembly table based on assembly schema
         assembly_tbl = validate_tbl(assembly_tbl, assembly_pa_schema, "assembly")
         # Validate samplesheet table based on experiment type
         if "ONT" in req.experiment_type.upper():
@@ -564,14 +508,14 @@ async def create_run(req: AssemblyRequest):
     except ValueError as err:
         raise HTTPException(status_code=422, detail=str(err))
     except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))    
+        raise HTTPException(status_code=500, detail=str(err))        
 
 # ---------- Upload FASTQ files to storage ----------
 @app.post(
     "/upload/fastqs", 
     response_model=Dict[str, Any], 
-    summary="Upload FASTQ files to a specific MIRA run (Part 2)", 
-    tags=["MIRA"],
+    summary="Upload FASTQ files to a specific MIRA run", 
+    tags=["MIRA Workflows"],
     openapi_extra={
         "requestBody": {
             "content": {
@@ -614,10 +558,148 @@ async def upload_fastqs(
     except ValueError as err:
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))    
+
+# Upload custom primger config file to storage location
+@app.post("/upload/custom_primer_config", response_model=Dict[str, Any], summary="Upload a custom primer config file to storage location", tags=["MIRA Workflows"])
+async def upload_custom_primer_config(
+    run_name: str = Form(..., description="Name of the sequencing run."),
+    experiment_type: str = Form(..., description="Type of sequencing experiments."),
+    custom_primer_config_file: UploadFile = File(..., description="Custom primer config file to upload.")
+):
+    """
+    Upload a custom primer config file to the storage location for a given sequencing run.
+    """
+    try:
+        # Get pathogen and instrument type from experiment_type
+        pathogen = experiment_type.split("-")[0]
+        instrument = experiment_type.split("-")[-1]
+        # Read the content of the uploaded file
+        content = await custom_primer_config_file.read()
+        # Define the storage directory based on run name and experiment type
+        storage_dir = os.path.realpath(os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name))
+        os.makedirs(storage_dir, exist_ok=True)
+        # Define the destination file path
+        filename = custom_primer_config_file.filename
+        dest_file_path = os.path.join(storage_dir, filename)
+        # Write the content to the destination file
+        with open(dest_file_path, "wb") as f:
+            f.write(content)
+        return {
+            "status": "success",
+            "message": f"Custom primer config file '{custom_primer_config_file.filename}' has been uploaded successfully.",
+            "file_path": dest_file_path,
+            "file_name": filename
+        }
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))    
+
+# Upload custom IRMA config file to storage location
+@app.post("/upload/custom_irma_config", response_model=Dict[str, Any], summary="Upload a custom IRMA config file to storage location", tags=["MIRA Workflows"])
+async def upload_custom_irma_config(
+    run_name: str = Form(..., description="Name of the sequencing run."),
+    experiment_type: str = Form(..., description="Type of sequencing experiments."),
+    custom_irma_config_file: UploadFile = File(..., description="Custom IRMA config file to upload.")
+):
+    """
+    Upload a custom IRMA config file to the storage location for a given sequencing run.
+    """
+    try:
+        # Get pathogen and instrument type from experiment_type
+        pathogen = experiment_type.split("-")[0]
+        instrument = experiment_type.split("-")[-1]
+        # Read the content of the uploaded file
+        content = await custom_irma_config_file.read()
+        # Define the storage directory based on run name and experiment type
+        storage_dir = os.path.realpath(os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name))
+        os.makedirs(storage_dir, exist_ok=True)
+        # Define the destination file path
+        filename = custom_irma_config_file.filename
+        dest_file_path = os.path.join(storage_dir, filename)
+        # Write the content to the destination file
+        with open(dest_file_path, "wb") as f:
+            f.write(content)
+        return {
+            "status": "success",
+            "message": f"Custom IRMA config file '{custom_irma_config_file.filename}' has been uploaded successfully.",
+            "file_path": dest_file_path,
+            "file_name": filename
+        }
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+# Upload custom QC settings file to storage location
+@app.post("/upload/custom_qc_settings", response_model=Dict[str, Any], summary="Upload a custom QC settings file to storage location", tags=["MIRA Workflows"])
+async def upload_custom_qc_settings(
+    run_name: str = Form(..., description="Name of the sequencing run."),
+    experiment_type: str = Form(..., description="Type of sequencing experiments."),
+    custom_qc_settings_file: UploadFile = File(..., description="Custom QC settings file to upload.")
+):
+    """
+    Upload a custom QC settings file to the storage location for a given sequencing run.
+    """
+    try:
+        # Get pathogen and instrument type from experiment_type
+        pathogen = experiment_type.split("-")[0]
+        instrument = experiment_type.split("-")[-1]
+        # Read the content of the uploaded file
+        content = await custom_qc_settings_file.read()
+        # Define the storage directory based on run name and experiment type
+        storage_dir = os.path.realpath(os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name))
+        os.makedirs(storage_dir, exist_ok=True)
+        # Define the destination file path
+        filename = custom_qc_settings_file.filename
+        dest_file_path = os.path.join(storage_dir, filename)
+        # Write the content to the destination file
+        with open(dest_file_path, "wb") as f:
+            f.write(content)
+        # Upload
+        return {
+            "status": "success",
+            "message": f"Custom QC settings file '{custom_qc_settings_file.filename}' has been uploaded successfully.",
+            "file_path": dest_file_path,
+            "file_name": filename
+        }
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))    
+
+# ---------- Validate samplesheet and all FASTQ files exist for a given sequencing run. ----------
+@app.get("/validate/run", response_model=Dict[str, Any], summary="Validate samplesheet and FASTQ files exist for a given run", tags=["MIRA Workflows"])
+async def validate_run(req: RunRequest = Depends()):
+    """
+    Validate samplesheet and all FASTQ files exist for a given sequencing run.
+    """
+    try:
+        validation_result = await asyncio.to_thread(
+            validate_samplesheet_and_fastqs_in_storage,
+            run_name = req.run_name,
+            experiment_type = req.experiment_type,
+        )
+        return validation_result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
     
-# ---------- Run MIRA pipeline ----------
-@app.get("/run/MIRA", response_model=Dict[str, Any], summary="Run MIRA assembly via Docker (Part 3)", tags=["MIRA"])
+@app.get("/validate/custom_configs", response_model=Dict[str, Any], summary="Validate custom primers, custom IRMA config, and custom QC settings exist for a given run if provided", tags=["MIRA Workflows"])
+async def validate_custom_configs(req: RunRequest = Depends()):
+    """
+    Validate that any provided custom primer, custom IRMA config, and custom QC settings files exist in storage.
+    """
+    try:
+        validation_result = await asyncio.to_thread(
+            validate_custom_configs_in_storage,
+            run_name = req.run_name,
+            experiment_type = req.experiment_type,
+        )
+        return validation_result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+    
+# ---------- Run MIRA Workflows ----------
+@app.get("/run/MIRA", response_model=Dict[str, Any], summary="Run MIRA assembly via Docker (Part 3)", tags=["MIRA Workflows"])
 async def run_mira(req: RunRequest = Depends()):
     """
     Launch the MIRA assembly for a given sequencing run via Docker.
@@ -636,7 +718,7 @@ async def run_mira(req: RunRequest = Depends()):
         raise HTTPException(status_code=500, detail=str(err))
      
 # ---------- Cancel MIRA run ----------
-@app.get("/cancel/MIRA", response_model=Dict[str, Any], summary="Cancel a running MIRA pipeline", tags=["MIRA"])
+@app.get("/cancel/MIRA", response_model=Dict[str, Any], summary="Cancel a MIRA run", tags=["MIRA Workflows"])
 async def cancel_mira(req: RunStatusRequest = Depends()):
     """
     Send SIGTERM to the process group of the given PID and mark the run as CANCELLED.
@@ -655,7 +737,7 @@ async def cancel_mira(req: RunStatusRequest = Depends()):
         raise HTTPException(status_code=500, detail=str(err))
     
 # ---------- Check MIRA status ----------
-@app.get("/MIRA/status", response_model=Dict[str, Any], summary="Check run process status", tags=["MIRA"])
+@app.get("/MIRA/status", response_model=Dict[str, Any], summary="Check status process of a MIRA run", tags=["MIRA Workflows"])
 async def get_mira_status(req: RunStatusRequest = Depends()):
     """
     Check the running status of MIRA for a given run and return
@@ -675,7 +757,7 @@ async def get_mira_status(req: RunStatusRequest = Depends()):
         raise HTTPException(status_code=500, detail=str(err))   
     
 # ---------- Pipeline DAG / status ----------
-@app.get("/MIRA/DAG", response_model=Dict[str, Any], summary="Get MIRA DAG from assembly", tags=["MIRA"])
+@app.get("/MIRA/DAG", response_model=Dict[str, Any], summary="Get MIRA DAG from assembly", tags=["MIRA Workflows"])
 async def get_mira_dag(req: RunRequest = Depends()):
     """
     Parse the Nextflow execution trace file and .nextflow.log for a given run and return
@@ -692,7 +774,59 @@ async def get_mira_dag(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+
+##############################################
+# 
+# MIRA RENAME AND COPY SECTION
+# 
+##############################################    
     
+# ---------- Rename an existing MIRA run ----------
+@app.patch("/rename/run", response_model=Dict[str, Any], summary="Rename a run (updates DB record and on-disk run directory)", tags=["MIRA Rename & Copy"])
+async def rename_run(req: RenameRunRequest):
+    """
+    Rename an existing MIRA run. Updates the run_name in the database and renames
+    the on-disk run directory (uploaded FASTQs + outputs) to match.
+    """
+    try:
+        result = await asyncio.to_thread(
+            rename_mira_run,
+            run_name = req.run_name,
+            experiment_type = req.experiment_type,
+            new_run_name = req.new_run_name,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+# ---------- Copy an existing MIRA run ----------
+@app.post("/copy/run", response_model=Dict[str, Any], summary="Copy a run to a new name (duplicates DB record, samplesheet, FASTQs and outputs)", tags=["MIRA Rename & Copy"])
+async def copy_run(req: CopyRunRequest):
+    """
+    Duplicate an existing MIRA run — including its database record, samplesheet,
+    and on-disk FASTQ/output files — under a new run name.
+    """
+    try:
+        result = await asyncio.to_thread(
+            copy_mira_run,
+            run_name = req.run_name,
+            experiment_type = req.experiment_type,
+            new_run_name = req.new_run_name,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+##############################################
+# 
+# MIRA RESULTS SECTION
+# 
+##############################################       
+
 # ---------- Retrieve Barcode Assignments ----------
 @app.get("/retrieve/barcode_assignment", response_model=Optional[Dict[str, Any]], summary="Retrieve Barcode Assignments", tags=["MIRA Results"])
 async def get_barcode_assignment(req: RunRequest = Depends()):
@@ -1007,6 +1141,12 @@ async def get_nextclade_aligned_fasta(req: RunRequest = Depends()):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
 
+##############################################
+# 
+# MIRA DOWNLOADS SECTION
+# 
+##############################################        
+
 # ---------- Download NT Passed FASTA ----------
 @app.get("/download/nt_passed_fasta", summary="Download NT Passed FASTA", tags=["MIRA Downloads"])
 async def download_nt_passed_fasta(req: RunRequest = Depends()):
@@ -1090,6 +1230,53 @@ async def download_mira_reports(req: RunRequest = Depends()):
 
 ##############################################
 # 
+# MIRA DELETE SECTION
+# 
+##############################################
+
+# ---------- Delete a single sample from a run's samplesheet ----------
+@app.delete("/delete/sample", response_model=Dict[str, Any], summary="Remove a sample from a run's samplesheet", tags=["MIRA Delete"])
+async def delete_sample(req: DeleteSampleRequest):
+    """
+    Remove a single sample row from the ONT or Illumina samplesheet of an existing run in the database.
+    """
+    try:
+        result = await asyncio.to_thread(
+            delete_sample_from_run,
+            run_name = req.run_name,
+            experiment_type = req.experiment_type,
+            sample_id = req.sample_id,
+            fastq = req.fastq,
+            fastq_1 = req.fastq_1,
+            fastq_2 = req.fastq_2,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+# ---------- Delete an existing MIRA run ----------
+@app.delete("/delete/run", response_model=Dict[str, Any], summary="Delete a run from database and disk records", tags=["MIRA Delete"])
+async def delete_run(req: RunRequest):
+    """
+    Remove a run's assembly record (and its samplesheet rows) from the database.
+    Files on disk (uploaded FASTQs, pipeline outputs) are also deleted.
+    """
+    try:
+        result = await asyncio.to_thread(
+            delete_mira_run,
+            run_name = req.run_name,
+            experiment_type = req.experiment_type,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))    
+    
+############################################## 
+#
 # SEQSENDER SECTION
 # 
 ##############################################

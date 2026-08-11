@@ -1,25 +1,51 @@
-#!/bin/bash 
-# Wrapper to launch MIRA Backend API. 
-# This script takes --deploy, --data_dir, and --mira_image as arguments, checks for
-# the existence of the backend and data directories, generates the config.yml
-# file consumed by the backend app, and then starts the FastAPI app using Uvicorn.
+#!/bin/bash
 
-set -euo pipefail
+# Exit immediately if any command fails
+set -e
+
+# Get current script directory ####
+BACKEND_DIR="$( realpath $(dirname "${BASH_SOURCE[0]}") )"
+
+# Command-line argument usage
+print_usage() {
+    cat <<USAGE
+Usage: $(basename "$0") --deploy <Local|Docker> --data_dir <DATA_ROOT> --mira_nf_image <MIRA_NF_IMAGE> --host_url <HOST_URL> --host <HOST> --api_port <API_PORT> --react_port <REACT_PORT>
+
+Arguments:
+  --deploy <DEPLOY>                 Deployment mode, must be 'Local' or 'Docker'.
+  --data_dir <DATA_ROOT>            Path to the data directory mounted/available to the backend.
+  --mira_nf_image <MIRA_NF_IMAGE>   Docker image (name:tag) for the MIRA Nextflow pipeline.
+  --host_url <HOST_URL>             Hostname used to build the React base URL written to config.yml. (default: localhost)
+  --host <HOST>                     Address uvicorn binds to. (default: 0.0.0.0)
+  --api_port <API_PORT>             Port uvicorn serves the backend API on. (default: 8080)
+  --react_port <REACT_PORT>         Port used to build the React base URL written to config.yml. (default: 5175)
+  -h, --help                        Show this help message and exit.
+USAGE
+}
 
 usage() {
-    echo "Usage: $(basename "$0") --deploy <Local|Docker> --data_dir <DATA_ROOT> --mira_nf_image <MIRA_NF_IMAGE> [--host <HOST>] [--port <PORT>]" >&2
+    print_usage >&2
     exit 1
 }
 
+# Initialize deployment variables
 DEPLOY=""
 DATA_ROOT=""
 MIRA_NF_IMAGE=""
+
+# Initialize app variables
+HOST_URL="localhost"
 HOST="0.0.0.0"
-PORT="8080"
+API_PORT="8080"
+REACT_PORT="5175"
 
 # Parse named arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        -h|--help)
+            print_usage
+            exit 0
+            ;;
         --deploy)
             DEPLOY="$2"
             shift 2
@@ -32,12 +58,20 @@ while [[ $# -gt 0 ]]; do
             MIRA_NF_IMAGE="$2"
             shift 2
             ;;
+        --host_url)
+            HOST_URL="$2"
+            shift 2
+            ;;
         --host)
             HOST="$2"
             shift 2
             ;;
-        --port)
-            PORT="$2"
+        --api_port)
+            API_PORT="$2"
+            shift 2
+            ;;
+        --react_port)
+            REACT_PORT="$2"
             shift 2
             ;;
         *)
@@ -47,49 +81,33 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Require all 3 arguments to be provided
-if [[ -z "${DEPLOY}" || -z "${DATA_ROOT}" || -z "${MIRA_NF_IMAGE}" ]]; then
+# Require all arguments to be provided
+if [[ -z "${DEPLOY}" || -z "${DATA_ROOT}" || -z "${MIRA_NF_IMAGE}" || -z "${HOST_URL}" || -z "${HOST}" || -z "${API_PORT}" || -z "${REACT_PORT}" ]]; then
+    echo "Invalid arguments." >&2
     usage
-fi
-
-# Validate DEPLOY argument
-if [[ "${DEPLOY}" != "Local" && "${DEPLOY}" != "Docker" ]]; then
-    echo "Error: DEPLOY must be either 'Local' or 'Docker', got '${DEPLOY}'." >&2
-    exit 1
-fi
-
-# Define backend directory
-# Defaults to /MIRA-backend for Docker deployments
-# or the script's own location for Local deployments
-if [[ "${DEPLOY}" == "Docker" ]]; then
-    BACKEND_DIR="/MIRA-backend"
-else
-    BACKEND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-fi
-
-# Check if Backend directory exists
-if [[ ! -d "${BACKEND_DIR}" ]]; then
-    echo "Error: Backend directory ${BACKEND_DIR} not found." >&2
-    exit 1
-fi
-
-# Check if Data directory exists
-if [[ ! -d "${DATA_ROOT}" ]]; then
-    echo "Error: Data directory ${DATA_ROOT} not found." >&2
-    exit 1
 fi
 
 # Generate config.yml to be used by the backend app
 CONFIG_FILE="${BACKEND_DIR}/config.yml"
-echo "Writing DEPLOY=${DEPLOY}, DATA_ROOT=${DATA_ROOT}, MIRA_NF_IMAGE=${MIRA_NF_IMAGE} to ${CONFIG_FILE}"
+REACT_BASE_URL="http://${HOST_URL}:${REACT_PORT}"
+echo ""
+echo "Writing DEPLOY=${DEPLOY}, DATA_ROOT=${DATA_ROOT}, MIRA_NF_IMAGE=${MIRA_NF_IMAGE}, API_PORT=${API_PORT}, REACT_BASE_URL=${REACT_BASE_URL} to ${CONFIG_FILE}"
 cat > "${CONFIG_FILE}" <<EOF
 DEPLOY: ${DEPLOY}
 DATA_ROOT: ${DATA_ROOT}
 MIRA_NF_IMAGE: ${MIRA_NF_IMAGE}
+REACT_BASE_URL: ${REACT_BASE_URL}
 EOF
 
 # Navigate to backend directory
 cd "${BACKEND_DIR}"
 
+# Start the FastAPI app using Uvicorn in the background
+echo ""
+echo "-----------------------------------------------------------------------------------------------------------------------------"
+echo "- MIRA API will be deployed at http://${HOST_URL}:${API_PORT}, with interactive docs at http://${HOST_URL}:${API_PORT}/docs/"
+echo "-----------------------------------------------------------------------------------------------------------------------------"
+echo ""
+
 # Start the FastAPI app using Uvicorn
-exec uvicorn app.main:app --reload --reload-dir app --host "${HOST}" --port "${PORT}"
+uvicorn app.main:app --reload --reload-dir app --host "${HOST}" --port "${API_PORT}" 

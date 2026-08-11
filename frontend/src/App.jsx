@@ -60,8 +60,50 @@ function cn(...classes) {
   return classes.filter(Boolean).join(" ");
 }
 
+/* ── recursively read a dropped folder's contents via the FileSystem entry API ── */
+function readAllDirectoryEntries(reader) {
+  return new Promise((resolve, reject) => {
+    const allEntries = [];
+    const readBatch = () => {
+      // readEntries() only returns a batch at a time — keep calling until it returns empty
+      reader.readEntries((entries) => {
+        if (!entries.length) { resolve(allEntries); return; }
+        allEntries.push(...entries);
+        readBatch();
+      }, reject);
+    };
+    readBatch();
+  });
+}
+
+async function collectFilesFromEntry(entry, out) {
+  if (!entry) return;
+  if (entry.isFile) {
+    const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+    out.push(file);
+  } else if (entry.isDirectory) {
+    const entries = await readAllDirectoryEntries(entry.createReader());
+    for (const child of entries) await collectFilesFromEntry(child, out);
+  }
+}
+
+// Supports a drop containing a mix of loose files and whole folders in one gesture
+async function collectFilesFromDataTransfer(dataTransfer) {
+  const items = dataTransfer.items;
+  const out = [];
+  if (items && items.length && typeof items[0].webkitGetAsEntry === "function") {
+    const entries = Array.from(items).map((item) => item.webkitGetAsEntry()).filter(Boolean);
+    for (const entry of entries) await collectFilesFromEntry(entry, out);
+  } else {
+    out.push(...Array.from(dataTransfer.files || []));
+  }
+  return out;
+}
+
 /* ── API endpoints ───────────────────────────────── */
-const API_BASE = "http://localhost:8080";
+// Backend base URL — override via VITE_API_BASE_URL (.env or docker-compose environment) to match the deployed backend port
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+
 const API = {
   checkVersion:     `${API_BASE}/version`,
   listRuns:         `${API_BASE}/list/runs`,
@@ -72,7 +114,11 @@ const API = {
   deleteRun:        `${API_BASE}/delete/run`,
   copyRun:          `${API_BASE}/copy/run`,
   uploadFastqs:     `${API_BASE}/upload/fastqs`,
+  uploadCustomPrimerConfig: `${API_BASE}/upload/custom_primer_config`,
+  uploadCustomIrmaConfig:   `${API_BASE}/upload/custom_irma_config`,
+  uploadCustomQcSettings:   `${API_BASE}/upload/custom_qc_settings`,
   validateRun:      `${API_BASE}/validate/run`,
+  validateCustomConfigs: `${API_BASE}/validate/custom_configs`,
   runMIRA:          `${API_BASE}/run/MIRA`,
   miraDAG:          `${API_BASE}/MIRA/DAG`,
   miraStatus:       `${API_BASE}/MIRA/status`,
@@ -137,6 +183,7 @@ function Dropdown({ trigger, children, panelClassName = "w-48" }) {
   );
 }
 
+// Dropdown item with optional icon
 function DropdownItem({ onClick, icon: Icon, children }) {
   return (
     <button
@@ -580,30 +627,46 @@ function EmptyResultTable({ title, message = "There is no data returned from thi
 }
 
 function AssemblyTab() {
-  const [openStep, setOpenStep]               = useState(() => new Set(ASSEMBLY_STEPS.map((s) => s.id)));
-  const [runName, setRunName]                 = useState("");
-  const [experimentType, setExperimentType]   = useState("");
-  const [primer, setPrimer]                   = useState("");
-  const [subSample, setSubSample]             = useState("0");
-  const [createParquet, setCreateParquet]     = useState(false);
-  const [nextclade, setNextclade]             = useState(true);
-  const [exportFmt, setExportFmt]             = useState("fasta");
-  const [assembled, setAssembled]             = useState(false);
-  const [rightWidth, setRightWidth]           = useState(260);
-  const [sampleSearch, setSampleSearch]       = useState("");
-  const [sortConfig, setSortConfig]           = useState({ key: "sample_id", dir: "asc" });
-  const [submitting, setSubmitting]           = useState(false);
-  const [submitError, setSubmitError]         = useState(null);
-  const [submitSuccess, setSubmitSuccess]     = useState(null);
-  const [submitProcessId, setSubmitProcessId] = useState(null);
-  const [loadRunModal, setLoadRunModal]       = useState(false);
-  const [loadRunLoading, setLoadRunLoading]   = useState(false);
-  const [loadRunError, setLoadRunError]       = useState(null);
-  const [availableRuns, setAvailableRuns]     = useState([]);
-  const [selectedRun, setSelectedRun]         = useState(null); // the run currently loaded/polled on the page
+  const [openStep, setOpenStep]                           = useState(() => new Set(ASSEMBLY_STEPS.map((s) => s.id)));
+  const [runName, setRunName]                             = useState("");
+  const [experimentType, setExperimentType]               = useState("");
+  const [primer, setPrimer]                               = useState("");
+  const [customPrimers, setCustomPrimers]                 = useState("");   // file path to a custom primer FASTA file
+  const [useCustomPrimers, setUseCustomPrimers]           = useState(false); // whether the Custom Primers option is enabled
+  const [primerKmerLen, setPrimerKmerLen]                 = useState("");   // required alongside customPrimers
+  const [primerRestrictWindow, setPrimerRestrictWindow]   = useState(""); // required alongside customPrimers
+  const [subSample, setSubSample]                         = useState("0");
+  const [useIrmaModule, setUseIrmaModule]                 = useState(false); // whether the IRMA Module option is enabled (Flu-Illumina only)
+  const [irmaModule, setIrmaModule]                       = useState("");   // sensitive | secondary | utr
+  const [useCustomIrmaConfig, setUseCustomIrmaConfig]     = useState(false); // whether a custom IRMA config file is used
+  const [customIrmaConfig, setCustomIrmaConfig]           = useState("");    // file path to a custom IRMA config file
+  const [useCustomQcSettings, setUseCustomQcSettings]     = useState(false); // whether custom QC pass/fail settings are used
+  const [customQcSettings, setCustomQcSettings]           = useState("");    // file path to a custom QC settings file
+  const [customPrimersFile, setCustomPrimersFile]         = useState(null); // File object selected via Browse, for actual upload
+  const [customIrmaConfigFile, setCustomIrmaConfigFile]   = useState(null); // File object selected via Browse, for actual upload
+  const [customQcSettingsFile, setCustomQcSettingsFile]   = useState(null); // File object selected via Browse, for actual upload
+  const [loadedCustomPrimersName, setLoadedCustomPrimersName] = useState(""); // filename already stored server-side for a loaded run
+  const [loadedCustomIrmaConfigName, setLoadedCustomIrmaConfigName] = useState(""); // filename already stored server-side for a loaded run
+  const [loadedCustomQcSettingsName, setLoadedCustomQcSettingsName] = useState(""); // filename already stored server-side for a loaded run
+  const [createParquet, setCreateParquet]           = useState(false);
+  const [nextclade, setNextclade]                   = useState(true);
+  const [exportFmt, setExportFmt]                   = useState("fasta");
+  const [assembled, setAssembled]                   = useState(false);
+  const [rightWidth, setRightWidth]                 = useState(260);
+  const [sampleSearch, setSampleSearch]             = useState("");
+  const [sortConfig, setSortConfig]                 = useState({ key: "sample_id", dir: "asc" });
+  const [submitting, setSubmitting]                 = useState(false);
+  const [submitError, setSubmitError]               = useState(null);
+  const [submitSuccess, setSubmitSuccess]           = useState(null);
+  const [submitProcessId, setSubmitProcessId]       = useState(null);
+  const [loadRunModal, setLoadRunModal]             = useState(false);
+  const [loadRunLoading, setLoadRunLoading]         = useState(false);
+  const [loadRunError, setLoadRunError]             = useState(null);
+  const [availableRuns, setAvailableRuns]           = useState([]);
+  const [selectedRun, setSelectedRun]               = useState(null); // the run currently loaded/polled on the page
   const [loadRunSelectedRow, setLoadRunSelectedRow] = useState(null); // row highlighted inside the Load Run modal only
-  const [runSearch, setRunSearch]             = useState("");
-  const [runSortDir, setRunSortDir]           = useState("asc"); // "asc" | "desc" — run_name sort order
+  const [runSearch, setRunSearch]                   = useState("");
+  const [runSortDir, setRunSortDir]                 = useState("asc"); // "asc" | "desc" — run_name sort order
   const [uploadedOntFileObjects, setUploadedOntFileObjects]           = useState({}); // ONT filename → File object
   const [uploadedIlluminaFileObjects, setUploadedIlluminaFileObjects] = useState({}); // Illumina filename → File object
 
@@ -840,6 +903,7 @@ function AssemblyTab() {
             } finally {
               // If the run is done, stop polling regardless of individual result-fetch outcomes
               setAssembled(true);
+              setIsNewRun(false);
               setSubmitting(false);
               setSubmitSuccess(null);
               setPipelinePolling(false);
@@ -964,6 +1028,187 @@ function AssemblyTab() {
   // Ref to track whether the user is currently dragging the right panel for resizing
   const dragging = useRef(false);
 
+  // ── FASTQ upload dropzone: supports browsing files, and dragging-and-dropping
+  // a mix of loose files and folders in one gesture ──
+  const fastqFileInputRef = useRef(null);
+  const [fastqDragOver, setFastqDragOver] = useState(false);
+
+  const handleIncomingFastqFiles = useCallback((files) => {
+    if (!files.length) return;
+
+    // Determine if the experiment type is ONT or Illumina
+    const isOnt = experimentType.toLowerCase().endsWith("ont");
+
+    // Sanitize: replace spaces with underscores
+    const sanitized = files.map(f => f.name.replace(/\s+/g, "_"));
+
+    // Validate: only .fastq, .fastq.gz, .fq, .fq.gz files are accepted (case-insensitive)
+    const nonFastqFiles = sanitized.filter(fname => !/\.(fastq|fq)(\.gz)?$/i.test(fname));
+    if (nonFastqFiles.length > 0) {
+      const err = { items: [`Only FASTQ files (.fastq, .fastq.gz, .fq, .fq.gz) are accepted.`], missing: [...nonFastqFiles] };
+      isOnt ? setUploadOntError(err) : setUploadIlluminaError(err);
+      return;
+    }
+
+    // Validate filenames based on experiment type
+    if (isOnt) {
+
+      // Validate: ONT filenames must contain _barcode##_
+      const invalidFiles = sanitized.filter(fname => !/_barcode\d+_/i.test(fname));
+      if (invalidFiles.length > 0) {
+        setUploadOntError({ items: [`For ONT run, the FASTQ files must contain a barcode pattern (_barcode##_) in their filenames.`], missing: [...invalidFiles] });
+        return;
+      } else {
+        setUploadOntError(null);
+      }
+
+      // Store File objects keyed by sanitized filename
+      const fileMap = {};
+      files.forEach((f, i) => { fileMap[sanitized[i]] = f; });
+      setUploadedOntFileObjects(prev => ({ ...prev, ...fileMap }));
+
+      // Group ONT files by barcode extracted from filename
+      const grouped = {};
+      sanitized.forEach(fname => {
+        const match = fname.match(/_barcode(\d+)_/i);
+        const barcode = match
+          ? `barcode${String(parseInt(match[1])).padStart(2, "0")}`
+          : fname.replace(/\.(fastq|fq)(\.gz)?$/i, "");
+        if (!grouped[barcode]) grouped[barcode] = [];
+        grouped[barcode].push(fname);
+      });
+
+      // Sort barcodes ascending (barcode01, barcode02, ...)
+      const sortedBarcodes = Object.keys(grouped).sort((a, b) => {
+        const na = parseInt(a.match(/\d+/)?.[0] ?? "0");
+        const nb = parseInt(b.match(/\d+/)?.[0] ?? "0");
+        return na - nb;
+      });
+
+      // Continue sample numbering after existing rows
+      const existingNums = ontSampleRows
+        .map(r => parseInt(r.sample_id.replace(/\D+/g, "") || "0"))
+        .filter(Boolean);
+      let sampleCounter = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
+
+      const allPotentialRows = [];
+      sortedBarcodes.forEach(barcode => {
+        const existingByBarcode = ontSampleRows.find(r => r.barcode === barcode);
+        const sample_id = existingByBarcode ? existingByBarcode.sample_id : `sample_${sampleCounter++}`;
+        const sample_type = existingByBarcode ? existingByBarcode.sample_type : "Test";
+        grouped[barcode].forEach(fname => {
+          // Look up status by the specific fastq file first; fall back to barcode-level row
+          const existingByFastq = ontSampleRows.find(r => r.fastq === fname);
+          const status = existingByFastq ? existingByFastq.status : (existingByBarcode ? existingByBarcode.status : "Keep");
+          allPotentialRows.push({
+            barcode: barcode,
+            sample_id: sample_id,
+            sample_type: sample_type,
+            single_end: "true",
+            fastq: fname,
+            status: status
+          });
+        });
+      });
+
+      // Overwrite existing rows with matching fastq and add new ones
+      const ontNewRows = allPotentialRows.filter(r => !ontSampleRows.some(e => e.fastq === r.fastq));
+      const ontUpdates = allPotentialRows.filter(r => ontSampleRows.some(e => e.fastq === r.fastq));
+
+      setOntSampleRows(prev => {
+        const updated = prev.map(r => {
+          const u = ontUpdates.find(m => m.fastq === r.fastq);
+          return u ? { ...r, ...u } : r;
+        });
+        return ontNewRows.length > 0 ? [...updated, ...ontNewRows] : updated;
+      });
+
+      // Accumulate uploaded ONT fastq filenames
+      setUploadOntFastq(prev => [...new Set([...prev, ...sanitized])]);
+
+    } else {
+
+      // Validate: Illumina filenames must contain _R1 or _R2
+      const invalidFiles = sanitized.filter(fname => {
+        const base = fname.replace(/\.(fastq|fq)(\.gz)?$/i, "");
+        return !/_R1(?:_|$)/i.test(base) && !/_R2(?:_|$)/i.test(base);
+      });
+      if (invalidFiles.length > 0) {
+        setUploadIlluminaError({ items: [`For Illumina run, the FASTQ files must contain "_R1" or "_R2" in their filenames.`], missing: [...invalidFiles] });
+        return;
+      } else {
+        setUploadIlluminaError(null);
+      }
+
+      // Store File objects keyed by sanitized filename
+      const fileMap = {};
+      files.forEach((f, i) => { fileMap[sanitized[i]] = f; });
+      setUploadedIlluminaFileObjects(prev => ({ ...prev, ...fileMap }));
+
+      // Pair R1 / R2 files by sample_id prefix
+      // Matches _R1_ (mid-filename) or _R1 at end, e.g. SAMPLE_R1_001 or SAMPLE_R1
+      const grouped = {};
+      sanitized.forEach(fname => {
+        const base = fname.replace(/\.(fastq|fq)(\.gz)?$/i, "");
+        const r1 = base.match(/^(.+?)_R1(?:_|$)/i);
+        const r2 = base.match(/^(.+?)_R2(?:_|$)/i);
+        let sampleId, read;
+        if (r1) { sampleId = r1[1]; read = "R1"; }
+        else if (r2) { sampleId = r2[1]; read = "R2"; }
+        else { sampleId = base; read = "R1"; }
+        if (!grouped[sampleId]) grouped[sampleId] = {};
+        grouped[sampleId][read] = fname;
+      });
+      const allPotentialRows = Object.entries(grouped).map(([sampleId, reads]) => ({
+        sample_id: sampleId,
+        sample_type: "Test",
+        single_end: reads.R1 && reads.R2 ? "false" : "true",
+        fastq_1: reads.R1 || "",
+        fastq_2: reads.R2 || "",
+        status: "Keep",
+      }));
+
+      // Classify each new row: new sample or overwrite existing
+      const newRows = [];
+      const mergeUpdates = [];
+
+      for (const newRow of allPotentialRows) {
+        const existingRow = illuminaSampleRows.find(e => e.sample_id === newRow.sample_id);
+        if (!existingRow) {
+          newRows.push(newRow);
+        } else {
+          const sample_id = existingRow.sample_id;
+          const sample_type = existingRow.sample_type;
+          const fastq_1 = existingRow.fastq_1 ? existingRow.fastq_1 : newRow.fastq_1;
+          const fastq_2 = existingRow.fastq_2 ? existingRow.fastq_2 : newRow.fastq_2;
+          const single_end = fastq_1 && fastq_2 ? "false" : "true";
+          const status = existingRow.status;
+          mergeUpdates.push({
+            sample_id:  sample_id,
+            sample_type: sample_type,
+            fastq_1:    fastq_1,
+            fastq_2:    fastq_2,
+            single_end: single_end,
+            status: status,
+          });
+        }
+      }
+
+      // Apply updates + additions atomically
+      setIlluminaSampleRows(prev => {
+        const updated = prev.map(r => {
+          const u = mergeUpdates.find(m => m.sample_id === r.sample_id);
+          return u ? { ...r, ...u } : r;
+        });
+        return newRows.length > 0 ? [...updated, ...newRows] : updated;
+      });
+
+      // Accumulate uploaded Illumina fastq filenames
+      setUploadIlluminaFastq(prev => [...new Set([...prev, ...sanitized])]);
+
+    }
+  }, [experimentType, ontSampleRows, illuminaSampleRows]);
+
   // Ref-based (synchronous) guard against double-submission — React state updates
   // (e.g. `submitting`) are batched, so a fast double-click can invoke submitAssembly
   // twice before the button's `disabled` prop takes effect, launching two MIRA-NF
@@ -1041,6 +1286,7 @@ function AssemblyTab() {
     await Promise.all(fetchPromises);
   }, [selectedRun, resultSampleCoverageSankey, resultSampleCoveragePlot]);
 
+  // Reset all state variables to their initial values, effectively clearing the form and any loaded run data
   const resetRun = useCallback(() => {
 
     // Cancel any ongoing run if submitProcessId exists
@@ -1053,7 +1299,23 @@ function AssemblyTab() {
     setRunName("");
     setExperimentType("");
     setPrimer("");
+    setCustomPrimers("");
+    setUseCustomPrimers(false);
+    setPrimerKmerLen("");
+    setPrimerRestrictWindow("");
     setSubSample("0");
+    setUseIrmaModule(false);
+    setIrmaModule("");
+    setUseCustomIrmaConfig(false);
+    setCustomIrmaConfig("");
+    setUseCustomQcSettings(false);
+    setCustomQcSettings("");
+    setCustomPrimersFile(null);
+    setCustomIrmaConfigFile(null);
+    setCustomQcSettingsFile(null);
+    setLoadedCustomPrimersName("");
+    setLoadedCustomIrmaConfigName("");
+    setLoadedCustomQcSettingsName("");
     setCreateParquet(false);
     setNextclade(true);
     setExportFmt("fasta");
@@ -1072,15 +1334,19 @@ function AssemblyTab() {
     setLoadRunLoading(false);
     setLoadRunError(null);
     setSelectedRun(null);
+    setLoadRunSelectedRow(null);
     setRunSearch("");
+    setRunSortDir("asc");
     setExportRunModal(false);
     setExportRunSearch("");
+    setExportRunSortDir("asc");
     setExportSelectedRun(null);
     setExportRunLoading(false);
     setExportRunError(null);
     setExportDownloading(false);
     setEditRunModal(false);
     setEditRunSearch("");
+    setEditRunSortDir("asc");
     setEditRunLoading(false);
     setEditRunError(null);
     setEditSelectedRun(null);
@@ -1088,7 +1354,9 @@ function AssemblyTab() {
     setEditNewName("");
     setEditActionLoading(false);
     setEditActionError(null);
+    setConfirmRemoveIdx(null);
     setShowDAG(false);
+    setFastqDragOver(false);
     setUploadOntError(null);
     setUploadIlluminaError(null);
     setUploadOntFastq([]);
@@ -1122,6 +1390,7 @@ function AssemblyTab() {
     setOpenStep(new Set(ASSEMBLY_STEPS.map((s) => s.id)));
   }, []);
 
+  // ── Load run modal: fetches available runs from the backend and displays them in a table ──
   const openLoadRunModal = useCallback(async () => {
     setLoadRunModal(true);
     setLoadRunLoading(true);
@@ -1306,6 +1575,7 @@ function AssemblyTab() {
     }
   }, [editSelectedRun, selectedRun, resetRun]);
 
+  // Load a selected run from the backend API and populate the form with its data
   const handleLoadRun = useCallback(async (runOverride) => {
     const run = runOverride ?? loadRunSelectedRow;
     if (!run) return;
@@ -1328,12 +1598,26 @@ function AssemblyTab() {
 
       // run_info comes back as a list; take the first row
       const info = Array.isArray(data.run_info) ? data.run_info[0] : data.run_info;
+      if (!info) throw new Error("Run data not found.");
       setRunName(info.run_name ?? "");
       setExperimentType(info.experiment_type ?? "");
       setPrimer(info.sc2_primer || info.rsv_primer || "");
-      setSubSample(String(info.subsample ?? 0));
+      setCustomPrimers(info.custom_primers || "");
+      setUseCustomPrimers(Boolean(info.custom_primers));
+      setLoadedCustomPrimersName(info.custom_primers || "");
+      setPrimerKmerLen(info.primer_kmer_len ? String(info.primer_kmer_len) : "");
+      setPrimerRestrictWindow(info.primer_restrict_window ? String(info.primer_restrict_window) : "");
+      setSubSample(String(info.subsample_reads ?? 0));
+      setIrmaModule(info.irma_module || "");
+      setUseIrmaModule(Boolean(info.irma_module));
+      setCustomIrmaConfig(info.custom_irma_config || "");
+      setUseCustomIrmaConfig(Boolean(info.custom_irma_config));
+      setLoadedCustomIrmaConfigName(info.custom_irma_config || "");
+      setCustomQcSettings(info.custom_qc_settings || "");
+      setUseCustomQcSettings(Boolean(info.custom_qc_settings));
+      setLoadedCustomQcSettingsName(info.custom_qc_settings || "");
       setCreateParquet(info.parquet_files ?? false);
-      setNextclade(info.run_nextclade ?? true);
+      setNextclade(info.nextclade ?? true);
       const isOnt = (info.experiment_type ?? "").toLowerCase().endsWith("ont");
       const rows = Array.isArray(data.samplesheet) ? data.samplesheet : [];
       if (isOnt) {
@@ -1358,20 +1642,57 @@ function AssemblyTab() {
         setOntSampleRows([]);
       }
 
-      // Reset the uploaded file objects to null, since we are loading an existing run
+      // Reset the uploaded/selected file objects, since we are loading an existing run and
+      // don't have the actual File objects for its already-stored custom config files —
+      // stale File objects left over from a prior "New Run" session must not leak into a
+      // "Re-run" submission and silently overwrite this run's stored files.
       setUploadedOntFileObjects({});
       setUploadedIlluminaFileObjects({});
+      setCustomPrimersFile(null);
+      setCustomIrmaConfigFile(null);
+      setCustomQcSettingsFile(null);
 
       // This run is now the page's actively loaded/polled run — set it here rather than
       // relying on the modal's row-selection state, which resets whenever the modal reopens
       setSelectedRun(run);
 
+      // Clear any results/DAG left over from a previously loaded or submitted run so stale
+      // data doesn't flash before this run's own data is fetched
+      setPipelineDAG(null);
+      setResultBarcodeAssignments(null);
+      setResultQcStatement(null);
+      setResultQcDecisions(null);
+      setResultCoverageHeatmap(null);
+      setResultMiraSummary(null);
+      setMiraSummaryPage(0);
+      setResultSampleCoverageList(null);
+      setSelectedSampleForCoverage("");
+      setResultSampleCoverageSankey(null);
+      setResultSampleCoveragePlot(null);
+      setResultVariants(null);
+      setVariantsPage(0);
+      setResultMinorSnvs(null);
+      setMinorSnvsPage(0);
+      setResultIndels(null);
+      setIndelsPage(0);
+      setResultNtPassedFasta(null);
+      setResultNtFailedFasta(null);
+      setResultAaPassedFasta(null);
+      setResultAaFailedFasta(null);
+      setResultNextcladeFasta(null);
+
       // Update state to reflect loaded run
       setSubmitSuccess(null);
       setSubmitError(null);
       setIsNewRun(false);
-      setAssembled(true);
-      setCancelRun(true);
+      setSubmitProcessId(null);
+
+      // A run still actively PROCESSING has no results yet and must keep polling live;
+      // any other status (COMPLETED/FAILED/CANCELED/SUBMITTED) is treated as done so its
+      // existing results are fetched in a single pass instead of polling indefinitely.
+      const isActive = (info.assembly_status ?? run.assembly_status) === "PROCESSING";
+      setAssembled(!isActive);
+      setCancelRun(!isActive);
 
       // Start polling the pipeline status and show the DAG view
       setPipelinePolling(true);
@@ -1403,13 +1724,13 @@ function AssemblyTab() {
     }
 
     // Validate primer selection for SC2 experiments
-    if (experimentType.includes("SC2") && !primer) {
+    if (experimentType.includes("SC2") && experimentType.includes("Illumina") && !primer) {
       setSubmitError({ title: "Assembly Error", items: ["SC2 experiments require a primer selection."], missing: null });
       return;
     }
 
     // Validate primer selection for RSV experiments
-    if (experimentType.includes("RSV") && !primer) {
+    if (experimentType.includes("RSV") && experimentType.includes("Illumina") && !primer) {
       setSubmitError({ title: "Assembly Error", items: ["RSV experiments require a primer selection."], missing: null });
       return;
     }
@@ -1417,6 +1738,46 @@ function AssemblyTab() {
     // Validate subsample value
     if (!subSample || isNaN(parseInt(subSample)) || parseInt(subSample) < 0) {
       setSubmitError({ title: "Assembly Error", items: ["Subsample must be a non-negative integer."], missing: null });
+      return;
+    }
+
+    // Custom Primers requires a file path, primer_kmer_len, and primer_restrict_window to also be set
+    if (useCustomPrimers) {
+      if (!customPrimers) {
+        setSubmitError({ title: "Assembly Error", items: ["Please provide your custom primer FASTA file or turn off Custom Primers."], missing: null });
+        return;
+      }
+      if (!primerKmerLen || isNaN(parseInt(primerKmerLen)) || parseInt(primerKmerLen) < 0) {
+        setSubmitError({ title: "Assembly Error", items: ["primer_kmer_len is required and must be a non-negative integer when Custom Primers is used."], missing: null });
+        return;
+      }
+      if (!primerRestrictWindow || isNaN(parseInt(primerRestrictWindow)) || parseInt(primerRestrictWindow) < 0) {
+        setSubmitError({ title: "Assembly Error", items: ["primer_restrict_window is required and must be a non-negative integer when Custom Primers is used."], missing: null });
+        return;
+      }
+    }
+
+    // IRMA Module can only be invoked for Flu-Illumina experiments, and requires a module selection
+    if (useIrmaModule) {
+      if (experimentType !== "Flu-Illumina") {
+        setSubmitError({ title: "Assembly Error", items: ["IRMA Module can only be used with the Flu-Illumina experiment type."], missing: null });
+        return;
+      }
+      if (!irmaModule) {
+        setSubmitError({ title: "Assembly Error", items: ["Please select an IRMA Module (sensitive, secondary, or utr) or turn off IRMA Module."], missing: null });
+        return;
+      }
+    }
+
+    // Custom IRMA Config requires a file path when enabled
+    if (useCustomIrmaConfig && !customIrmaConfig) {
+      setSubmitError({ title: "Assembly Error", items: ["Please provide a custom IRMA config file or turn off Custom IRMA Config."], missing: null });
+      return;
+    }
+
+    // Custom QC Settings requires a file path when enabled
+    if (useCustomQcSettings && !customQcSettings) {
+      setSubmitError({ title: "Assembly Error", items: ["Please provide a custom QC settings file or turn off Custom QC Settings."], missing: null });
       return;
     }
 
@@ -1471,18 +1832,21 @@ function AssemblyTab() {
 
     // Construct the request body for the API
     const body = {
-      run_name:           runName,
-      experiment_type:    experimentType,
-      subsample:          parseInt(subSample) || 0,
-      sc2_primer:         experimentType.includes("SC2") ? (primer || "") : "",
-      rsv_primer:         experimentType.includes("RSV") ? (primer || "") : "",
-      parquet_files:      createParquet,
-      run_nextclade:      nextclade,
-      irma_module:        "",
-      custom_irma_config: "",
-      custom_qc_settings: "",
-      assembly_status:    "SUBMITTED",
-      samplesheet:        formattedSamplesheet,
+      run_name:               runName,
+      experiment_type:        experimentType,
+      sc2_primer:             experimentType.includes("SC2") ? (primer || "") : "",
+      rsv_primer:             experimentType.includes("RSV") ? (primer || "") : "",
+      subsample_reads:        parseInt(subSample) || 0,
+      custom_primers:         useCustomPrimers && customPrimers ? customPrimers : "",
+      primer_kmer_len:        useCustomPrimers && customPrimers && primerKmerLen ? (parseInt(primerKmerLen) || 0) : 0,
+      primer_restrict_window: useCustomPrimers && customPrimers && primerRestrictWindow ? (parseInt(primerRestrictWindow) || 0) : 0,
+      irma_module:            useIrmaModule && irmaModule ? irmaModule : "",
+      custom_irma_config:     useCustomIrmaConfig && customIrmaConfig ? customIrmaConfig : "",
+      custom_qc_settings:     useCustomQcSettings && customQcSettings ? customQcSettings : "",
+      parquet_files:          createParquet,
+      nextclade:              nextclade,
+      samplesheet:            formattedSamplesheet,
+      assembly_status:        "SUBMITTED",
     };
 
     // Run the submission in a try/catch block to handle errors
@@ -1493,7 +1857,7 @@ function AssemblyTab() {
       setSubmitting(true);
 
       // Check if the run name already exists in the database (for new runs only)
-      if (isNewRun) {
+      if (isNewRun === true && assembled === false) {
         const checkRes = await fetch(`${API.retrieveRun}?run_name=${encodeURIComponent(runName)}&experiment_type=${encodeURIComponent(experimentType)}`);
         const checkData = await checkRes.json();
         if (!checkRes.ok) throw new Error(checkData.detail || "Failed to check run name");
@@ -1517,7 +1881,7 @@ function AssemblyTab() {
       // Set the run as not new, since we are submitting it now
       setIsNewRun(false);
 
-      // ── Step 2: upload FASTQ files the user provided via the file picker ──
+      // ── Step 2.1: upload FASTQ files the user provided via the file picker ──
       const filesToUpload = samplesheet.flatMap(r => {
         if (isOnt) {
           const f = r.fastq && uploadedOntFileObjects[r.fastq];
@@ -1541,13 +1905,53 @@ function AssemblyTab() {
         }
       }
 
-      // ── Step 3: Validate samplesheet and fastq files exist for each sample ──
+      // ── Step 2.2: Upload custom primer, custom IRMA config, and custom QC settings files if a new file was selected ──
+      if (useCustomPrimers && customPrimersFile) {
+        const primerForm = new FormData();
+        primerForm.append("run_name", runName);
+        primerForm.append("experiment_type", experimentType);
+        primerForm.append("custom_primer_config_file", customPrimersFile);
+        const primerRes = await fetch(API.uploadCustomPrimerConfig, { method: "POST", body: primerForm });
+        const primerData = await primerRes.json().catch(() => ({}));
+        if (!primerRes.ok) throw new Error(primerData.detail || "Failed to upload custom primer config file");
+      }
+      if (useCustomIrmaConfig && customIrmaConfigFile) {
+        const irmaForm = new FormData();
+        irmaForm.append("run_name", runName);
+        irmaForm.append("experiment_type", experimentType);
+        irmaForm.append("custom_irma_config_file", customIrmaConfigFile);
+        const irmaRes = await fetch(API.uploadCustomIrmaConfig, { method: "POST", body: irmaForm });
+        const irmaData = await irmaRes.json().catch(() => ({}));
+        if (!irmaRes.ok) throw new Error(irmaData.detail || "Failed to upload custom IRMA config file");
+      }
+      if (useCustomQcSettings && customQcSettingsFile) {
+        const qcForm = new FormData();
+        qcForm.append("run_name", runName);
+        qcForm.append("experiment_type", experimentType);
+        qcForm.append("custom_qc_settings_file", customQcSettingsFile);
+        const qcRes = await fetch(API.uploadCustomQcSettings, { method: "POST", body: qcForm });
+        const qcData = await qcRes.json().catch(() => ({}));
+        if (!qcRes.ok) throw new Error(qcData.detail || "Failed to upload custom QC settings file");
+      }
+
+      // ── Step 3.1: Validate samplesheet and fastq files exist for each sample ──
       const valRes = await fetch(`${API.validateRun}?run_name=${encodeURIComponent(runName)}&experiment_type=${encodeURIComponent(experimentType)}`);
       const valData = await valRes.json();
       if (!valRes.ok) throw new Error(valData.detail || "Validation failed");
       if (valData.validation_status !== "passed") {
         const valItems = Array.isArray(valData.message) ? valData.message : [valData.message || valData.validation_status];
         setSubmitError({ title: "Validation Error", items: valItems, missing: valData.missing_fastq_files?.length ? { title: "Missing Samples", samples: valData.missing_fastq_files } : null });
+        setSubmitting(false);
+        return;
+      }
+
+      // ── Step 3.2: Validate custom primers, custom irma config, and custom qc settings files if provided ──
+      const customValRes = await fetch(`${API.validateCustomConfigs}?run_name=${encodeURIComponent(runName)}&experiment_type=${encodeURIComponent(experimentType)}`);
+      const customValData = await customValRes.json();
+      if (!customValRes.ok) throw new Error(customValData.detail || "Custom configuration validation failed");
+      if (customValData.validation_status !== "passed") {
+        const customValItems = Array.isArray(customValData.message) ? customValData.message : [customValData.message || customValData.validation_status];
+        setSubmitError({ title: "Custom Configuration Validation Error", items: customValItems, missing: customValData.missing_config_files?.length ? { title: "Missing Config Files", files: customValData.missing_config_files } : null });
         setSubmitting(false);
         return;
       }
@@ -1612,7 +2016,7 @@ function AssemblyTab() {
       setSubmitting(false);
     }
 
-  }, [experimentType, ontSampleRows, illuminaSampleRows, runName, subSample, primer, createParquet, nextclade]);
+  }, [runName, experimentType, ontSampleRows, illuminaSampleRows, subSample, primer, customPrimers, useCustomPrimers, primerKmerLen, primerRestrictWindow, useIrmaModule, irmaModule, useCustomIrmaConfig, customIrmaConfig, useCustomQcSettings, customQcSettings, customPrimersFile, customIrmaConfigFile, customQcSettingsFile, createParquet, nextclade, isNewRun, assembled]);
 
   // True once assembly finishes but every result field is still empty (nothing to display).
   const hasNoResults = [
@@ -1688,7 +2092,8 @@ function AssemblyTab() {
                         value={experimentType}
                         onChange={(e) => {
                           setExperimentType(e.target.value);
-                          setPrimer(e.target.value?.startsWith("SC2") ? SC2_PRIMERS[0].value : e.target.value?.startsWith("RSV") ? RSV_PRIMERS[0].value : "");
+                          setPrimer(e.target.value?.startsWith("SC2") && e.target.value?.endsWith("Illumina") ? SC2_PRIMERS[0].value : e.target.value?.startsWith("RSV") && e.target.value?.endsWith("Illumina") ? RSV_PRIMERS[0].value : "");
+                          if (e.target.value !== "Flu-Illumina") { setUseIrmaModule(false); setIrmaModule(""); }
                         }}
                         disabled={!isNewRun}
                         className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
@@ -1706,10 +2111,10 @@ function AssemblyTab() {
                           onChange={(e) => setPrimer(e.target.value)}
                           className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                         >
-                          {experimentType?.startsWith("SC2") && SC2_PRIMERS.map(({ value, label }) => (
+                          {experimentType?.startsWith("SC2") && experimentType?.endsWith("Illumina") && SC2_PRIMERS.map(({ value, label }) => (
                             <option key={value} value={value}>{label}</option>
                           ))}
-                          {experimentType?.startsWith("RSV") && RSV_PRIMERS.map(({ value, label }) => (
+                          {experimentType?.startsWith("RSV") && experimentType?.endsWith("Illumina") && RSV_PRIMERS.map(({ value, label }) => (
                             <option key={value} value={value}>{label}</option>
                           ))}
                         </select>
@@ -1758,197 +2163,34 @@ function AssemblyTab() {
 
                     <div>
                       <FieldLabel>Upload FASTQ Files</FieldLabel>
-                      <label className="flex flex-col items-center justify-center gap-2 h-28 rounded-xl border-2 border-dashed border-border bg-muted/10 hover:bg-muted/20 cursor-pointer transition-colors text-muted-foreground text-sm">
+                      <div
+                        onClick={() => fastqFileInputRef.current?.click()}
+                        onDragOver={(e) => { e.preventDefault(); setFastqDragOver(true); }}
+                        onDragLeave={() => setFastqDragOver(false)}
+                        onDrop={async (e) => {
+                          e.preventDefault();
+                          setFastqDragOver(false);
+                          const files = await collectFilesFromDataTransfer(e.dataTransfer);
+                          handleIncomingFastqFiles(files);
+                        }}
+                        className={cn(
+                          "flex flex-col items-center justify-center gap-2 h-28 rounded-xl border-2 border-dashed bg-muted/10 hover:bg-muted/20 cursor-pointer transition-colors text-muted-foreground text-sm",
+                          fastqDragOver ? "border-primary bg-primary/5" : "border-border"
+                        )}
+                      >
                         <Upload size={22} />
-                        <span>Drag &amp; drop or <span className="text-primary underline">browse</span></span>
-                        <span className="text-xs opacity-60">.fastq, .fastq.gz, .fq, .fq.gz accepted, and sample names must not contain any spaces. If exists, spaces will be replaced with underscores.</span>
-                        <input type="file" className="hidden" multiple
-                          onChange={(e) => {
-                            
-                            // Handle file selection and validation
-                            const files = Array.from(e.target.files || []);
-                            if (!files.length) return;
-
-                            // Determine if the experiment type is ONT or Illumina
-                            const isOnt = experimentType.toLowerCase().endsWith("ont");
-
-                            // Sanitize: replace spaces with underscores
-                            const sanitized = files.map(f => f.name.replace(/\s+/g, "_"));
-
-                            // Validate: only .fastq, .fastq.gz, .fq, .fq.gz files are accepted (case-insensitive)
-                            const nonFastqFiles = sanitized.filter(fname => !/\.(fastq|fq)(\.gz)?$/i.test(fname));
-                            if (nonFastqFiles.length > 0) {
-                              const err = { items: [`Only FASTQ files (.fastq, .fastq.gz, .fq, .fq.gz) are accepted.`], missing: [...nonFastqFiles] };
-                              isOnt ? setUploadOntError(err) : setUploadIlluminaError(err);
-                              e.target.value = "";
-                              return;
-                            }
-
-                            // Validate filenames based on experiment type
-                            if (isOnt) {
-
-                              // Validate: ONT filenames must contain _barcode##_
-                              const invalidFiles = sanitized.filter(fname => !/_barcode\d+_/i.test(fname));
-                              if (invalidFiles.length > 0) {
-                                setUploadOntError({ items: [`For ONT run, the FASTQ files must contain a barcode pattern (_barcode##_) in their filenames.`], missing: [...invalidFiles] });
-                                e.target.value = "";
-                                return;
-                              } else {
-                                setUploadOntError(null);
-                              }
-
-                              // Store File objects keyed by sanitized filename
-                              const fileMap = {};
-                              files.forEach((f, i) => { fileMap[sanitized[i]] = f; });
-                              setUploadedOntFileObjects(prev => ({ ...prev, ...fileMap }));
-                            
-                              // Group ONT files by barcode extracted from filename
-                              const grouped = {};
-                              sanitized.forEach(fname => {
-                                const match = fname.match(/_barcode(\d+)_/i);
-                                const barcode = match
-                                  ? `barcode${String(parseInt(match[1])).padStart(2, "0")}`
-                                  : fname.replace(/\.(fastq|fq)(\.gz)?$/i, "");
-                                if (!grouped[barcode]) grouped[barcode] = [];
-                                grouped[barcode].push(fname);
-                              });
-
-                              // Sort barcodes ascending (barcode01, barcode02, ...)
-                              const sortedBarcodes = Object.keys(grouped).sort((a, b) => {
-                                const na = parseInt(a.match(/\d+/)?.[0] ?? "0");
-                                const nb = parseInt(b.match(/\d+/)?.[0] ?? "0");
-                                return na - nb;
-                              });
-
-                              // Continue sample numbering after existing rows
-                              const existingNums = ontSampleRows
-                                .map(r => parseInt(r.sample_id.replace(/\D+/g, "") || "0"))
-                                .filter(Boolean);
-                              let sampleCounter = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
-
-                              const allPotentialRows = [];
-                              sortedBarcodes.forEach(barcode => {
-                                const existingByBarcode = ontSampleRows.find(r => r.barcode === barcode);
-                                const sample_id = existingByBarcode ? existingByBarcode.sample_id : `sample_${sampleCounter++}`;
-                                const sample_type = existingByBarcode ? existingByBarcode.sample_type : "Test";
-                                grouped[barcode].forEach(fname => {
-                                  // Look up status by the specific fastq file first; fall back to barcode-level row
-                                  const existingByFastq = ontSampleRows.find(r => r.fastq === fname);
-                                  const status = existingByFastq ? existingByFastq.status : (existingByBarcode ? existingByBarcode.status : "Keep");
-                                  allPotentialRows.push({
-                                    barcode: barcode, 
-                                    sample_id: sample_id, 
-                                    sample_type: sample_type, 
-                                    single_end: "true", 
-                                    fastq: fname,
-                                    status: status
-                                  });
-                                });
-                              });
-
-                              // Overwrite existing rows with matching fastq and add new ones
-                              const ontNewRows = allPotentialRows.filter(r => !ontSampleRows.some(e => e.fastq === r.fastq));
-                              const ontUpdates = allPotentialRows.filter(r => ontSampleRows.some(e => e.fastq === r.fastq));
-
-                              setOntSampleRows(prev => {
-                                const updated = prev.map(r => {
-                                  const u = ontUpdates.find(m => m.fastq === r.fastq);
-                                  return u ? { ...r, ...u } : r;
-                                });
-                                return ontNewRows.length > 0 ? [...updated, ...ontNewRows] : updated;
-                              });
-
-                              // Accumulate uploaded ONT fastq filenames
-                              setUploadOntFastq(prev => [...new Set([...prev, ...sanitized])]);
-
-                            } else {
-
-                              // Validate: Illumina filenames must contain _R1 or _R2
-                              const invalidFiles = sanitized.filter(fname => {
-                                const base = fname.replace(/\.(fastq|fq)(\.gz)?$/i, "");
-                                return !/_R1(?:_|$)/i.test(base) && !/_R2(?:_|$)/i.test(base);
-                              });
-                              if (invalidFiles.length > 0) {
-                                setUploadIlluminaError({ items: [`For Illumina run, the FASTQ files must contain "_R1" or "_R2" in their filenames.`], missing: [...invalidFiles] });
-                                e.target.value = "";
-                                return;
-                              }else {
-                                setUploadIlluminaError(null);
-                              }
-
-                              // Store File objects keyed by sanitized filename
-                              const fileMap = {};
-                              files.forEach((f, i) => { fileMap[sanitized[i]] = f; });
-                              setUploadedIlluminaFileObjects(prev => ({ ...prev, ...fileMap }));
-
-                              // Pair R1 / R2 files by sample_id prefix
-                              // Matches _R1_ (mid-filename) or _R1 at end, e.g. SAMPLE_R1_001 or SAMPLE_R1
-                              const grouped = {};
-                              sanitized.forEach(fname => {
-                                const base = fname.replace(/\.(fastq|fq)(\.gz)?$/i, "");
-                                const r1 = base.match(/^(.+?)_R1(?:_|$)/i);
-                                const r2 = base.match(/^(.+?)_R2(?:_|$)/i);
-                                let sampleId, read;
-                                if (r1) { sampleId = r1[1]; read = "R1"; }
-                                else if (r2) { sampleId = r2[1]; read = "R2"; }
-                                else { sampleId = base; read = "R1"; }
-                                if (!grouped[sampleId]) grouped[sampleId] = {};
-                                grouped[sampleId][read] = fname;
-                              });
-                              const allPotentialRows = Object.entries(grouped).map(([sampleId, reads]) => ({
-                                sample_id: sampleId,
-                                sample_type: "Test",
-                                single_end: reads.R1 && reads.R2 ? "false" : "true",
-                                fastq_1: reads.R1 || "",
-                                fastq_2: reads.R2 || "",
-                                status: "Keep",
-                              }));
-
-                              // Classify each new row: new sample or overwrite existing
-                              const newRows = [];
-                              const mergeUpdates = [];
-
-                              for (const newRow of allPotentialRows) {
-                                const existingRow = illuminaSampleRows.find(e => e.sample_id === newRow.sample_id);
-                                if (!existingRow) {
-                                  newRows.push(newRow);
-                                } else {
-                                  const sample_id = existingRow.sample_id;
-                                  const sample_type = existingRow.sample_type;
-                                  const fastq_1 = existingRow.fastq_1 ? existingRow.fastq_1 : newRow.fastq_1;
-                                  const fastq_2 = existingRow.fastq_2 ? existingRow.fastq_2 : newRow.fastq_2;
-                                  const single_end = fastq_1 && fastq_2 ? "false" : "true";
-                                  const status = existingRow.status;
-                                  mergeUpdates.push({
-                                    sample_id:  sample_id,
-                                    sample_type: sample_type,
-                                    fastq_1:    fastq_1,
-                                    fastq_2:    fastq_2,
-                                    single_end: single_end,
-                                    status: status,
-                                  });
-                                }
-                              }
-
-                              // Apply updates + additions atomically
-                              setIlluminaSampleRows(prev => {
-                                const updated = prev.map(r => {
-                                  const u = mergeUpdates.find(m => m.sample_id === r.sample_id);
-                                  return u ? { ...r, ...u } : r;
-                                });
-                                return newRows.length > 0 ? [...updated, ...newRows] : updated;
-                              });
-
-                              // Accumulate uploaded Illumina fastq filenames
-                              setUploadIlluminaFastq(prev => [...new Set([...prev, ...sanitized])]); 
-
-                            }
-
-                            e.target.value = ""; // allow re-selecting same files
-
-                          }}
+                        <span>
+                          Drag &amp; drop files or folders, or <span className="text-primary underline">browse files</span>
+                        </span>
+                        <span className="text-xs opacity-60">.fastq, .fastq.gz, .fq, .fq.gz accepted — dropped folders are scanned recursively. Sample names must not contain any spaces — spaces will be replaced with underscores.</span>
+                        <input
+                          ref={fastqFileInputRef}
+                          type="file"
+                          className="hidden"
+                          multiple
+                          onChange={(e) => { handleIncomingFastqFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
                         />
-                      </label>
+                      </div>
                     </div>
 
                     {(experimentType.toLowerCase().endsWith("ont") ? ontSampleRows : illuminaSampleRows).length > 0 && (
@@ -2133,6 +2375,194 @@ function AssemblyTab() {
                         className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                       />
                     </div>
+
+                    <button
+                      onClick={() => setUseCustomPrimers((v) => !v)}
+                      className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
+                    >
+                      <div>
+                        <p className="text-sm font-medium">Custom Primers</p>
+                        <p className="text-xs text-muted-foreground">When set to true, this flag will allow you to provide a custom primer FASTA file and its associated parameters.</p>
+                      </div>
+                      <span className={cn(
+                        "relative w-10 h-5 rounded-full transition-colors shrink-0 pointer-events-none",
+                        useCustomPrimers ? "bg-primary" : "bg-muted"
+                      )}>
+                        <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform", useCustomPrimers ? "translate-x-5" : "translate-x-0.5")} />
+                      </span>
+                    </button>
+
+                    {useCustomPrimers && (
+                      <>
+                        <div>
+                          {!isNewRun && loadedCustomPrimersName && (
+                            <p className="mb-2 text-md text-muted-foreground">Currently stored file: <span className="font-mono text-foreground">{loadedCustomPrimersName}</span></p>
+                          )}                          
+                          <FieldLabel>Custom Primer FASTA File <span className="text-destructive">*</span></FieldLabel>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={customPrimers}
+                              onChange={(e) => setCustomPrimers(e.target.value)}
+                              placeholder="e.g. custom_primers.fasta"
+                              className="flex-1 h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                            />
+                            <label className="flex items-center gap-1.5 px-3 h-9 rounded-md border border-border bg-muted/20 hover:bg-muted/40 cursor-pointer text-xs text-muted-foreground transition-colors shrink-0">
+                              <FolderOpen size={13} /> Browse
+                              <input
+                                type="file"
+                                className="hidden"
+                                accept=".fasta,.fa,.fna"
+                                onChange={(e) => { const f = e.target.files?.[0]; if (f) { setCustomPrimers(f.name); setCustomPrimersFile(f); } e.target.value = ""; }}
+                              />
+                            </label>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <FieldLabel>primer_kmer_len <span className="text-destructive">*</span></FieldLabel>
+                            <input
+                              type="number"
+                              value={primerKmerLen}
+                              onChange={(e) => setPrimerKmerLen(e.target.value)}
+                              placeholder="e.g. 25"
+                              min={0}
+                              className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                            />
+                          </div>
+                          <div>
+                            <FieldLabel>primer_restrict_window <span className="text-destructive">*</span></FieldLabel>
+                            <input
+                              type="number"
+                              value={primerRestrictWindow}
+                              onChange={(e) => setPrimerRestrictWindow(e.target.value)}
+                              placeholder="e.g. 30"
+                              min={0}
+                              className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {experimentType === "Flu-Illumina" && (
+                      <>
+                        <button
+                          onClick={() => setUseIrmaModule((v) => !v)}
+                          className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
+                        >
+                          <div>
+                            <p className="text-sm font-medium">IRMA Module</p>
+                            <p className="text-xs text-muted-foreground">When set to true, this flag will allow you to call flu-sensitive, flu-secondary or flu-utr IRMA module instead of the built-in flu configs.</p>
+                          </div>
+                          <span className={cn(
+                            "relative w-10 h-5 rounded-full transition-colors shrink-0 pointer-events-none",
+                            useIrmaModule ? "bg-primary" : "bg-muted"
+                          )}>
+                            <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform", useIrmaModule ? "translate-x-5" : "translate-x-0.5")} />
+                          </span>
+                        </button>
+
+                        {useIrmaModule && (
+                          <div>
+                            <select
+                              value={irmaModule}
+                              onChange={(e) => setIrmaModule(e.target.value)}
+                              className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                            >
+                              <option value="">— Select IRMA module —</option>
+                              <option value="sensitive">sensitive</option>
+                              <option value="secondary">secondary</option>
+                              <option value="utr">utr</option>
+                            </select>
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    <button
+                      onClick={() => setUseCustomIrmaConfig((v) => !v)}
+                      className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
+                    >
+                      <div>
+                        <p className="text-sm font-medium">Custom IRMA Config</p>
+                        <p className="text-xs text-muted-foreground">When set to true, provide a custom IRMA config file to be used with IRMA assembly.</p>
+                      </div>
+                      <span className={cn(
+                        "relative w-10 h-5 rounded-full transition-colors shrink-0 pointer-events-none",
+                        useCustomIrmaConfig ? "bg-primary" : "bg-muted"
+                      )}>
+                        <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform", useCustomIrmaConfig ? "translate-x-5" : "translate-x-0.5")} />
+                      </span>
+                    </button>
+
+                    {useCustomIrmaConfig && (
+                      <div>
+                        {!isNewRun && loadedCustomIrmaConfigName && (
+                          <p className="mb-2 text-md text-muted-foreground">Currently stored file: <span className="font-mono text-foreground">{loadedCustomIrmaConfigName}</span></p>
+                        )}
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={customIrmaConfig}
+                            onChange={(e) => setCustomIrmaConfig(e.target.value)}
+                            placeholder="e.g. custom_irma_config.sh"
+                            className="flex-1 h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                          />
+                          <label className="flex items-center gap-1.5 px-3 h-9 rounded-md border border-border bg-muted/20 hover:bg-muted/40 cursor-pointer text-xs text-muted-foreground transition-colors shrink-0">
+                            <FolderOpen size={13} /> Browse
+                            <input
+                              type="file"
+                              className="hidden"
+                              onChange={(e) => { const f = e.target.files?.[0]; if (f) { setCustomIrmaConfig(f.name); setCustomIrmaConfigFile(f); } e.target.value = ""; }}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => setUseCustomQcSettings((v) => !v)}
+                      className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
+                    >
+                      <div>
+                        <p className="text-sm font-medium">Custom QC Settings</p>
+                        <p className="text-xs text-muted-foreground">When set to true, provide a custom QC file with pass/fail settings for constructing the summary files.</p>
+                      </div>
+                      <span className={cn(
+                        "relative w-10 h-5 rounded-full transition-colors shrink-0 pointer-events-none",
+                        useCustomQcSettings ? "bg-primary" : "bg-muted"
+                      )}>
+                        <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform", useCustomQcSettings ? "translate-x-5" : "translate-x-0.5")} />
+                      </span>
+                    </button>
+
+                    {useCustomQcSettings && (
+                      <div>
+                        {!isNewRun && loadedCustomQcSettingsName && (
+                          <p className="mb-2 text-md text-muted-foreground">Currently stored file: <span className="font-mono text-foreground">{loadedCustomQcSettingsName}</span></p>
+                        )}
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={customQcSettings}
+                            onChange={(e) => setCustomQcSettings(e.target.value)}
+                            placeholder="e.g. custom_qc_settings.yaml"
+                            className="flex-1 h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                          />
+                          <label className="flex items-center gap-1.5 px-3 h-9 rounded-md border border-border bg-muted/20 hover:bg-muted/40 cursor-pointer text-xs text-muted-foreground transition-colors shrink-0">
+                            <FolderOpen size={13} /> Browse
+                            <input
+                              type="file"
+                              className="hidden"
+                              onChange={(e) => { const f = e.target.files?.[0]; if (f) { setCustomQcSettings(f.name); setCustomQcSettingsFile(f); } e.target.value = ""; }}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    )}
+
                     <button
                       onClick={() => setCreateParquet((v) => !v)}
                       className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
@@ -2192,6 +2622,19 @@ function AssemblyTab() {
                             ))}
                           </div>
                         )}
+                        {Array.isArray(submitError.missing?.files) && submitError.missing.files.length > 0 && (
+                          <div className="mt-2 pt-2 border-t border-red-200 dark:border-red-800 space-y-1">
+                            <p className="font-semibold text-destructive">{submitError.missing.title}</p>
+                            {submitError.missing.files.map((entry, i) => (
+                              <div key={i} className="flex items-start gap-2">
+                                <AlertCircle size={11} className="shrink-0 mt-0.5 text-destructive" />
+                                <span className="text-destructive">
+                                  <span className="font-mono font-semibold">{Object.values(entry)[0]}</span>
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                     <div className="flex items-center gap-2">
@@ -2235,7 +2678,6 @@ function AssemblyTab() {
                         </button>
                       )}
                     </div>
-
                   </StepPanel>
                 )}
 
@@ -3842,14 +4284,23 @@ export default function App() {
   const [activeTab, setActiveTab] = useState(getInitialTab);
   const [darkMode, setDarkMode]   = useState(false);
   const [versionInfo, setVersionInfo] = useState(null);
+  const [backendUp, setBackendUp] = useState(true); // assume healthy until the first check completes
 
-  // Check MIRA-NF version on app startup so we can alert users if it's out-of-date
-  useEffect(() => {
+  // Check MIRA-NF version on app startup so we can alert users if it's out-of-date,
+  // and detect whether the backend API is reachable at all. Re-checked on demand
+  // (e.g. when the notifications button is clicked) rather than on a timer.
+  const checkBackend = useCallback(() => {
     fetch(API.checkVersion)
-      .then((res) => res.json())
-      .then(setVersionInfo)
-      .catch(() => {});
+      .then((res) => {
+        setBackendUp(res.ok);
+        if (res.ok) res.json().then((data) => setVersionInfo(data)).catch(() => {});
+      })
+      .catch(() => setBackendUp(false));
   }, []);
+
+  useEffect(() => {
+    checkBackend();
+  }, [checkBackend]);
 
   // Update the URL hash when the active tab changes
   const updateUrl = (tabId) => {
@@ -3916,7 +4367,7 @@ export default function App() {
           <Dropdown
             panelClassName="w-80"
             trigger={
-              <button className="relative p-2 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition-colors">
+              <button onClick={checkBackend} className="relative p-2 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition-colors">
                 <Bell size={16} />
                 {versionInfo?.status === "out-of-date" && (
                   <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500" />
@@ -4005,6 +4456,14 @@ export default function App() {
 
       {/* ── Main area ────────────────────────────── */}
       <div className="flex-1 flex flex-col overflow-hidden">
+
+        {/* ── Backend API alarm banner ─────────── */}
+        {!backendUp && (
+          <div className="shrink-0 flex items-center gap-2 px-4 py-2 bg-destructive text-destructive-foreground text-sm font-semibold">
+            <AlertCircle size={16} className="shrink-0" />
+            BACKEND API IS NOT RUNNING — please make sure the backend service is up and reachable at <span className="font-mono">{API_BASE}</span>
+          </div>
+        )}
 
         {/* ── Tab bar ──────────────────────────── */}
         <div className="flex border-b border-border bg-background px-3 pt-2 gap-1 shadow-sm shrink-0">

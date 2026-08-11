@@ -1,3 +1,4 @@
 DEPLOY: Docker
 DATA_ROOT: /data
 MIRA_NF_IMAGE: cdcgov/mira-nf:v2.2.0
+REACT_BASE_URL: http://localhost:5175

@@ -1,0 +1,89 @@
+#!/bin/bash
+
+# Exit immediately if any command fails
+set -e
+
+# Get current script directory ####
+FRONTEND_DIR="$( realpath $(dirname "${BASH_SOURCE[0]}") )"
+
+# Command-line argument usage
+print_usage() {
+    cat <<USAGE
+Usage: $(basename "$0") --host_url <HOST_URL> --host <HOST> --react_port <REACT_PORT> --api_port <API_PORT>
+
+Arguments:
+  --host_url <HOST_URL>       Hostname used to build the API base URL written to .env. (default: localhost)
+  --host <HOST>               Address the Vite dev server binds to. (default: 0.0.0.0)
+  --react_port <REACT_PORT>   Port the React dev server runs on. (default: 5175)
+  --api_port <API_PORT>       Port used to build the API base URL written to .env. (default: 8080)
+  -h, --help                  Show this help message and exit.
+USAGE
+}
+
+usage() {
+    print_usage >&2
+    exit 1
+}
+
+# Initialize local server variables
+HOST_URL="localhost"
+HOST="0.0.0.0"
+REACT_PORT="5175"
+API_PORT="8080"
+
+# Parse named arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            print_usage
+            exit 0
+            ;;
+        --host_url)
+            HOST_URL="$2"
+            shift 2
+            ;;
+        --host)
+            HOST="$2"
+            shift 2
+            ;;
+        --react_port)
+            REACT_PORT="$2"
+            shift 2
+            ;;
+        --api_port)
+            API_PORT="$2"
+            shift 2
+            ;;
+        *)
+            echo "Error: Unknown argument '$1'." >&2
+            usage
+            ;;
+    esac
+done
+
+# Require all arguments to be provided
+if [[ -z "${HOST_URL}" || -z "${HOST}" || -z "${REACT_PORT}" || -z "${API_PORT}" ]]; then
+    echo "Invalid arguments." >&2
+    usage
+fi
+
+# Generate .env to be used by the app
+ENV_FILE="${FRONTEND_DIR}/.env"
+echo ""
+echo "Writing VITE_API_BASE_URL=http://${HOST_URL}:${API_PORT} to ${ENV_FILE}"
+cat > "${ENV_FILE}" <<EOF
+VITE_API_BASE_URL="http://${HOST_URL}:${API_PORT}"
+EOF
+
+# Navigate to frontend directory
+cd "${FRONTEND_DIR}"
+
+# Start the React app in development mode
+echo ""
+echo "---------------------------------------------------------------------"
+echo "- MIRA REACT will be deployed at http://${HOST_URL}:${REACT_PORT}"
+echo "---------------------------------------------------------------------"
+echo ""
+
+# Install dependencies listed in package-lock.json and clean npm cache
+npm install && npm run dev -- --host "${HOST}" --port "${REACT_PORT}"

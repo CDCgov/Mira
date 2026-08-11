@@ -93,47 +93,50 @@ CREATE TABLE gs_submission_status(
 --
 DROP TABLE IF EXISTS assembly;
 CREATE TABLE assembly (
-  assembly_id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_name            TEXT NOT NULL,
-  alias_name          TEXT DEFAULT NULL,
-  experiment_type     TEXT NOT NULL
-                        CHECK (experiment_type IN (
-                          'Flu-ONT',
-                          'Flu-Illumina',
-                          'SC2-Spike-Only-ONT',
-                          'SC2-Whole-Genome-ONT',
-                          'SC2-Whole-Genome-Illumina',
-                          'RSV-Illumina',
-                          'RSV-ONT'
-                        )),
-  subsample           TEXT NOT NULL,
-  sc2_primer          TEXT DEFAULT NULL
-                        CHECK (sc2_primer IN (
-                          'articv3',
-                          'articv4',
-                          'articv4.1',
-                          'articv5.3.2',
-                          'qiagen',
-                          'swift',
-                          'swift_211206'
-                        )),
-  rsv_primer          TEXT DEFAULT NULL
-                        CHECK (rsv_primer IN (
-                          'RSV_CDC_8amplicon_230901'
-                        )),
-  parquet_files       BOOLEAN DEFAULT 0 CHECK (parquet_files IN (0, 1)),
-  run_nextclade       BOOLEAN DEFAULT 1 CHECK (run_nextclade IN (0, 1)),
-  irma_module         TEXT DEFAULT NULL 
-                        CHECK (irma_module IS NULL OR irma_module IN (
-                          'sensitive', 'secondary', 'utr'
-                        )),
-  custom_irma_config  TEXT DEFAULT NULL,
-  custom_qc_settings  TEXT DEFAULT NULL,
-  assembly_status     TEXT DEFAULT 'SUBMITTED' 
-                        CHECK (assembly_status IN (
-                          'SUBMITTED', 'PROCESSING', 'CANCELED',
-                          'FAILED', 'COMPLETED'
-                        )),
+  assembly_id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_name                TEXT NOT NULL,
+  alias_name              TEXT DEFAULT NULL,
+  experiment_type         TEXT NOT NULL
+                            CHECK (experiment_type IN (
+                              'Flu-ONT',
+                              'Flu-Illumina',
+                              'SC2-Spike-Only-ONT',
+                              'SC2-Whole-Genome-ONT',
+                              'SC2-Whole-Genome-Illumina',
+                              'RSV-Illumina',
+                              'RSV-ONT'
+                            )),
+  sc2_primer              TEXT DEFAULT NULL
+                            CHECK (sc2_primer IN (
+                              'articv3',
+                              'articv4',
+                              'articv4.1',
+                              'articv5.3.2',
+                              'qiagen',
+                              'swift',
+                              'swift_211206'
+                            )),
+  rsv_primer              TEXT DEFAULT NULL
+                            CHECK (rsv_primer IN (
+                            'RSV_CDC_8amplicon_230901'
+                          )),
+  subsample_reads         INTEGER NOT NULL DEFAULT 0 CHECK (subsample_reads >= 0),
+  custom_primers          TEXT DEFAULT NULL,
+  primer_kmer_len         INTEGER DEFAULT NULL CHECK (primer_kmer_len > 0),
+  primer_restrict_window  INTEGER DEFAULT NULL CHECK (primer_restrict_window > 0),
+  irma_module             TEXT DEFAULT NULL 
+                              CHECK (irma_module IN (
+                              'sensitive', 'secondary', 'utr'
+                            )),
+  custom_irma_config      TEXT DEFAULT NULL,
+  custom_qc_settings      TEXT DEFAULT NULL,
+  parquet_files           BOOLEAN NOT NULL DEFAULT 0 CHECK (parquet_files IN (0, 1)),
+  nextclade               BOOLEAN NOT NULL DEFAULT 1 CHECK (nextclade IN (0, 1)),  
+  assembly_status         TEXT NOT NULL DEFAULT 'SUBMITTED' 
+                            CHECK (assembly_status IN (
+                              'SUBMITTED', 'PROCESSING', 'CANCELED',
+                              'FAILED', 'COMPLETED'
+                            )),
   UNIQUE (run_name, experiment_type)
 );
 
@@ -148,7 +151,7 @@ CREATE TABLE illumina_samplesheet (
   single_end    BOOLEAN NOT NULL DEFAULT 0 CHECK (single_end IN (0, 1)),
   fastq_1       TEXT NOT NULL,
   fastq_2       TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('Keep', 'Exclude')),
+  status        TEXT NOT NULL CHECK (status IN ('Keep', 'Exclude')),
   UNIQUE (assembly_id, sample_id, sample_type, fastq_1, fastq_2)
 );
 
@@ -163,7 +166,7 @@ CREATE TABLE ont_samplesheet (
   sample_type   TEXT NOT NULL CHECK (sample_type IN ('- Control', '+ Control', 'Test')),
   single_end    BOOLEAN NOT NULL DEFAULT 1 CHECK (single_end IN (0, 1)),
   fastq         TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('Keep', 'Exclude')),
+  status        TEXT NOT NULL CHECK (status IN ('Keep', 'Exclude')),
   UNIQUE (assembly_id, barcode, sample_id, sample_type, fastq)
 );
 

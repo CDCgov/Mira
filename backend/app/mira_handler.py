@@ -43,6 +43,9 @@ from .sqlite_handler import (
     delete_val_in_database,
 )
 
+# Import shared logger (INFO/DEBUG -> stdout, WARNING/ERROR/CRITICAL -> stderr)
+from .logging_config import logger
+
 # Function to remove previous pipeline outputs for a given run directory
 def _remove_previous_pipeline_outputs(run_dir: str) -> None:
     storage_root = os.path.realpath(_DEFAULT_MIRA_STORAGE_PATH)
@@ -611,6 +614,68 @@ def validate_samplesheet_and_fastqs_in_storage(
             "message": [f"All FASTQ files exist in the storage location for this run."]
         }
 
+# Validate custom primers, custom irma config, and custom nextclade config in storage if provided
+def validate_custom_configs_in_storage(
+    run_name: str,
+    experiment_type: str,
+) -> dict[str, Any]:
+    
+    # Extract pathogen and instrument type from experiment_type
+    pathogen = experiment_type.split("-")[0]
+    instrument = experiment_type.split("-")[-1]
+
+    # Retrieve assembly table from database
+    db_assembly_tbl = lookup_tbl_in_database(
+        db_tbl_name = ["assembly"],
+        return_var = ["*"],
+        filter_coln_var = ["run_name", "experiment_type"],
+        filter_coln_val = {"run_name": [run_name], "experiment_type": [experiment_type]},
+        filter_var_by = ["AND"]
+    )
+
+    # Extract assembly information from assembly_tbl
+    custom_primers = db_assembly_tbl.select("custom_primers").to_series()[0]
+    custom_irma_config = db_assembly_tbl.select("custom_irma_config").to_series()[0]
+    custom_qc_settings = db_assembly_tbl.select("custom_qc_settings").to_series()[0]
+
+    # Create placeholder to store missing config files
+    missing_config_files = []
+
+    # Check if custom primers file is provided and exists in storage
+    if custom_primers:
+        primers_storage_path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, custom_primers)
+        if not os.path.exists(primers_storage_path):
+            missing_config_files.append({"custom_primers": custom_primers})
+
+    # Check if custom irma config file is provided and exists in storage
+    if custom_irma_config:
+        irma_config_storage_path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, custom_irma_config)
+        if not os.path.exists(irma_config_storage_path):
+            missing_config_files.append({"custom_irma_config": custom_irma_config})
+
+    # Check if custom QC settings file is provided and exists in storage
+    if custom_qc_settings:
+        qc_settings_storage_path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, custom_qc_settings)
+        if not os.path.exists(qc_settings_storage_path):
+            missing_config_files.append({"custom_qc_settings": custom_qc_settings})
+
+    # Return the validation results
+    if len(missing_config_files) > 0:
+        return {
+            "validation_status": "failed",
+            "missing_config_files": missing_config_files,
+            "message": [
+                f"The following custom configuration files were missing from the storage location of this run: {', '.join([list(d.values())[0] for d in missing_config_files])}.",
+                f"Please check the storage location or upload the missing configuration files again.",
+            ]
+        }
+    else:
+        return {
+            "validation_status": "passed",
+            "missing_config_files": [],
+            "message": [f"All provided custom configuration files exist in the storage location for this run."]
+        }   
+
 # Define function to upload assembly table in database
 def update_assembly_in_database(
     run_name: str,
@@ -1088,7 +1153,7 @@ def run_mira_docker(
         if db_assembly_tbl.is_empty():
             raise ValueError(f"Run '{run_name}' not found in database.")
 
-        # Extract assembly_id, parquet_files, run_nextclade, and subsample from assembly info
+        # Extract assembly_id, parquet_files, nextclade, and subsample_reads from assembly info
         assembly_row  = db_assembly_tbl.row(0, named=True)
         assembly_id   = assembly_row.get("assembly_id", 0)
 
@@ -1112,7 +1177,7 @@ def run_mira_docker(
             filter_var_by    = ["AND", "AND"]
         )
 
-        # Extract primer, parquet_files, run_nextclade, and subsample from assembly_row
+        # Extract primer, parquet_files, nextclade, and subsample_reads from assembly_row
         if pathogen.lower() == "sc2":
             primer = assembly_row.get("sc2_primer", None)
         elif pathogen.lower() == "rsv":
@@ -1120,8 +1185,20 @@ def run_mira_docker(
         else:
             primer = None
         parquet_files = assembly_row.get("parquet_files", False)
-        run_nextclade = assembly_row.get("run_nextclade", True)
-        subsample     = assembly_row.get("subsample", 0)
+        nextclade = assembly_row.get("nextclade", True)
+        subsample     = assembly_row.get("subsample_reads", 0)
+
+        # Extract custom primer from assembly_row
+        custom_primers = assembly_row.get("custom_primers", None)
+
+        # If a custom primer is provided, extract the primer_kmer_len and primer_restrict_window as well
+        if custom_primers:
+            primer_kmer_len = assembly_row.get("primer_kmer_len", None)
+            primer_restrict_window = assembly_row.get("primer_restrict_window", None)
+
+        # Get custom irma config and qc settings from assembly_row
+        custom_irma_config = assembly_row.get("custom_irma_config", None)
+        custom_qc_settings  = assembly_row.get("custom_qc_settings", None)
 
         # Pull samplesheet from DB (Keep rows only)
         if "ONT" in instrument.upper():
@@ -1192,8 +1269,8 @@ def run_mira_docker(
         #     cmd.extend(["--cpus", "4"])
 
         cmd.extend([
-            f"{_HOST_MIRA_NF_IMAGE}",
-            "bash", "-c", f"trap '{permission_cleanup}' EXIT; \"$@\"", "mira-entrypoint",
+            _HOST_MIRA_NF_IMAGE,
+            "bash", "-c", f'trap "{permission_cleanup}" EXIT; "$@"', "--",
             "nextflow", "run", "/MIRA-NF/main.nf",
             "-profile", "mira_nf_container",
             "--check_version", "false",
@@ -1203,18 +1280,54 @@ def run_mira_docker(
             "--e",       experiment_type,
         ])
 
-        # Add primer, subsample, parquet_files, and run_nextclade options to the command if specified
+        # Add primer, subsample, parquet_files, and nextclade options to the command if specified
         if primer:
             cmd.extend(["--p", primer])
+        if custom_primers:
+            cmd.extend(["--custom_primers", custom_primers])
+            if primer_kmer_len:
+                cmd.extend(["--primer_kmer_len", str(primer_kmer_len)])
+            if primer_restrict_window:
+                cmd.extend(["--primer_restrict_window", str(primer_restrict_window)])
         if subsample and int(subsample) >= 0:
-            cmd.extend(["--subsample", str(int(subsample))])   
+            cmd.extend(["--subsample_reads", str(int(subsample))])
+        if custom_irma_config:
+            cmd.extend(["--custom_irma_config", custom_irma_config])
+        if custom_qc_settings:
+            cmd.extend(["--custom_qc_settings", custom_qc_settings])
         if parquet_files:
             cmd.extend(["--parquet_files"])
-        if run_nextclade:
+        if nextclade:
             cmd.extend(["--nextclade"])
 
-        print(f"Launching MIRA-NF pipeline for run '{run_name}' with command:")
-        print(' '.join(cmd))
+        # Log the command for reference
+        logger.info(
+            f"Launching MIRA-NF pipeline for run '{run_name}' with command:\n" +
+            f"docker run --privileged\n" +
+            f" -v {_HOST_MIRA_STORAGE_PATH}:/data\n" +
+            f" -w {container_run_dir}\n" +
+            f" -e HOST_UID={os.getuid()}\n" +
+            f" -e HOST_GID={os.getgid()}\n" +
+            f" -e CONTAINER_RUN_DIR={container_run_dir}\n" +
+            f" {_HOST_MIRA_NF_IMAGE}\n" +
+            f" bash -c 'trap \"{permission_cleanup}\" EXIT; \"$@\"' --\n" +
+            f" nextflow run /MIRA-NF/main.nf\n" +
+            f" -profile mira_nf_container\n" +
+            f" --check_version false\n" +
+            f" --input {container_samplesheet}\n" +
+            f" --runpath {container_run_dir}\n" +
+            f" --outdir {container_output_dir}\n" +
+            f" --e {experiment_type}\n" +
+            (f" --p {primer}\n" if primer else "") +
+            (f" --custom_primers {custom_primers}\n" if custom_primers else "") +
+            (f" --primer_kmer_len {primer_kmer_len}\n" if custom_primers and primer_kmer_len else "") +
+            (f" --primer_restrict_window {primer_restrict_window}\n" if custom_primers and primer_restrict_window else "") +
+            (f" --custom_irma_config {custom_irma_config}\n" if custom_irma_config else "") +
+            (f" --custom_qc_settings {custom_qc_settings}\n" if custom_qc_settings else "") +
+            (f" --subsample_reads {int(subsample)}\n" if subsample and int(subsample) >= 0 else "") +
+            (f" --parquet_files\n" if parquet_files else "") +
+            (f" --nextclade\n" if nextclade else ""),
+        )
 
         # Fire and forget — launch in background, do not block
         proc = subprocess.Popen(
