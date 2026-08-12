@@ -245,24 +245,7 @@ function HomeTab() {
   return (
     <div className="h-full flex flex-col overflow-hidden">
 
-      {/* ── Hero ─────────────────────────────────── */}
-      <div className="shrink-0 bg-gradient-to-br from-primary/10 via-background to-background border-b border-border px-6 py-4">
-        <div className="flex items-center gap-5">
-          <img src="/mira-logo.png" alt="MIRA" className="h-14 w-14 object-contain drop-shadow-md rounded-full ring-2 ring-primary/20 shrink-0" />
-          <div>
-            <div className="flex items-baseline gap-2 mb-0.5">
-              <h1 className="text-2xl font-bold text-foreground">Mira</h1>
-              <span className="text-xs font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded-full">v2.0.0</span>
-            </div>
-            <p className="text-xs text-muted-foreground leading-relaxed max-w-3xl">
-              End-to-end CDC respiratory virus genomics platform: FASTQ assembly → QC → clade annotation → multi-database submission.
-            </p>
-            <p className="text-xs text-muted-foreground leading-relaxed max-w-3xl">
-              Supports <strong>Influenza A/B</strong>, <strong>SARS-CoV-2</strong>, <strong>RSV</strong>, poxvirus, and arbovirus workflows.
-            </p>
-          </div>
-        </div>
-      </div>
+      
 
       {/* ── Body grid ────────────────────────────── */}
       <div className="flex-1 overflow-hidden p-4 grid grid-cols-2 grid-rows-[auto_1fr] gap-4">
@@ -286,57 +269,9 @@ function HomeTab() {
           })}
         </div>
 
-        {/* ── Features ─────────────────────────── */}
-        <div className="rounded-xl border border-border bg-card overflow-hidden flex flex-col">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-muted/20 shrink-0">
-            <div className="flex items-center justify-center h-7 w-7 rounded-lg bg-primary/10 text-primary">
-              <Cpu size={15} />
-            </div>
-            <h3 className="text-sm font-bold tracking-wide text-foreground">Core Capabilities</h3>
-          </div>
-          <div className="flex-1 overflow-auto p-3 flex flex-col gap-2">
-            {FEATURES.map(({ icon: Icon, title, desc }) => (
-              <div key={title} className="flex items-start gap-3 p-3 rounded-xl border border-border hover:bg-muted/10 transition-colors">
-                <div className="flex items-center justify-center h-7 w-7 rounded-lg bg-primary/10 text-primary shrink-0">
-                  <Icon size={14} />
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-foreground">{title}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{desc}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        
 
-        {/* ── Quick Start ──────────────────────── */}
-        <div className="rounded-xl border border-border bg-card overflow-hidden flex flex-col">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-muted/20 shrink-0">
-            <div className="flex items-center justify-center h-7 w-7 rounded-lg bg-primary/10 text-primary">
-              <Play size={15} />
-            </div>
-            <h3 className="text-sm font-bold tracking-wide text-foreground">Quick Start</h3>
-          </div>
-          <div className="flex-1 overflow-auto divide-y divide-border">
-            {[
-              { step: "1", tab: "Assembly",    desc: "Upload FASTQ files, select your pathogen, and run the IRMA assembly pipeline." },
-              { step: "2", tab: "Assembly",    desc: "Review QC metrics per segment and run Nextclade clade assignment." },
-              { step: "3", tab: "SeqSender",   desc: "Configure submission targets (BioSample, SRA, GenBank, GISAID) and submit." },
-              { step: "4", tab: "Resources",   desc: "Consult documentation, GitHub repos, and contact information." },
-            ].map(({ step, tab, desc }) => (
-              <div key={step} className="flex items-start gap-4 px-5 py-3">
-                <span className="flex items-center justify-center h-6 w-6 rounded-full bg-primary text-primary-foreground text-xs font-bold shrink-0 mt-0.5">{step}</span>
-                <div>
-                  <span className="text-xs font-semibold text-primary mr-2">[{tab}]</span>
-                  <span className="text-sm text-foreground">{desc}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="shrink-0 px-5 py-2 border-t border-border bg-muted/10">
-            <p className="text-xs text-muted-foreground">* Stats are illustrative placeholders — connect a backend API for live run data.</p>
-          </div>
-        </div>
+        
 
       </div>
     </div>
@@ -4524,11 +4459,8 @@ export default function App() {
             <img
               src="/mira-logo.png"
               alt="MIRA logo"
-              className="h-16 w-16 object-contain drop-shadow-md rounded-full ring-2 ring-white ring-offset-2 ring-offset-primary"
+              className="h-20 w-20 object-contain drop-shadow-md"
             />
-            <span className="absolute bottom-0 right-0 flex items-center justify-center h-5 w-5 rounded-full bg-white shadow">
-              <Dna size={12} strokes={5} className="text-primary" />
-            </span>
           </div>
           <div className="flex flex-col leading-tight">
             <div className="flex items-baseline gap-2">
