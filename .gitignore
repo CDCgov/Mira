@@ -6,4 +6,7 @@ backend/*.pyc
 # Node
 frontend/node_modules/
 frontend/dist/
-data
+
+# Git
+.github/
+data/
