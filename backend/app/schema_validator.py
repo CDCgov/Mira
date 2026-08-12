@@ -70,6 +70,13 @@ def get_react_base_url() -> str:
         raise ValueError("REACT_BASE_URL must be set in config.yml.")
     return react_base_url
 
+def get_react_internal_base_url() -> str:
+    config = _read_config_yml()
+    react_internal_base_url = config.get("REACT_INTERNAL_BASE_URL", None)
+    if not react_internal_base_url:
+        raise ValueError("REACT_INTERNAL_BASE_URL must be set in config.yml.")
+    return react_internal_base_url
+
 # Define data storage path for MIRA and SeqSender, allowing override via environment variable
 _DEFAULT_DATA_STORAGE_PATH = get_data_storage_path()
 _ensure_storage_directory(_DEFAULT_DATA_STORAGE_PATH)
@@ -101,6 +108,7 @@ _HOST_MIRA_NF_IMAGE = get_mira_nf_image()
 
 # Define React base URL for the app
 _REACT_BASE_URL = get_react_base_url()
+_REACT_INTERNAL_BASE_URL = get_react_internal_base_url()
 
 # print(f"Deploy Type: {deploy_type}")
 # print(f"Using MIRA-NF Docker Image: {_HOST_MIRA_NF_IMAGE}")
@@ -199,6 +207,13 @@ sc2_primers = [
 rsv_primers = ['RSV_CDC_8amplicon_230901']
 irma_modules = ['sensitive', 'secondary', 'utr']
 assembly_status = ['SUBMITTED', 'PROCESSING', 'FAILED', 'CANCELED', 'COMPLETED']
+
+# Standardized on-disk filenames for the custom config uploads (custom_primers/
+# custom_irma_config/custom_qc_settings are now plain booleans in the DB -- the
+# actual file, when present, always lives under the run directory with these names.
+CUSTOM_PRIMER_CONFIG_FILENAME = "custom_primers.fasta"
+CUSTOM_IRMA_CONFIG_FILENAME = "custom_irma_config.sh"
+CUSTOM_QC_SETTINGS_FILENAME = "custom_qc_settings.yaml"
 
 # Valid Nextclade Web `dataset-name` shortcuts, keyed by pathogen and segment.
 # Source of truth: https://data.clades.nextstrain.org/v3/index.json
@@ -306,9 +321,9 @@ assembly_pa_schema = pa.DataFrameSchema(
             checks=pa.Check.ge(0),
             description="Number of reads to subsample for MIRA assembly."
         ),
-        "custom_primers": _nullable_str(
-            required=False,
-            description="Whether to use a custom primer file for assembly. If provided, primer_kmer_len and primer_restrict_window must also be specified."
+        "custom_primers": pa.Column(
+            pl.Boolean, nullable=False, required=True,
+            description="Whether to use a custom primer file for assembly. If true, primer_kmer_len and primer_restrict_window must also be specified."
         ),
         "primer_kmer_len": pa.Column(
             pl.Int64, nullable=True, required=False, 
@@ -316,13 +331,13 @@ assembly_pa_schema = pa.DataFrameSchema(
                 pa.Check.ge(0),
                 pa.Check(
                     lambda data: data.lazyframe.select(
-                        (pl.col("primer_kmer_len").is_null() | (pl.col("primer_kmer_len") == 0) | pl.col("custom_primers").is_not_null())
+                        (pl.col("primer_kmer_len").is_null() | (pl.col("primer_kmer_len") == 0) | pl.col("custom_primers"))
                         .alias("primer_kmer_len_requires_custom_primers")
                     ),
-                    error="custom_primers must be provided when primer_kmer_len is specified.",
+                    error="custom_primers must be true when primer_kmer_len is specified.",
                 ),
             ],
-            description="K-mer length for primer trimming. custom_primers must be provided if primer_kmer_len is specified."
+            description="K-mer length for primer trimming. custom_primers must be true if primer_kmer_len is specified."
         ),
         "primer_restrict_window": pa.Column(
             pl.Int64, nullable=True, required=False, 
@@ -330,32 +345,32 @@ assembly_pa_schema = pa.DataFrameSchema(
                 pa.Check.ge(0),
                 pa.Check(
                     lambda data: data.lazyframe.select(
-                        (pl.col("primer_restrict_window").is_null() | (pl.col("primer_restrict_window") == 0) | pl.col("custom_primers").is_not_null())
+                        (pl.col("primer_restrict_window").is_null() | (pl.col("primer_restrict_window") == 0) | pl.col("custom_primers"))
                         .alias("primer_restrict_window_requires_custom_primers")
                     ),
-                    error="custom_primers must be provided when primer_restrict_window is specified.",
+                    error="custom_primers must be true when primer_restrict_window is specified.",
                 ),
             ],
-            description="Window size for primer trimming. custom_primers must be provided if primer_restrict_window is specified."
+            description="Window size for primer trimming. custom_primers must be true if primer_restrict_window is specified."
         ),
         "irma_module": _nullable_enum_col(
             irma_modules, required=False,
             checks=pa.Check(
                 lambda data: data.lazyframe.select(
-                    (pl.col("irma_module").is_null() | pl.col("experiment_type").str.contains("Illumina"))
+                    (pl.col("irma_module").is_null() | (pl.col("irma_module") == "") | pl.col("experiment_type").str.contains("Illumina"))
                     .alias("irma_module_only_for_illumina")
                 ),
                 error="irma_module can only be set when experiment_type contains 'Illumina'.",
             ),
             description=f"Specify the IRMA module to use for assembly (Illumina experiment types only). Options: {irma_modules}"
         ),
-        "custom_irma_config": _nullable_str(
-            required=False,
-            description="Provide a custom IRMA configuration file if needed."
+        "custom_irma_config": pa.Column(
+            pl.Boolean, nullable=False, required=True,
+            description="Whether to use a custom IRMA configuration file for assembly."
         ),
-        "custom_qc_settings": _nullable_str(
-            required=False,
-            description="Provide custom QC settings if needed."
+        "custom_qc_settings": pa.Column(
+            pl.Boolean, nullable=False, required=True,
+            description="Whether to use custom QC settings for assembly."
         ),
         "parquet_files": pa.Column(
             pl.Boolean, nullable=False, required=True,

@@ -40,12 +40,16 @@ from .schema_validator import (
     _MIRA_NF_VERSION_URL,
     _MIRA_VERSION_URL,
     _REACT_BASE_URL,
+    _REACT_INTERNAL_BASE_URL,
     _HOST_MIRA_NF_IMAGE,
     validate_tbl,
     experiment_types,
     assembly_pa_schema,
     ont_samplesheet_pa_schema,
     illumina_samplesheet_pa_schema, 
+    CUSTOM_PRIMER_CONFIG_FILENAME,
+    CUSTOM_IRMA_CONFIG_FILENAME,
+    CUSTOM_QC_SETTINGS_FILENAME,
 )
 
 # Import MIRA handler 
@@ -96,10 +100,13 @@ app = FastAPI(title = "MIRA Backend")
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # CORS for your Vite dev server + Nextclade Web (fetches input-fasta directly from the browser)
+# Also accept the 127.0.0.1 form of the same host:port, since some dev setups (e.g. remote
+# port-forwarding) rewrite "localhost" to "127.0.0.1" in the browser's Origin header.
 app.add_middleware(
     CORSMiddleware,
     allow_origins = [
         _REACT_BASE_URL,
+        _REACT_INTERNAL_BASE_URL,
         "https://clades.nextstrain.org",
         "https://nextclade.org",
     ],
@@ -159,11 +166,7 @@ def upload_fastq_files_to_storage(
     experiment_type: str,
     fastq_files: List[UploadFile],
 ) -> Dict[str, Any]:
-     
-    # Extract pathogen and instrument type from experiment_type
-    pathogen =experiment_type.split("-")[0]
-    instrument =experiment_type.split("-")[-1]
-    
+
     # Retrieve assembly table from database
     db_assembly_tbl = lookup_tbl_in_database(
         db_tbl_name = ["assembly"],
@@ -173,8 +176,16 @@ def upload_fastq_files_to_storage(
         filter_var_by = ["AND"]
     )
 
+    # Make sure db_assembly_tbl is not empty
+    if db_assembly_tbl.shape[0] == 0:
+        raise ValueError(f"No assembly found for run_name '{run_name}' and experiment_type '{experiment_type}'.")
+
     # Extract assembly information from assembly_tbl
-    assembly_id = db_assembly_tbl.select("assembly_id").to_series()[0]
+    assembly_id = db_assembly_tbl.select("assembly_id").to_series()[0]    
+
+    # Extract pathogen and instrument type from experiment_type
+    pathogen =experiment_type.split("-")[0]
+    instrument =experiment_type.split("-")[-1]
 
     # Get samplesheet table from database based on assembly_id and experiment_type
     if "ONT" in experiment_type.upper():
@@ -264,16 +275,20 @@ def health():
 async def check_mira_version():
     # Get current version from Docker image tag without the v
     current_mira_nf_version = re.findall(r"[^:]+$", _HOST_MIRA_NF_IMAGE)[0].lstrip("v")
-    # Get available version on Github
-    github_mira_nf_version = requests.get(_MIRA_NF_VERSION_URL)
-    if github_mira_nf_version.status_code == 200:
+    # Get available version on Github — network errors (e.g. GitHub unreachable) shouldn't crash this endpoint
+    try:
+        github_mira_nf_version = requests.get(_MIRA_NF_VERSION_URL, timeout=5)
+    except requests.RequestException as err:
+        logger.error("Failed to check MIRA-NF version from GitHub: %s", err)
+        github_mira_nf_version = None
+    if github_mira_nf_version is not None and github_mira_nf_version.status_code == 200:
         version_match = re.search(r"Version:\s*(\S+)", github_mira_nf_version.text)
         available_mira_nf_version = version_match.group(1) if version_match else "0.0.0"
         # Check if current version is lesser than available version online
         if _version_tuple(current_mira_nf_version) < _version_tuple(available_mira_nf_version):
             mira_nf_status = "out-of-date"
         else:
-            mira_nf_status = "out-of-date"
+            mira_nf_status = "up-to-date"
     else:
         available_mira_nf_version = "unknown"
         mira_nf_status = "unknown"
@@ -284,9 +299,13 @@ async def check_mira_version():
     current_mira_version = "unknown"
     with open(current_mira_version_file, "r") as f:
         current_mira_version = re.search(r"Version:\s*(\S+)", f.read()).group(1)
-    # Get available version on Github
-    github_mira_version = requests.get(_MIRA_VERSION_URL)
-    if github_mira_version.status_code == 200:
+    # Get available version on Github — network errors (e.g. GitHub unreachable) shouldn't crash this endpoint
+    try:
+        github_mira_version = requests.get(_MIRA_VERSION_URL, timeout=5)
+    except requests.RequestException as err:
+        logger.error("Failed to check MIRA version from GitHub: %s", err)
+        github_mira_version = None
+    if github_mira_version is not None and github_mira_version.status_code == 200:
         version_match = re.search(r"Version:\s*(\S+)", github_mira_version.text)
         available_mira_version = version_match.group(1) if version_match else "0.0.0"
         # Check if current version is lesser than available version online
@@ -563,28 +582,39 @@ async def upload_fastqs(
 # Upload custom primger config file to storage location
 @app.post("/upload/custom_primer_config", response_model=Dict[str, Any], summary="Upload a custom primer config file to storage location", tags=["MIRA Workflows"])
 async def upload_custom_primer_config(
-    run_name: str = Form(..., description="Name of the sequencing run."),
-    experiment_type: str = Form(..., description="Type of sequencing experiments."),
-    custom_primer_config_file: UploadFile = File(..., description="Custom primer config file to upload.")
+    run_name: str = Form("", description="Name of the sequencing run."),
+    experiment_type: Literal[tuple(experiment_types)] = Form(..., description="Type of sequencing experiments."),
+    custom_primer_config_file: UploadFile = File(..., description="Custom primers file to upload.")
 ):
     """
     Upload a custom primer config file to the storage location for a given sequencing run.
     """
     try:
+        # Retrieve assembly table from database
+        db_assembly_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["assembly"],
+            return_var = ["*"],
+            filter_coln_var = ["run_name", "experiment_type"],
+            filter_coln_val = {"run_name": [run_name], "experiment_type": [experiment_type]},
+            filter_var_by = ["AND"]
+        )
+        # Make sure db_assembly_tbl is not empty
+        if db_assembly_tbl.shape[0] == 0:
+            raise ValueError(f"No assembly found for run_name '{run_name}' and experiment_type '{experiment_type}'.")        
         # Get pathogen and instrument type from experiment_type
         pathogen = experiment_type.split("-")[0]
         instrument = experiment_type.split("-")[-1]
-        # Read the content of the uploaded file
-        content = await custom_primer_config_file.read()
         # Define the storage directory based on run name and experiment type
         storage_dir = os.path.realpath(os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name))
         os.makedirs(storage_dir, exist_ok=True)
-        # Define the destination file path
-        filename = custom_primer_config_file.filename
+        # Standardize the filename for custom primer config
+        filename = CUSTOM_PRIMER_CONFIG_FILENAME
         dest_file_path = os.path.join(storage_dir, filename)
-        # Write the content to the destination file
-        with open(dest_file_path, "wb") as f:
-            f.write(content)
+        # Copy custom primer config file to the destination file path
+        custom_primer_config_file.file.seek(0)
+        with open(dest_file_path, "wb") as buf:
+            shutil.copyfileobj(custom_primer_config_file.file, buf)
+        # Return success message with file path and name
         return {
             "status": "success",
             "message": f"Custom primer config file '{custom_primer_config_file.filename}' has been uploaded successfully.",
@@ -597,28 +627,39 @@ async def upload_custom_primer_config(
 # Upload custom IRMA config file to storage location
 @app.post("/upload/custom_irma_config", response_model=Dict[str, Any], summary="Upload a custom IRMA config file to storage location", tags=["MIRA Workflows"])
 async def upload_custom_irma_config(
-    run_name: str = Form(..., description="Name of the sequencing run."),
-    experiment_type: str = Form(..., description="Type of sequencing experiments."),
+    run_name: str = Form("", description="Name of the sequencing run."),
+    experiment_type: Literal[tuple(experiment_types)] = Form(..., description="Type of sequencing experiments."),
     custom_irma_config_file: UploadFile = File(..., description="Custom IRMA config file to upload.")
 ):
     """
     Upload a custom IRMA config file to the storage location for a given sequencing run.
     """
     try:
+        # Retrieve assembly table from database
+        db_assembly_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["assembly"],
+            return_var = ["*"],
+            filter_coln_var = ["run_name", "experiment_type"],
+            filter_coln_val = {"run_name": [run_name], "experiment_type": [experiment_type]},
+            filter_var_by = ["AND"]
+        )
+        # Make sure db_assembly_tbl is not empty
+        if db_assembly_tbl.shape[0] == 0:
+            raise ValueError(f"No assembly found for run_name '{run_name}' and experiment_type '{experiment_type}'.")
         # Get pathogen and instrument type from experiment_type
         pathogen = experiment_type.split("-")[0]
         instrument = experiment_type.split("-")[-1]
-        # Read the content of the uploaded file
-        content = await custom_irma_config_file.read()
         # Define the storage directory based on run name and experiment type
         storage_dir = os.path.realpath(os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name))
         os.makedirs(storage_dir, exist_ok=True)
-        # Define the destination file path
-        filename = custom_irma_config_file.filename
+        # Standardize the filename for custom IRMA config
+        filename = CUSTOM_IRMA_CONFIG_FILENAME
         dest_file_path = os.path.join(storage_dir, filename)
-        # Write the content to the destination file
-        with open(dest_file_path, "wb") as f:
-            f.write(content)
+        # Copy custom IRMA config file to the destination file path
+        custom_irma_config_file.file.seek(0)
+        with open(dest_file_path, "wb") as buf:
+            shutil.copyfileobj(custom_irma_config_file.file, buf)
+        # Return success message with file path and name
         return {
             "status": "success",
             "message": f"Custom IRMA config file '{custom_irma_config_file.filename}' has been uploaded successfully.",
@@ -631,29 +672,39 @@ async def upload_custom_irma_config(
 # Upload custom QC settings file to storage location
 @app.post("/upload/custom_qc_settings", response_model=Dict[str, Any], summary="Upload a custom QC settings file to storage location", tags=["MIRA Workflows"])
 async def upload_custom_qc_settings(
-    run_name: str = Form(..., description="Name of the sequencing run."),
-    experiment_type: str = Form(..., description="Type of sequencing experiments."),
+    run_name: str = Form("", description="Name of the sequencing run."),
+    experiment_type: Literal[tuple(experiment_types)] = Form(..., description="Type of sequencing experiments."),
     custom_qc_settings_file: UploadFile = File(..., description="Custom QC settings file to upload.")
 ):
     """
     Upload a custom QC settings file to the storage location for a given sequencing run.
     """
     try:
+        # Retrieve assembly table from database
+        db_assembly_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["assembly"],
+            return_var = ["*"],
+            filter_coln_var = ["run_name", "experiment_type"],
+            filter_coln_val = {"run_name": [run_name], "experiment_type": [experiment_type]},
+            filter_var_by = ["AND"]
+        )
+        # Make sure db_assembly_tbl is not empty
+        if db_assembly_tbl.shape[0] == 0:
+            raise ValueError(f"No assembly found for run_name '{run_name}' and experiment_type '{experiment_type}'.")        
         # Get pathogen and instrument type from experiment_type
         pathogen = experiment_type.split("-")[0]
         instrument = experiment_type.split("-")[-1]
-        # Read the content of the uploaded file
-        content = await custom_qc_settings_file.read()
         # Define the storage directory based on run name and experiment type
         storage_dir = os.path.realpath(os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name))
         os.makedirs(storage_dir, exist_ok=True)
-        # Define the destination file path
-        filename = custom_qc_settings_file.filename
+        # Standardize the filename for custom QC settings
+        filename = CUSTOM_QC_SETTINGS_FILENAME
         dest_file_path = os.path.join(storage_dir, filename)
-        # Write the content to the destination file
-        with open(dest_file_path, "wb") as f:
-            f.write(content)
-        # Upload
+        # Copy custom QC settings file to the destination location
+        custom_qc_settings_file.file.seek(0)
+        with open(dest_file_path, "wb") as buf:
+            shutil.copyfileobj(custom_qc_settings_file.file, buf)
+        # Return success message with file path and name
         return {
             "status": "success",
             "message": f"Custom QC settings file '{custom_qc_settings_file.filename}' has been uploaded successfully.",
@@ -1178,6 +1229,36 @@ async def download_aa_failed_fasta(req: RunRequest = Depends()):
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=404, detail="AA failed FASTA not found")
     return FileResponse(path=path, filename=f"{req.run_name}_aa_failed.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+
+# ---------- Download Custom Primer Config ----------
+@app.get("/download/custom_primer_config", summary="Download Custom Primer Config", tags=["MIRA Downloads"])
+async def download_custom_primer_config(req: RunRequest = Depends()):
+    pathogen = req.experiment_type.split("-")[0]
+    instrument = req.experiment_type.split("-")[-1]
+    path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, req.run_name, CUSTOM_PRIMER_CONFIG_FILENAME)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Custom primer config file not found in storage. File may have been moved or deleted. Please re-upload a new custom primer config file if needed or turn off custom primer config.")
+    return FileResponse(path=path, filename=CUSTOM_PRIMER_CONFIG_FILENAME, media_type="application/octet-stream", content_disposition_type="attachment")
+
+# ---------- Download Custom IRMA Config ----------
+@app.get("/download/custom_irma_config", summary="Download Custom IRMA Config", tags=["MIRA Downloads"])
+async def download_custom_irma_config(req: RunRequest = Depends()):
+    pathogen = req.experiment_type.split("-")[0]
+    instrument = req.experiment_type.split("-")[-1]
+    path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, req.run_name, CUSTOM_IRMA_CONFIG_FILENAME)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Custom IRMA config file not found in storage. File may have been moved or deleted. Please re-upload a new custom IRMA config file if needed or turn off custom IRMA config.")
+    return FileResponse(path=path, filename=CUSTOM_IRMA_CONFIG_FILENAME, media_type="application/octet-stream", content_disposition_type="attachment")
+
+# ---------- Download Custom QC Settings ----------
+@app.get("/download/custom_qc_settings", summary="Download Custom QC Settings", tags=["MIRA Downloads"])
+async def download_custom_qc_settings(req: RunRequest = Depends()):
+    pathogen = req.experiment_type.split("-")[0]
+    instrument = req.experiment_type.split("-")[-1]
+    path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, req.run_name, CUSTOM_QC_SETTINGS_FILENAME)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Custom QC settings file not found in storage. File may have been moved or deleted. Please re-upload a new custom QC settings file if needed or turn off custom QC settings.")
+    return FileResponse(path=path, filename=CUSTOM_QC_SETTINGS_FILENAME, media_type="application/octet-stream", content_disposition_type="attachment")
 
 # ---------- Download Nextclade FASTA (single file by key) ----------
 @app.get("/download/nextclade_fasta", summary="Download Nextclade FASTA", tags=["MIRA Downloads"])

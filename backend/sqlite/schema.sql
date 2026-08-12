@@ -121,15 +121,15 @@ CREATE TABLE assembly (
                             'RSV_CDC_8amplicon_230901'
                           )),
   subsample_reads         INTEGER NOT NULL DEFAULT 0 CHECK (subsample_reads >= 0),
-  custom_primers          TEXT DEFAULT NULL,
+  custom_primers          BOOLEAN NOT NULL DEFAULT 0 CHECK (custom_primers IN (0, 1)),
   primer_kmer_len         INTEGER DEFAULT NULL CHECK (primer_kmer_len > 0),
   primer_restrict_window  INTEGER DEFAULT NULL CHECK (primer_restrict_window > 0),
   irma_module             TEXT DEFAULT NULL 
                               CHECK (irma_module IN (
                               'sensitive', 'secondary', 'utr'
                             )),
-  custom_irma_config      TEXT DEFAULT NULL,
-  custom_qc_settings      TEXT DEFAULT NULL,
+  custom_irma_config      BOOLEAN NOT NULL DEFAULT 0 CHECK (custom_irma_config IN (0, 1)),
+  custom_qc_settings      BOOLEAN NOT NULL DEFAULT 0 CHECK (custom_qc_settings IN (0, 1)),
   parquet_files           BOOLEAN NOT NULL DEFAULT 0 CHECK (parquet_files IN (0, 1)),
   nextclade               BOOLEAN NOT NULL DEFAULT 1 CHECK (nextclade IN (0, 1)),  
   assembly_status         TEXT NOT NULL DEFAULT 'SUBMITTED' 

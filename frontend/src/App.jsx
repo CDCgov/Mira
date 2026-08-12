@@ -117,12 +117,15 @@ const API = {
   uploadCustomPrimerConfig: `${API_BASE}/upload/custom_primer_config`,
   uploadCustomIrmaConfig:   `${API_BASE}/upload/custom_irma_config`,
   uploadCustomQcSettings:   `${API_BASE}/upload/custom_qc_settings`,
-  validateRun:      `${API_BASE}/validate/run`,
-  validateCustomConfigs: `${API_BASE}/validate/custom_configs`,
-  runMIRA:          `${API_BASE}/run/MIRA`,
-  miraDAG:          `${API_BASE}/MIRA/DAG`,
-  miraStatus:       `${API_BASE}/MIRA/status`,
-  miraCancel:       `${API_BASE}/cancel/MIRA`,
+  downloadCustomIrmaConfig: `${API_BASE}/download/custom_irma_config`,
+  downloadCustomPrimerConfig: `${API_BASE}/download/custom_primer_config`,
+  downloadCustomQcSettings: `${API_BASE}/download/custom_qc_settings`,
+  validateRun:              `${API_BASE}/validate/run`,
+  validateCustomConfigs:    `${API_BASE}/validate/custom_configs`,
+  runMIRA:                  `${API_BASE}/run/MIRA`,
+  miraDAG:                  `${API_BASE}/MIRA/DAG`,
+  miraStatus:               `${API_BASE}/MIRA/status`,
+  miraCancel:               `${API_BASE}/cancel/MIRA`,
   retrieveBarcodeAssignment:    `${API_BASE}/retrieve/barcode_assignment`,
   retrieveQcStatement:          `${API_BASE}/retrieve/qc_statement`,
   retrieveQcDecisions:          `${API_BASE}/retrieve/quality_control_decisions`,
@@ -149,8 +152,11 @@ const API = {
   downloadSeqsenderMetadataTemplate: `${API_BASE}/download/seqsender_metadata_template`,
 };
 
-// Check Version of MIRA-NF
-
+// Standardized on-disk filenames the backend always saves custom config uploads
+// under, regardless of the originally-picked filename (must match schema_validator.py).
+const CUSTOM_PRIMER_CONFIG_FILENAME = "custom_primers.fasta";
+const CUSTOM_IRMA_CONFIG_FILENAME = "custom_irma_config.sh";
+const CUSTOM_QC_SETTINGS_FILENAME = "custom_qc_settings.yaml";
 
 /* ── simple dropdown hook ────────────────────────── */
 function useDropdown() {
@@ -648,6 +654,7 @@ function AssemblyTab() {
   const [loadedCustomPrimersName, setLoadedCustomPrimersName] = useState(""); // filename already stored server-side for a loaded run
   const [loadedCustomIrmaConfigName, setLoadedCustomIrmaConfigName] = useState(""); // filename already stored server-side for a loaded run
   const [loadedCustomQcSettingsName, setLoadedCustomQcSettingsName] = useState(""); // filename already stored server-side for a loaded run
+  const [customConfigDownloadError, setCustomConfigDownloadError] = useState(null); // { field, message } for a failed custom config download
   const [createParquet, setCreateParquet]           = useState(false);
   const [nextclade, setNextclade]                   = useState(true);
   const [exportFmt, setExportFmt]                   = useState("fasta");
@@ -1217,13 +1224,13 @@ function AssemblyTab() {
 
   // Define experiment types options for the dropdowns
   const EXPERIMENT_TYPES = [
-    'Flu-ONT',
     'Flu-Illumina',
-    'SC2-Spike-Only-ONT',
-    'SC2-Whole-Genome-ONT',
-    'SC2-Whole-Genome-Illumina',
+    'Flu-ONT',
     'RSV-Illumina',
-    'RSV-ONT'
+    'RSV-ONT',
+    'SC2-Spike-Only-ONT',
+    'SC2-Whole-Genome-Illumina',
+    'SC2-Whole-Genome-ONT',
   ];
 
   // Define SC2 primers options for the dropdowns
@@ -1316,6 +1323,7 @@ function AssemblyTab() {
     setLoadedCustomPrimersName("");
     setLoadedCustomIrmaConfigName("");
     setLoadedCustomQcSettingsName("");
+    setCustomConfigDownloadError(null);
     setCreateParquet(false);
     setNextclade(true);
     setExportFmt("fasta");
@@ -1439,6 +1447,31 @@ function AssemblyTab() {
     document.body.removeChild(a);
     setTimeout(() => setExportDownloading(false), 2000);
   }, [exportSelectedRun]);
+
+  // Fetch a custom config file and either surface the API error inline or trigger the browser download —
+  // avoids navigating the page (or opening a blank tab) to a raw 404 response.
+  const downloadCustomConfigFile = useCallback(async (url, filename, field) => {
+    setCustomConfigDownloadError(null);
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setCustomConfigDownloadError({ field, message: data.detail || `Failed to download file (HTTP ${res.status})` });
+        return;
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      setCustomConfigDownloadError({ field, message: err.message || "Failed to download file." });
+    }
+  }, []);
 
   const openEditRunModal = useCallback(async () => {
     setEditRunModal(true);
@@ -1602,20 +1635,20 @@ function AssemblyTab() {
       setRunName(info.run_name ?? "");
       setExperimentType(info.experiment_type ?? "");
       setPrimer(info.sc2_primer || info.rsv_primer || "");
-      setCustomPrimers(info.custom_primers || "");
+      setCustomPrimers(info.custom_primers ? CUSTOM_PRIMER_CONFIG_FILENAME : "");
       setUseCustomPrimers(Boolean(info.custom_primers));
-      setLoadedCustomPrimersName(info.custom_primers || "");
+      setLoadedCustomPrimersName(info.custom_primers ? CUSTOM_PRIMER_CONFIG_FILENAME : "");
       setPrimerKmerLen(info.primer_kmer_len ? String(info.primer_kmer_len) : "");
       setPrimerRestrictWindow(info.primer_restrict_window ? String(info.primer_restrict_window) : "");
       setSubSample(String(info.subsample_reads ?? 0));
       setIrmaModule(info.irma_module || "");
       setUseIrmaModule(Boolean(info.irma_module));
-      setCustomIrmaConfig(info.custom_irma_config || "");
+      setCustomIrmaConfig(info.custom_irma_config ? CUSTOM_IRMA_CONFIG_FILENAME : "");
       setUseCustomIrmaConfig(Boolean(info.custom_irma_config));
-      setLoadedCustomIrmaConfigName(info.custom_irma_config || "");
-      setCustomQcSettings(info.custom_qc_settings || "");
+      setLoadedCustomIrmaConfigName(info.custom_irma_config ? CUSTOM_IRMA_CONFIG_FILENAME : "");
+      setCustomQcSettings(info.custom_qc_settings ? CUSTOM_QC_SETTINGS_FILENAME : "");
       setUseCustomQcSettings(Boolean(info.custom_qc_settings));
-      setLoadedCustomQcSettingsName(info.custom_qc_settings || "");
+      setLoadedCustomQcSettingsName(info.custom_qc_settings ? CUSTOM_QC_SETTINGS_FILENAME : "");
       setCreateParquet(info.parquet_files ?? false);
       setNextclade(info.nextclade ?? true);
       const isOnt = (info.experiment_type ?? "").toLowerCase().endsWith("ont");
@@ -1651,6 +1684,7 @@ function AssemblyTab() {
       setCustomPrimersFile(null);
       setCustomIrmaConfigFile(null);
       setCustomQcSettingsFile(null);
+      setCustomConfigDownloadError(null);
 
       // This run is now the page's actively loaded/polled run — set it here rather than
       // relying on the modal's row-selection state, which resets whenever the modal reopens
@@ -1710,6 +1744,9 @@ function AssemblyTab() {
 
   // ── Submit assembly to backend API ─────────────
   const submitAssembly = useCallback(async () => {
+
+    // Clear any prior submission errors
+    setCustomConfigDownloadError(null);
 
     // Trim leading/trailing whitespace from run nam
     if (!runName) {
@@ -1837,12 +1874,12 @@ function AssemblyTab() {
       sc2_primer:             experimentType.includes("SC2") ? (primer || "") : "",
       rsv_primer:             experimentType.includes("RSV") ? (primer || "") : "",
       subsample_reads:        parseInt(subSample) || 0,
-      custom_primers:         useCustomPrimers && customPrimers ? customPrimers : "",
+      custom_primers:         useCustomPrimers && Boolean(customPrimers),
       primer_kmer_len:        useCustomPrimers && customPrimers && primerKmerLen ? (parseInt(primerKmerLen) || 0) : 0,
       primer_restrict_window: useCustomPrimers && customPrimers && primerRestrictWindow ? (parseInt(primerRestrictWindow) || 0) : 0,
       irma_module:            useIrmaModule && irmaModule ? irmaModule : "",
-      custom_irma_config:     useCustomIrmaConfig && customIrmaConfig ? customIrmaConfig : "",
-      custom_qc_settings:     useCustomQcSettings && customQcSettings ? customQcSettings : "",
+      custom_irma_config:     useCustomIrmaConfig && Boolean(customIrmaConfig),
+      custom_qc_settings:     useCustomQcSettings && Boolean(customQcSettings),
       parquet_files:          createParquet,
       nextclade:              nextclade,
       samplesheet:            formattedSamplesheet,
@@ -2396,7 +2433,28 @@ function AssemblyTab() {
                       <>
                         <div>
                           {!isNewRun && loadedCustomPrimersName && (
-                            <p className="mb-2 text-md text-muted-foreground">Currently stored file: <span className="font-mono text-foreground">{loadedCustomPrimersName}</span></p>
+                            <div className="mb-2 text-md text-muted-foreground">
+                              <p>
+                                Currently stored file:{" "}
+                                <button
+                                  type="button"
+                                  onClick={() => downloadCustomConfigFile(
+                                    `${API.downloadCustomPrimerConfig}?run_name=${encodeURIComponent(selectedRun?.run_name ?? runName)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type ?? experimentType)}`,
+                                    loadedCustomPrimersName,
+                                    "primer"
+                                  )}
+                                  className="inline-flex items-center gap-1 font-mono text-primary hover:underline"
+                                >
+                                  <Download size={11} className="shrink-0" />
+                                  {loadedCustomPrimersName}
+                                </button>
+                              </p>
+                              {customConfigDownloadError?.field === "primer" && (
+                                <p className="mt-1 flex items-center gap-1 text-xs text-destructive">
+                                  <AlertCircle size={11} className="shrink-0" /> {customConfigDownloadError.message}
+                                </p>
+                              )}
+                            </div>
                           )}                          
                           <FieldLabel>Custom Primer FASTA File <span className="text-destructive">*</span></FieldLabel>
                           <div className="flex gap-2">
@@ -2413,7 +2471,7 @@ function AssemblyTab() {
                                 type="file"
                                 className="hidden"
                                 accept=".fasta,.fa,.fna"
-                                onChange={(e) => { const f = e.target.files?.[0]; if (f) { setCustomPrimers(f.name); setCustomPrimersFile(f); } e.target.value = ""; }}
+                                onChange={(e) => { const f = e.target.files?.[0]; if (f) { setCustomPrimers(f.name); setCustomPrimersFile(f); setCustomConfigDownloadError(null); } e.target.value = ""; }}
                               />
                             </label>
                           </div>
@@ -2472,8 +2530,8 @@ function AssemblyTab() {
                               className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                             >
                               <option value="">— Select IRMA module —</option>
-                              <option value="sensitive">sensitive</option>
                               <option value="secondary">secondary</option>
+                              <option value="sensitive">sensitive</option>
                               <option value="utr">utr</option>
                             </select>
                           </div>
@@ -2500,7 +2558,28 @@ function AssemblyTab() {
                     {useCustomIrmaConfig && (
                       <div>
                         {!isNewRun && loadedCustomIrmaConfigName && (
-                          <p className="mb-2 text-md text-muted-foreground">Currently stored file: <span className="font-mono text-foreground">{loadedCustomIrmaConfigName}</span></p>
+                          <div className="mb-2 text-md text-muted-foreground">
+                            <p>
+                              Currently stored file:{" "}
+                              <button
+                                type="button"
+                                onClick={() => downloadCustomConfigFile(
+                                  `${API.downloadCustomIrmaConfig}?run_name=${encodeURIComponent(selectedRun?.run_name ?? runName)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type ?? experimentType)}`,
+                                  loadedCustomIrmaConfigName,
+                                  "irma"
+                                )}
+                                className="inline-flex items-center gap-1 font-mono text-primary hover:underline"
+                              >
+                                <Download size={11} className="shrink-0" />
+                                {loadedCustomIrmaConfigName}
+                              </button>
+                            </p>
+                            {customConfigDownloadError?.field === "irma" && (
+                              <p className="mt-1 flex items-center gap-1 text-xs text-destructive">
+                                <AlertCircle size={11} className="shrink-0" /> {customConfigDownloadError.message}
+                              </p>
+                            )}
+                          </div>
                         )}
                         <div className="flex gap-2">
                           <input
@@ -2515,7 +2594,7 @@ function AssemblyTab() {
                             <input
                               type="file"
                               className="hidden"
-                              onChange={(e) => { const f = e.target.files?.[0]; if (f) { setCustomIrmaConfig(f.name); setCustomIrmaConfigFile(f); } e.target.value = ""; }}
+                              onChange={(e) => { const f = e.target.files?.[0]; if (f) { setCustomIrmaConfig(f.name); setCustomIrmaConfigFile(f); setCustomConfigDownloadError(null); } e.target.value = ""; }}
                             />
                           </label>
                         </div>
@@ -2541,7 +2620,28 @@ function AssemblyTab() {
                     {useCustomQcSettings && (
                       <div>
                         {!isNewRun && loadedCustomQcSettingsName && (
-                          <p className="mb-2 text-md text-muted-foreground">Currently stored file: <span className="font-mono text-foreground">{loadedCustomQcSettingsName}</span></p>
+                          <div className="mb-2 text-md text-muted-foreground">
+                            <p>
+                              Currently stored file:{" "}
+                              <button
+                                type="button"
+                                onClick={() => downloadCustomConfigFile(
+                                  `${API.downloadCustomQcSettings}?run_name=${encodeURIComponent(selectedRun?.run_name ?? runName)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type ?? experimentType)}`,
+                                  loadedCustomQcSettingsName,
+                                  "qc"
+                                )}
+                                className="inline-flex items-center gap-1 font-mono text-primary hover:underline"
+                              >
+                                <Download size={11} className="shrink-0" />
+                                {loadedCustomQcSettingsName}
+                              </button>
+                            </p>
+                            {customConfigDownloadError?.field === "qc" && (
+                              <p className="mt-1 flex items-center gap-1 text-xs text-destructive">
+                                <AlertCircle size={11} className="shrink-0" /> {customConfigDownloadError.message}
+                              </p>
+                            )}
+                          </div>
                         )}
                         <div className="flex gap-2">
                           <input
@@ -2556,7 +2656,7 @@ function AssemblyTab() {
                             <input
                               type="file"
                               className="hidden"
-                              onChange={(e) => { const f = e.target.files?.[0]; if (f) { setCustomQcSettings(f.name); setCustomQcSettingsFile(f); } e.target.value = ""; }}
+                              onChange={(e) => { const f = e.target.files?.[0]; if (f) { setCustomQcSettings(f.name); setCustomQcSettingsFile(f); setCustomConfigDownloadError(null); } e.target.value = ""; }}
                             />
                           </label>
                         </div>

@@ -11,6 +11,7 @@ import os
 import re
 import glob
 import json
+import time
 import shutil
 import signal
 import psutil
@@ -28,6 +29,9 @@ from .schema_validator import (
     illumina_samplesheet_pa_schema,
     illumina_samplesheet_db_schema,
     validate_tbl,
+    CUSTOM_PRIMER_CONFIG_FILENAME,
+    CUSTOM_IRMA_CONFIG_FILENAME,
+    CUSTOM_QC_SETTINGS_FILENAME,
 )
 
 # Import utils for dataframe operations
@@ -619,10 +623,6 @@ def validate_custom_configs_in_storage(
     run_name: str,
     experiment_type: str,
 ) -> dict[str, Any]:
-    
-    # Extract pathogen and instrument type from experiment_type
-    pathogen = experiment_type.split("-")[0]
-    instrument = experiment_type.split("-")[-1]
 
     # Retrieve assembly table from database
     db_assembly_tbl = lookup_tbl_in_database(
@@ -632,6 +632,14 @@ def validate_custom_configs_in_storage(
         filter_coln_val = {"run_name": [run_name], "experiment_type": [experiment_type]},
         filter_var_by = ["AND"]
     )
+
+    # Make sure db_assembly_tbl is not empty
+    if db_assembly_tbl.shape[0] == 0:
+        raise ValueError(f"No assembly found for run_name '{run_name}' and experiment_type '{experiment_type}'.")
+    
+    # Extract pathogen and instrument type from experiment_type
+    pathogen = experiment_type.split("-")[0]
+    instrument = experiment_type.split("-")[-1]
 
     # Extract assembly information from assembly_tbl
     custom_primers = db_assembly_tbl.select("custom_primers").to_series()[0]
@@ -643,21 +651,21 @@ def validate_custom_configs_in_storage(
 
     # Check if custom primers file is provided and exists in storage
     if custom_primers:
-        primers_storage_path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, custom_primers)
+        primers_storage_path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, CUSTOM_PRIMER_CONFIG_FILENAME)
         if not os.path.exists(primers_storage_path):
-            missing_config_files.append({"custom_primers": custom_primers})
+            missing_config_files.append({"custom_primers": CUSTOM_PRIMER_CONFIG_FILENAME})
 
     # Check if custom irma config file is provided and exists in storage
     if custom_irma_config:
-        irma_config_storage_path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, custom_irma_config)
+        irma_config_storage_path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, CUSTOM_IRMA_CONFIG_FILENAME)
         if not os.path.exists(irma_config_storage_path):
-            missing_config_files.append({"custom_irma_config": custom_irma_config})
+            missing_config_files.append({"custom_irma_config": CUSTOM_IRMA_CONFIG_FILENAME})
 
     # Check if custom QC settings file is provided and exists in storage
     if custom_qc_settings:
-        qc_settings_storage_path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, custom_qc_settings)
+        qc_settings_storage_path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, CUSTOM_QC_SETTINGS_FILENAME)
         if not os.path.exists(qc_settings_storage_path):
-            missing_config_files.append({"custom_qc_settings": custom_qc_settings})
+            missing_config_files.append({"custom_qc_settings": CUSTOM_QC_SETTINGS_FILENAME})
 
     # Return the validation results
     if len(missing_config_files) > 0:
@@ -710,14 +718,6 @@ def update_assembly_in_database(
                 db_tbl_name = ["assembly"],
                 table = assembly_tbl
             )
-            # Repull the db_assembly_tbl after inserting new assembly_tbl
-            db_assembly_tbl = lookup_tbl_in_database(
-                db_tbl_name = ["assembly"],
-                return_var = ["*"],
-                filter_coln_var = ["run_name", "experiment_type"],
-                filter_coln_val = {"run_name": [run_name], "experiment_type": [experiment_type]},
-                filter_var_by = ["AND"]
-            )
         else:
             # Compare and update database table
             compare_and_update_db_table(
@@ -732,6 +732,13 @@ def update_assembly_in_database(
         raise Exception(str(err))
     # Whether to return database table
     if return_tbl:
+        db_assembly_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["assembly"],
+            return_var = ["*"],
+            filter_coln_var = ["run_name", "experiment_type"],
+            filter_coln_val = {"run_name": [run_name], "experiment_type": [experiment_type]},
+            filter_var_by = ["AND"]
+        )
         return db_assembly_tbl
     else:
         return None
@@ -744,18 +751,21 @@ def update_samplesheet_in_database(
     return_tbl: bool = True
 ) -> pl.DataFrame | None:
     try:
-        # Extract pathogen and instrument type from experiment_type
-        instrument = experiment_type.split("-")[-1]
         # Get assembly table from database
-        assembly_tbl = lookup_tbl_in_database(
+        db_assembly_tbl = lookup_tbl_in_database(
             db_tbl_name = ["assembly"],
             return_var = ["*"],
             filter_coln_var = ["run_name", "experiment_type"],
             filter_coln_val = {"run_name": [run_name], "experiment_type": [experiment_type]},
             filter_var_by = ["AND"]
         )
+        # Make sure db_assembly_tbl is not empty
+        if db_assembly_tbl.shape[0] == 0:
+            raise ValueError(f"No assembly found for run_name '{run_name}' and experiment_type '{experiment_type}'.")
         # Retrieve assembly_id from assembly_tbl
-        assembly_id = assembly_tbl.select("assembly_id").to_series()[0]
+        assembly_id = db_assembly_tbl.select("assembly_id").to_series()[0]        
+        # Extract pathogen and instrument type from experiment_type
+        instrument = experiment_type.split("-")[-1]        
         # Validate the samplesheet against the schema
         if "ONT" in instrument.upper():
             # Check samplesheet for this run_name exists in database
@@ -797,7 +807,7 @@ def update_samplesheet_in_database(
                 pl.col(col).cast(illumina_samplesheet_pa_schema.columns[col].dtype.type) for col in illumina_samplesheet_pa_schema.columns
             ]) 
             # Validate the samplesheet against the schema
-            samplesheet_tbl = validate_tbl(samplesheet_tbl, illumina_samplesheet_pa_schema, "illumina_samplesheet")
+            samplesheet_tbl = validate_tbl(samplesheet_tbl, illumina_samplesheet_pa_schema, "illumina_samplesheet")         
         # Add assembly_id column to samplesheet_tbl
         samplesheet_tbl = samplesheet_tbl.with_columns(pl.lit(assembly_id).alias("assembly_id"))
         # Check if db_samplesheet is empty, if so insert new samplesheet to database
@@ -806,14 +816,6 @@ def update_samplesheet_in_database(
                 db_tbl_name = ["ont_samplesheet" if "ONT" in instrument.upper() else "illumina_samplesheet"],
                 table = samplesheet_tbl
             )
-            # Repull the db_samplesheet_tbl after inserting new samplesheet_tbl
-            db_samplesheet_tbl = lookup_tbl_in_database(
-                db_tbl_name = ["ont_samplesheet" if "ONT" in instrument.upper() else "illumina_samplesheet"],
-                return_var = ["*"],
-                filter_coln_var = ["assembly_id"],
-                filter_coln_val = {"assembly_id": [assembly_id]},
-                filter_var_by = ["AND"]
-            )  
         else:
             # Compare and update database table
             unique_cols = ["assembly_id", "sample_id", "sample_type", "fastq_1", "fastq_2"] if "ILLUMINA" in instrument.upper() else ["assembly_id", "barcode", "sample_id", "sample_type", "fastq"]
@@ -829,6 +831,13 @@ def update_samplesheet_in_database(
         raise Exception(str(err))
     # Whether to return database table
     if return_tbl:
+        db_samplesheet_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["ont_samplesheet" if "ONT" in instrument.upper() else "illumina_samplesheet"],
+            return_var = ["*"],
+            filter_coln_var = ["assembly_id"],
+            filter_coln_val = {"assembly_id": [assembly_id]},
+            filter_var_by = ["AND"]
+        )  
         return db_samplesheet_tbl
     else:
         return None
@@ -1136,10 +1145,6 @@ def run_mira_docker(
     experiment_type: str, 
 ) -> Dict[str, Any]:
     try:
-        # Extract pathogen and instrument type from experiment_type
-        pathogen  = experiment_type.split("-")[0]
-        instrument = experiment_type.split("-")[-1]
-
         # Pull assembly info from DB
         db_assembly_tbl = lookup_tbl_in_database(
             db_tbl_name     = ["assembly"],
@@ -1151,9 +1156,9 @@ def run_mira_docker(
 
         # Check if assembly info exists in DB
         if db_assembly_tbl.is_empty():
-            raise ValueError(f"Run '{run_name}' not found in database.")
+            raise ValueError(f"No assembly found for run_name '{run_name}' and experiment_type '{experiment_type}'.")        
 
-        # Extract assembly_id, parquet_files, nextclade, and subsample_reads from assembly info
+        # Extract assembly_id from assembly info
         assembly_row  = db_assembly_tbl.row(0, named=True)
         assembly_id   = assembly_row.get("assembly_id", 0)
 
@@ -1172,21 +1177,25 @@ def run_mira_docker(
         update_tbl_in_database(
             db_tbl_name = ["assembly"],
             table = pl.DataFrame({"alias_name": [run_name], "assembly_status": ["PROCESSING"]}),
-            filter_coln_var  = ["run_name", "experiment_type"],
-            filter_coln_val  = {"run_name": [run_name], "experiment_type": [experiment_type]},
-            filter_var_by    = ["AND", "AND"]
+            filter_coln_var  = ["assembly_id"],
+            filter_coln_val  = {"assembly_id": [assembly_id]},
+            filter_var_by    = ["AND"]
         )
 
-        # Extract primer, parquet_files, nextclade, and subsample_reads from assembly_row
-        if pathogen.lower() == "sc2":
+        # Extract pathogen and instrument type from experiment_type
+        pathogen  = experiment_type.split("-")[0]
+        instrument = experiment_type.split("-")[-1]
+
+        # Extract primer, subsample_reads, parquet_files, and nextclade from assembly_row
+        if pathogen.lower() == "sc2" and instrument.lower() == "illumina":
             primer = assembly_row.get("sc2_primer", None)
-        elif pathogen.lower() == "rsv":
+        elif pathogen.lower() == "rsv" and instrument.lower() == "illumina":
             primer = assembly_row.get("rsv_primer", None)
         else:
             primer = None
+        subsample_reads = assembly_row.get("subsample_reads", 0)
         parquet_files = assembly_row.get("parquet_files", False)
         nextclade = assembly_row.get("nextclade", True)
-        subsample     = assembly_row.get("subsample_reads", 0)
 
         # Extract custom primer from assembly_row
         custom_primers = assembly_row.get("custom_primers", None)
@@ -1224,13 +1233,15 @@ def run_mira_docker(
         if keep_samplesheet_rows.is_empty():
             raise ValueError(f"No samples with status 'Keep' found in the samplesheet for run '{run_name}'.")
         
-        # Write samplesheet CSV to run directory
+        # Define the run directory for the pipeline and create it if it doesn't exist
         run_dir = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name)                   
         os.makedirs(run_dir, exist_ok=True)
 
-        # Remove previous pipeline outputs, including files owned by the container user.       
+        # Define the output directory for the pipeline outputs and create it if it doesn't exist       
         output_dir = os.path.join(run_dir, "outputs")
         os.makedirs(output_dir, exist_ok=True)
+
+        # Remove previous pipeline outputs, including files owned by the container user
         _remove_previous_pipeline_outputs(run_dir = run_dir)
 
         # Create the samplesheet CSV file based on instrument type
@@ -1280,25 +1291,28 @@ def run_mira_docker(
             "--e",       experiment_type,
         ])
 
-        # Add primer, subsample, parquet_files, and nextclade options to the command if specified
+        # Add primer, subsample_reads, parquet_files, and nextclade options to the command if specified
         if primer:
             cmd.extend(["--p", primer])
         if custom_primers:
-            cmd.extend(["--custom_primers", custom_primers])
+            container_custom_primer_file = f"{container_run_dir}/{CUSTOM_PRIMER_CONFIG_FILENAME}"
+            cmd.extend(["--custom_primers", container_custom_primer_file])
             if primer_kmer_len:
                 cmd.extend(["--primer_kmer_len", str(primer_kmer_len)])
             if primer_restrict_window:
                 cmd.extend(["--primer_restrict_window", str(primer_restrict_window)])
-        if subsample and int(subsample) >= 0:
-            cmd.extend(["--subsample_reads", str(int(subsample))])
+        if subsample_reads and int(subsample_reads) >= 0:
+            cmd.extend(["--subsample_reads", str(int(subsample_reads))])
         if custom_irma_config:
-            cmd.extend(["--custom_irma_config", custom_irma_config])
+            container_custom_irma_config_file = f"{container_run_dir}/{CUSTOM_IRMA_CONFIG_FILENAME}"
+            cmd.extend(["--custom_irma_config", container_custom_irma_config_file])
         if custom_qc_settings:
-            cmd.extend(["--custom_qc_settings", custom_qc_settings])
+            container_custom_qc_settings_file = f"{container_run_dir}/{CUSTOM_QC_SETTINGS_FILENAME}"
+            cmd.extend(["--custom_qc_settings", container_custom_qc_settings_file])
         if parquet_files:
-            cmd.extend(["--parquet_files"])
+            cmd.extend(["--parquet_files", "true"])
         if nextclade:
-            cmd.extend(["--nextclade"])
+            cmd.extend(["--nextclade", "true"])
 
         # Log the command for reference
         logger.info(
@@ -1319,14 +1333,14 @@ def run_mira_docker(
             f" --outdir {container_output_dir}\n" +
             f" --e {experiment_type}\n" +
             (f" --p {primer}\n" if primer else "") +
-            (f" --custom_primers {custom_primers}\n" if custom_primers else "") +
+            (f" --custom_primers {container_run_dir}/{CUSTOM_PRIMER_CONFIG_FILENAME}\n" if custom_primers else "") +
             (f" --primer_kmer_len {primer_kmer_len}\n" if custom_primers and primer_kmer_len else "") +
             (f" --primer_restrict_window {primer_restrict_window}\n" if custom_primers and primer_restrict_window else "") +
-            (f" --custom_irma_config {custom_irma_config}\n" if custom_irma_config else "") +
-            (f" --custom_qc_settings {custom_qc_settings}\n" if custom_qc_settings else "") +
-            (f" --subsample_reads {int(subsample)}\n" if subsample and int(subsample) >= 0 else "") +
-            (f" --parquet_files\n" if parquet_files else "") +
-            (f" --nextclade\n" if nextclade else ""),
+            (f" --custom_irma_config {container_run_dir}/{CUSTOM_IRMA_CONFIG_FILENAME}\n" if custom_irma_config else "") +
+            (f" --custom_qc_settings {container_run_dir}/{CUSTOM_QC_SETTINGS_FILENAME}\n" if custom_qc_settings else "") +
+            (f" --subsample_reads {int(subsample_reads)}\n" if subsample_reads and int(subsample_reads) >= 0 else "") +
+            (f" --parquet_files true\n" if parquet_files else "") +
+            (f" --nextclade true\n" if nextclade else ""),
         )
 
         # Fire and forget — launch in background, do not block
@@ -1632,8 +1646,10 @@ def create_mira_dag(
                     sample_status[t["sample"]] = "FAILED"
         # Check if any known samples were not present in the trace file and mark them as "FAILED"
         for sample_id in known_sample_ids:
-            if sample_id not in sample_status:
+            if sample_id not in sample_status and workflow["status"] == "COMPLETED":
                 sample_status[sample_id] = "PASSED"
+            else:
+                sample_status[sample_id] = "FAILED"
         workflow["number_of_samples_with_failed_tasks"] = sum(1 for s in sample_status.values() if s == "FAILED")
         workflow["number_of_samples_with_successful_tasks"] = sum(1 for s in sample_status.values() if s == "PASSED")        
 
