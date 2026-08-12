@@ -64,7 +64,7 @@ WORKDIR ${DATA_DIR}
 # Copy all backend scripts to docker image
 COPY backend/ ${BACKEND_DIR}
 
-############# Set up certs ##################
+################# Set up certs ##############################
 
 # bundle-ca.pem is the CDC-G2 root + CDC-G2-ZSH (Zscaler TLS-inspection) chain
 COPY bundle-ca.pem /usr/local/share/ca-certificates/cdc-zscaler-bundle.crt
