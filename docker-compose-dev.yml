@@ -64,6 +64,7 @@ services:
       target: frontend
       args:
         UBUNTU_IMAGE: ubuntu:24.04
+        NODE_VERSION: 24
     depends_on:
       - mira-nf
       - mira-backend
