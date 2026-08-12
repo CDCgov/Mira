@@ -125,19 +125,25 @@ RUN apt-get update --allow-releaseinfo-change --fix-missing \
   && rm -rf /var/lib/apt/lists/* /var/cache/* /var/log/* /tmp/* /var/tmp/*
 
 ############# Set up certs ##################
+
 # bundle-ca.pem is the CDC-G2 root + CDC-G2-ZSH (Zscaler TLS-inspection) chain — must be
 # trusted before the NodeSource repo (HTTPS) can be reached below.
 COPY bundle-ca.pem /usr/local/share/ca-certificates/cdc-zscaler-bundle.crt
 RUN update-ca-certificates
 
+# Point OpenSSL/pip/requests at the system store instead of certifi's bundled CAs
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 
-############# Install Node.js 24 ##################
+############# Install Node.js (version set via NODE_VERSION build arg) ##################
+
 # Ubuntu 24.04's own apt repos ship an older Node.js, so pull from NodeSource instead
+# Define node.js version to install for the frontend stage
+ARG NODE_VERSION
+ARG NODE_VERSION=${NODE_VERSION:-24}
 RUN mkdir -p /etc/apt/keyrings \
   && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
-  && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
+  && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_VERSION}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
   && apt-get update \
   && apt-get install --no-install-recommends -y nodejs \
   && apt clean autoclean \

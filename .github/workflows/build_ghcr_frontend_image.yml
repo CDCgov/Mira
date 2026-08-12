@@ -36,7 +36,7 @@ jobs:
           echo "repo_lc=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
   build-frontend:
-    name: Build and Push Frontend Image (amd64/arm64)
+    name: Build and Push Frontend Image (amd64)
     needs: prepare
     if: needs.prepare.outputs.match == 'true'
     runs-on: ubuntu-latest
@@ -45,13 +45,6 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      # Emulation needed to cross-build linux/arm64 on this amd64 runner.
-      # NOTE: pin this to a specific commit SHA to match the other actions below.
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-        with:
-          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -81,7 +74,9 @@ jobs:
           context: .
           file: ./Dockerfile
           target: frontend
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
