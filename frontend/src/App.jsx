@@ -206,7 +206,7 @@ function DropdownItem({ onClick, icon: Icon, children }) {
 /* ── Tab definitions ─────────────────────────────── */
 const TABS = [
   { id: "home",       label: "Home",       icon: Home },
-  { id: "assembly",   label: "MIRA",   icon: Dna },
+  { id: "assembly",   label: "Mira",   icon: Dna },
   { id: "seqsender",  label: "SeqSender",  icon: Send },
   { id: "resources",  label: "Resources",  icon: BookOpen },
 ];
@@ -251,9 +251,8 @@ function HomeTab() {
           <img src="/mira-logo.png" alt="MIRA" className="h-14 w-14 object-contain drop-shadow-md rounded-full ring-2 ring-primary/20 shrink-0" />
           <div>
             <div className="flex items-baseline gap-2 mb-0.5">
-              <h1 className="text-2xl font-bold text-foreground" style={{ fontFamily: "'Cinzel', serif" }}>MIRA</h1>
+              <h1 className="text-2xl font-bold text-foreground">Mira</h1>
               <span className="text-xs font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded-full">v2.0.0</span>
-              <span className="text-sm font-semibold text-foreground">— Multisegment Influenza Read Assembly</span>
             </div>
             <p className="text-xs text-muted-foreground leading-relaxed max-w-3xl">
               End-to-end CDC respiratory virus genomics platform: FASTQ assembly → QC → clade annotation → multi-database submission.
@@ -346,7 +345,7 @@ function HomeTab() {
 
 /* ── Assembly Tab ────────────────────────────────── */
 const ASSEMBLY_STEPS = [
-  { id: "setup",    title: "STEP 1: MIRA SETUP",  subtitle: "Define run, configure sample sheet, and set assembly parameters", icon: Upload },
+  { id: "setup",    title: "STEP 1: Mira SETUP",  subtitle: "Define run, configure sample sheet, and set assembly parameters", icon: Upload },
   { id: "progress", title: "STEP 2: PROCESSING",  subtitle: "Monitor assembly progress and stage status",                      icon: RefreshCw },
   { id: "results",  title: "STEP 3: RESULTS",     subtitle: "Assembly statistics, QC decisions, and coverage plots",           icon: BarChart3 },
   { id: "export",   title: "STEP 4: EXPORT",      subtitle: "Download FASTA outputs from the assembly run",                    icon: Download },
@@ -2022,7 +2021,7 @@ function AssemblyTab() {
       // ── Step 4: Run MIRA assembly ──
       const miraRes = await fetch(`${API.runMIRA}?run_name=${encodeURIComponent(runName)}&experiment_type=${encodeURIComponent(experimentType)}`);
       const miraData = await miraRes.json();
-      if (!miraRes.ok) throw new Error(miraData.detail || "run MIRA assembly failed");
+      if (!miraRes.ok) throw new Error(miraData.detail || "run Mira assembly failed");
 
       // Step 5: Start polling for pipeline status
       // Check if pid returned from the response is still running, if so, start polling for status
@@ -2035,7 +2034,7 @@ function AssemblyTab() {
         });
 
         // Stage the submission status, error, and success messages
-        setSubmitSuccess("MIRA assembly launched successfully! You can monitor its progress in the 'Processing' step.");
+        setSubmitSuccess("Mira assembly launched successfully! You can monitor its progress in the 'Processing' step.");
         setSubmitError(null);
 
         // Clear previous results now that a new run has started
@@ -2099,7 +2098,7 @@ function AssemblyTab() {
     { id: "result-section-barcode",  label: "Barcode Assignment", show: resultBarcodeAssignments !== null },
     { id: "result-section-qc",       label: "QC Decisions",       show: resultQcDecisions !== null },
     { id: "result-section-heatmap",  label: "Median Coverage Heatmap",   show: resultCoverageHeatmap !== null },
-    { id: "result-section-summary",  label: "MIRA Summary",       show: resultMiraSummary !== null },
+    { id: "result-section-summary",  label: "Mira Summary",       show: resultMiraSummary !== null },
     { id: "result-section-coverage", label: "Sample Sankey & Coverage Plots",    show: resultSampleCoverageList !== null },
     { id: "result-section-variants", label: "AA Variants",        show: resultVariants !== null },
     { id: "result-section-snvs",     label: "Minor Variants",         show: resultMinorSnvs !== null },
@@ -2842,12 +2841,12 @@ function AssemblyTab() {
                             try {
                               const statusRes = await fetch(`${API.miraCancel}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&pid=${submitProcessId}`);
                               const data = await statusRes.json();
-                              if (!statusRes.ok) throw new Error(data.detail || "Failed to cancel MIRA run");
+                              if (!statusRes.ok) throw new Error(data.detail || "Failed to cancel Mira run");
                               setCancelRun(true);
                               setSubmitting(false);
                               setSubmitError({
                                 title: "Canceled Status",
-                                items: Array.isArray(data.message) ? data.message : [data.message || "MIRA run was canceled or interrupted."],
+                                items: Array.isArray(data.message) ? data.message : [data.message || "Mira run was canceled or interrupted."],
                                 missing: null,
                               });
                             } catch (err) {
@@ -2869,7 +2868,7 @@ function AssemblyTab() {
                     {/* ── no run loaded yet ── */}
                     {showDAG == false && (
                       <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
-                        <AlertCircle size={13} /> Run MIRA assembly in Step 1 to watch its live progress here.
+                        <AlertCircle size={13} /> Run Mira assembly in Step 1 to watch its live progress here.
                       </div>
                     )}
 
@@ -2922,7 +2921,7 @@ function AssemblyTab() {
                             : pipelineDAG?.workflows?.status === "CANCELED" && (
                                 <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
                                   <AlertCircle size={13} className="shrink-0 mt-0.5" />
-                                  <span>MIRA run was canceled or interrupted.</span>
+                                  <span>Mira run was canceled or interrupted.</span>
                                 </div>
                               )
                         )}
@@ -3508,7 +3507,7 @@ function AssemblyTab() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
           <div className="bg-background border border-border rounded-xl p-6 max-w-2xl w-full mx-4 shadow-xl flex flex-col gap-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-foreground">Export MIRA Reports</h3>
+              <h3 className="text-sm font-bold text-foreground">Export Mira Reports</h3>
               <button onClick={() => setExportRunModal(false)} className="text-muted-foreground hover:text-foreground transition-colors">
                 <X size={14} />
               </button>
@@ -3547,7 +3546,7 @@ function AssemblyTab() {
                 return (
                   <>
                     <p className="text-xs text-muted-foreground">
-                      Select a run to download its MIRA results as a <span className="font-mono">zip</span> archive.
+                      Select a run to download its Mira results as a <span className="font-mono">zip</span> archive.
                     </p>                  
                     <div className="flex items-center gap-2">
                     <div className="relative flex-1">
@@ -4353,7 +4352,7 @@ function ResourcesTab() {
 
         {/* ── Installation ─────────────────────── */}
         <ResourceCard icon={Package} title="Installation">
-          <p className="text-xs text-muted-foreground mb-1">MIRA requires Python 3.8+ and conda/mamba. Supports Linux and macOS.</p>
+          <p className="text-xs text-muted-foreground mb-1">Mira requires Python 3.8+ and conda/mamba. Supports Linux and macOS.</p>
           <ResourceLink href="https://github.com/CDCgov/MIRA" icon={GitFork}>GitHub — CDCgov/MIRA</ResourceLink>
           <ResourceLink href="https://github.com/CDCgov/MIRA/blob/master/MIRA-INSTALL.sh" icon={Download} badge="script">MIRA-INSTALL.sh</ResourceLink>
           <ResourceLink href="https://github.com/CDCgov/MIRA/blob/master/requirements.txt" icon={FileStack}>requirements.txt</ResourceLink>
@@ -4366,8 +4365,8 @@ function ResourcesTab() {
 
         {/* ── Documentation ────────────────────── */}
         <ResourceCard icon={BookOpen} title="Documentation">
-          <ResourceLink href="https://github.com/CDCgov/MIRA/blob/master/README.md">MIRA README</ResourceLink>
-          <ResourceLink href="https://github.com/CDCgov/MIRA/wiki">MIRA Wiki</ResourceLink>
+          <ResourceLink href="https://github.com/CDCgov/MIRA/blob/master/README.md">Mira README</ResourceLink>
+          <ResourceLink href="https://github.com/CDCgov/MIRA/wiki">Mira Wiki</ResourceLink>
           <div className="mt-1 pt-2 border-t border-border">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Related Tools</p>
             <ResourceLink href="https://docs.nextstrain.org/projects/nextclade/en/stable/" badge="nextclade">Nextclade Documentation</ResourceLink>
@@ -4386,7 +4385,7 @@ function ResourcesTab() {
         {/* ── GitHub Repositories ──────────────── */}
         <ResourceCard icon={GitFork} title="GitHub Repositories">
           {[
-            { repo: "CDCgov/MIRA",          desc: "Main MIRA application",              badge: "main" },
+            { repo: "CDCgov/MIRA",          desc: "Main Mira application",              badge: "main" },
             { repo: "CDCgov/seqsender",      desc: "Sequence submission pipeline",       badge: "tool" },
             { repo: "CDCgov/irma-core",      desc: "IRMA assembly core",                badge: "tool" },
             { repo: "nextstrain/nextclade",  desc: "Clade assignment & QC tool",         badge: "ext" },
@@ -4412,7 +4411,7 @@ function ResourcesTab() {
         {/* ── Contact ──────────────────────────── */}
         <ResourceCard icon={Mail} title="Who to Contact">
           <ContactCard
-            name="MIRA Development Team"
+            name="Mira Development Team"
             role="CDC VSDB — Virus Surveillance and Diagnostic Branch"
             email="flu@cdc.gov"
             github="CDCgov"
@@ -4424,7 +4423,7 @@ function ResourcesTab() {
           />
           <div className="mt-2 pt-2 border-t border-border space-y-1.5">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Report Issues</p>
-            <ResourceLink href="https://github.com/CDCgov/MIRA/issues" icon={MessageSquare} badge="bugs">MIRA GitHub Issues</ResourceLink>
+            <ResourceLink href="https://github.com/CDCgov/MIRA/issues" icon={MessageSquare} badge="bugs">Mira GitHub Issues</ResourceLink>
             <ResourceLink href="https://github.com/CDCgov/seqsender/issues" icon={MessageSquare} badge="bugs">SeqSender GitHub Issues</ResourceLink>
           </div>
           <div className="mt-2 pt-2 border-t border-border">
@@ -4533,8 +4532,8 @@ export default function App() {
           </div>
           <div className="flex flex-col leading-tight">
             <div className="flex items-baseline gap-2">
-              <span className="text-2xl tracking-widest text-white" style={{ fontFamily: "'Cinzel', serif", fontWeight: 700 }}>MIRA</span>
-              <span className="text-xs text-white/50 font-mono">{versionInfo?.current_mira_version ?? "..."}</span>
+              <span className="text-2xl tracking-widest text-white font-bold">Mira</span>
+              <span className="text-xs text-white/50 font-mono">{versionInfo?.current_mira_version ?? "v3.0.0"}</span>
             </div>
             <span className="text-xs text-white/80 hidden sm:inline tracking-wider normalcase">
               Influenza, SARS-CoV-2, and RSV Genome Assembly &amp; Curation
@@ -4566,7 +4565,7 @@ export default function App() {
                   <div className="px-4 py-3 text-sm text-foreground">
                     <p className="mb-1 flex items-center gap-1.5">
                       <AlertCircle size={13} className="text-amber-500 shrink-0" />
-                      A new version of MIRA is available
+                      A new version of Mira is available
                     </p>
                     <div className="flex items-center gap-1.5 mb-1.5 text-xs">
                       <span className="text-muted-foreground">Current:</span>
@@ -4581,7 +4580,7 @@ export default function App() {
                       rel="noopener noreferrer"
                       className="text-primary hover:underline"
                     >
-                      Click here to see how to upgrade MIRA to the latest version
+                      Click here to see how to upgrade Mira to the latest version
                     </a>
                   </div>
                 )}

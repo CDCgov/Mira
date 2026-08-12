@@ -1,36 +1,41 @@
+/* CDC brand fonts — Roboto (headings/titles), Nunito Sans (body), Roboto Mono (code) */
+@import url('https://fonts.googleapis.com/css2?family=Nunito+Sans:ital,wght@0,300;0,400;0,600;0,700;0,800;1,400&family=Roboto+Mono:wght@400;500&family=Roboto:ital,wght@0,300;0,400;0,500;0,700;0,900;1,400&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-  /* ── Light mode ────────────────────────────────────────────────────────
-     Palette:  #0057B7  #032659  #3382CF  #5796D9  #87B5E3  #B8D4ED  #DBE8F7  #ECF5FF
+  /* ── Light mode ── CDC Brand Identity ──────────────────────────────────
+     Blue:   #0057B7 (cdc-blue)  #032659 (cdc-navy)  #3382CF (cdc-blue-1)
+     Teal:   #0081A1 (cdc-teal)  Red: #CC1B22 (cdc-red)  Yellow: #DE8A05
+     Neutrals: #333333 (charcoal)  #6D6E71 (gray)  #FFFFFF (white)
   ─────────────────────────────────────────────────────────────────────── */
   :root {
-    --background:            212 100% 96%;  /* #ECF5FF — near-white blue tint    */
-    --foreground:            216  93% 18%;  /* #032659 — deep navy text           */
+    --background:              0   0% 100%; /* #FFFFFF — white canvas             */
+    --foreground:              0   0%  20%; /* #333333 — cdc-charcoal body text    */
 
-    --card:                    0   0% 100%; /* white cards on tinted background   */
-    --card-foreground:       216  93% 18%;  /* #032659                            */
+    --card:                    0   0% 100%; /* white cards                        */
+    --card-foreground:         0   0%  20%; /* #333333                            */
     --popover:                 0   0% 100%;
-    --popover-foreground:    216  93% 18%;
+    --popover-foreground:      0   0%  20%;
 
-    --primary:               211 100% 36%;  /* #0057B7 — brand deep blue          */
+    --primary:               211 100% 36%;  /* #0057B7 — CDC Blue (primary)       */
     --primary-foreground:      0   0% 100%;
 
-    --secondary:             212  64% 91%;  /* #DBE8F7 — soft blue                */
-    --secondary-foreground:  216  93% 18%;
+    --secondary:             216  93% 18%;  /* #032659 — CDC Navy (secondary)     */
+    --secondary-foreground:    0   0% 100%;
 
-    --muted:                 212  64% 91%;  /* #DBE8F7                            */
-    --muted-foreground:      210  62% 51%;  /* #3382CF — mid blue for subtle text */
+    --muted:                 212 100% 96%;  /* #ECF5FF — cdc-blue-6 panel         */
+    --muted-foreground:      220   2% 44%;  /* #6D6E71 — cdc-gray subtle text     */
 
-    --accent:                210  62% 51%;  /* #3382CF — mid blue accent          */
+    --accent:                192 100% 32%;  /* #0081A1 — CDC Teal accent          */
     --accent-foreground:       0   0% 100%;
 
-    --info:                  211  63% 60%;  /* #5796D9 — sky blue (gradient end)  */
+    --info:                  210  62% 51%;  /* #3382CF — cdc-blue-1 info          */
     --info-foreground:         0   0% 100%;
 
-    --destructive:             0  84%  60%;
+    --destructive:           358  77% 45%;  /* #CC1B22 — CDC Red                  */
     --destructive-foreground:  0   0% 100%;
 
     --border:                208  60% 83%;  /* #B8D4ED — pale blue border         */
@@ -41,7 +46,7 @@
 
   /* ── Dark mode ─────────────────────────────────────────────────────── */
   .dark {
-    --background:            216  93% 18%;  /* #032659 — deep navy                */
+    --background:            216  93% 18%;  /* #032659 — CDC Navy                 */
     --foreground:            212 100% 96%;  /* #ECF5FF                            */
 
     --card:                  216  80% 22%;  /* slightly lighter navy              */
@@ -49,22 +54,22 @@
     --popover:               216  93% 18%;
     --popover-foreground:    212 100% 96%;
 
-    --primary:               210  62% 51%;  /* #3382CF — lighter blue for dark bg */
+    --primary:               210  62% 51%;  /* #3382CF — cdc-blue-1 on dark bg    */
     --primary-foreground:      0   0% 100%;
 
-    --secondary:             211 100% 36%;  /* #0057B7 — used as secondary        */
+    --secondary:             211 100% 36%;  /* #0057B7 — CDC Blue                 */
     --secondary-foreground:  212 100% 96%;
 
     --muted:                 216  60% 25%;  /* dark muted panel                   */
     --muted-foreground:      210  62% 71%;  /* #87B5E3 — light blue muted text    */
 
-    --accent:                211  63% 60%;  /* #5796D9                            */
+    --accent:                188 100% 40%;  /* #00B1CE — cdc-teal-1 accent        */
     --accent-foreground:       0   0% 100%;
 
-    --info:                  210  62% 71%;  /* #87B5E3 — soft blue gradient end   */
+    --info:                  210  62% 71%;  /* #87B5E3 — soft blue                */
     --info-foreground:       216  93% 18%;
 
-    --destructive:             0  63%  41%;
+    --destructive:           358  77% 45%;  /* #CC1B22 — CDC Red                  */
     --destructive-foreground:  0   0% 100%;
 
     --border:                216  60% 28%;  /* dark border                        */
@@ -81,7 +86,23 @@
   body {
     @apply bg-background text-foreground;
     margin: 0;
-    font-family: system-ui, -apple-system, sans-serif;
+    /* Nunito Sans — CDC body copy & subheadings */
+    font-family: 'Nunito Sans', system-ui, -apple-system, sans-serif;
+    line-height: 1.5;
     -webkit-font-smoothing: antialiased;
+  }
+  /* Roboto — CDC headers & titles, in CDC Navy */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Roboto', system-ui, -apple-system, sans-serif;
+    font-weight: 700;
+    line-height: 1.15;
+    color: hsl(var(--secondary));
+  }
+  .dark h1, .dark h2, .dark h3, .dark h4, .dark h5, .dark h6 {
+    color: hsl(var(--foreground));
+  }
+  /* Roboto Mono — CDC monospace */
+  code, pre, kbd, samp {
+    font-family: 'Roboto Mono', SFMono-Regular, Menlo, Consolas, monospace;
   }
 }

@@ -4,6 +4,11 @@ export default {
   content: ["./index.html", "./src/**/*.{js,jsx,ts,tsx}"],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ["'Nunito Sans'", "system-ui", "-apple-system", "sans-serif"],
+        heading: ["'Roboto'", "system-ui", "-apple-system", "sans-serif"],
+        mono: ["'Roboto Mono'", "SFMono-Regular", "Menlo", "Consolas", "monospace"],
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
