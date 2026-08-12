@@ -1377,11 +1377,6 @@ def _get_mira_process(
         proc = psutil.Process(pid)
         if proc.status() == psutil.STATUS_ZOMBIE:
             return None
-        pathogen = experiment_type.split("-")[0]
-        instrument = experiment_type.split("-")[-1]
-        run_marker = f"CONTAINER_RUN_DIR=/data/{pathogen}/{instrument}/{run_name}"
-        if run_marker not in proc.cmdline():
-            raise ValueError(f"PID '{pid}' does not belong to MIRA run '{run_name}'.")
         return proc
     except psutil.NoSuchProcess:
         return None
@@ -1395,57 +1390,51 @@ def check_mira_status(
     experiment_type: str
 ) -> Dict[str, Any]:
     
-    try:
-        db_assembly_tbl = lookup_tbl_in_database(
-            db_tbl_name = ["assembly"],
-            return_var = ["*"],
-            filter_coln_var = ["run_name", "experiment_type"],
-            filter_coln_val = {"run_name": [run_name], "experiment_type": [experiment_type]},
-            filter_var_by = ["AND", "AND"]
-        )
+    db_assembly_tbl = lookup_tbl_in_database(
+        db_tbl_name = ["assembly"],
+        return_var = ["*"],
+        filter_coln_var = ["run_name", "experiment_type"],
+        filter_coln_val = {"run_name": [run_name], "experiment_type": [experiment_type]},
+        filter_var_by = ["AND", "AND"]
+    )
 
-        # Check if assembly for this run_name exists in database
-        if db_assembly_tbl.is_empty():
-            raise ValueError(f"Run name '{run_name}' does not exist in the database.")
-        
-        # Get assembly_status from database
-        assembly_status = db_assembly_tbl.select("assembly_status").to_series()[0]
-
-        # Check if the process is alive
-        proc = _get_mira_process(pid, run_name, experiment_type)
-
-        # Update assembly status based on process state
-        if proc is not None:
-            if assembly_status == "SUBMITTED":
-                update_tbl_in_database(
-                    db_tbl_name = ["assembly"],
-                    table = pl.DataFrame({"assembly_status": ["PROCESSING"]}),
-                    filter_coln_var  = ["run_name", "experiment_type"],
-                    filter_coln_val  = {"run_name": [run_name], "experiment_type": [experiment_type]},
-                    filter_var_by    = ["AND"]
-                )
-            return{
-                "status":  "PROCESSING",
-                "message": [f"Run '{run_name}' is currently processing."]
-            }
-        else:
-            update_assembly_status = "COMPLETED" if assembly_status == "PROCESSING" else assembly_status
-            update_tbl_in_database(
-                db_tbl_name = ["assembly"],
-                table = pl.DataFrame({"assembly_status": [update_assembly_status]}),
-                filter_coln_var  = ["run_name", "experiment_type"],
-                filter_coln_val  = {"run_name": [run_name], "experiment_type": [experiment_type]},
-                filter_var_by    = ["AND"]
-            )
-            return {
-                "status": f"{update_assembly_status}",
-                "message": [f"Run '{run_name}' status is {update_assembly_status}."],
-            }
-    except ValueError as err:
-        raise ValueError(str(err))
-    except Exception as err:
-        raise Exception(str(err))
+    # Check if assembly for this run_name exists in database
+    if db_assembly_tbl.is_empty():
+        raise ValueError(f"Run name '{run_name}' does not exist in the database.")
     
+    # Get assembly_status from database
+    assembly_status = db_assembly_tbl.select("assembly_status").to_series()[0]
+
+    # Check if the process is alive
+    proc = _get_mira_process(pid, run_name, experiment_type)
+
+    # Update assembly status based on process state
+    if proc is not None:
+        assembly_status = "PROCESSING"
+        update_tbl_in_database(
+            db_tbl_name = ["assembly"],
+            table = pl.DataFrame({"assembly_status": [assembly_status]}),
+            filter_coln_var  = ["run_name", "experiment_type"],
+            filter_coln_val  = {"run_name": [run_name], "experiment_type": [experiment_type]},
+            filter_var_by    = ["AND", "AND"]
+        )
+        return{
+            "status":  "PROCESSING",
+            "message": [f"Run '{run_name}' is currently processing."]
+        }
+    else:
+        assembly_status = "COMPLETED" 
+        update_tbl_in_database(
+            db_tbl_name = ["assembly"],
+            table = pl.DataFrame({"assembly_status": [assembly_status]}),
+            filter_coln_var  = ["run_name", "experiment_type"],
+            filter_coln_val  = {"run_name": [run_name], "experiment_type": [experiment_type]},
+            filter_var_by    = ["AND", "AND"]
+        )
+        return {
+            "status": f"{assembly_status}",
+            "message": [f"Run '{run_name}' status is {assembly_status}."],
+        }
 
 # Cancel a running MIRA pipeline by killing the process group
 def cancel_mira_run(
@@ -1468,37 +1457,33 @@ def cancel_mira_run(
         raise ValueError(f"Run name '{run_name}' does not exist in the database.")  
     
     # If db_assembly_tbl is not empty, check if the process is alive
-    try:
-        proc = _get_mira_process(pid, run_name, experiment_type)
-        # If the process is alive, kill the entire process group to terminate the run
-        if proc is not None:
-            try:
-                # Kill the entire process group so child Docker processes are also terminated
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except (psutil.NoSuchProcess, ProcessLookupError):
-                pass
-            # Record an intentional user cancellation separately from a failure.
-            update_tbl_in_database(
-                db_tbl_name = ["assembly"],
-                table = pl.DataFrame({"assembly_status": ["CANCELED"]}),
-                filter_coln_var  = ["run_name", "experiment_type"],
-                filter_coln_val  = {"run_name": [run_name], "experiment_type": [experiment_type]},
-                filter_var_by    = ["AND"]
-            )
-            return {
-                "status":  "canceled",
-                "message": [f"Run '{run_name}' has been canceled."]
-            }
-        else:
-            return {
-                "status":  "not_running",
-                "message": [f"PID '{pid}' does not exist. Run '{run_name}' is probably not running or completed. Nothing to be done."]
-            }
-    except ValueError as err:
-        raise ValueError(str(err))
-    except Exception as err:
-        raise Exception(str(err))
+    proc = _get_mira_process(pid, run_name, experiment_type)
 
+    # If the process is alive, kill the entire process group to terminate the run
+    if proc is not None:
+        try:
+            # Kill the entire process group so child Docker processes are also terminated
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (psutil.NoSuchProcess, ProcessLookupError):
+            pass
+        # Record an intentional user cancellation separately from a failure.
+        update_tbl_in_database(
+            db_tbl_name = ["assembly"],
+            table = pl.DataFrame({"assembly_status": ["CANCELED"]}),
+            filter_coln_var  = ["run_name", "experiment_type"],
+            filter_coln_val  = {"run_name": [run_name], "experiment_type": [experiment_type]},
+            filter_var_by    = ["AND"]
+        )
+        return {
+            "status":  "canceled",
+            "message": [f"Run '{run_name}' has been canceled."]
+        }
+    else:
+        return {
+            "status":  "not_running",
+            "message": [f"PID '{pid}' does not exist. Run '{run_name}' is probably not running or completed. Nothing to be done."]
+        }
+    
 # Define function to get pipeline DAG structure
 def create_mira_dag(
     run_name: str,

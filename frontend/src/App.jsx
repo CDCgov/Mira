@@ -904,16 +904,20 @@ function AssemblyTab() {
               setResultNextcladeFasta(nextcladeData?.location ?? null);
 
             } catch (resultErr) {
+              
               // A single missing/failed result endpoint shouldn't keep the run stuck
               // in "Processing..." forever — log it and still mark the run as done.
               console.error("Failed to load one or more result sets:", resultErr);
+
             } finally {
+
               // If the run is done, stop polling regardless of individual result-fetch outcomes
               setAssembled(true);
               setIsNewRun(false);
               setSubmitting(false);
               setSubmitSuccess(null);
               setPipelinePolling(false);
+
             }
           }
         }
