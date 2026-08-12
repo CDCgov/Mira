@@ -1,0 +1,56 @@
+
+x-mira-nf-image:
+  &mira-nf-image
+  cdcgov/mira-nf:v2.2.0
+
+x-data-storage-path:
+  &data-storage-path
+  /home/snu3/FLU_SC2_SEQUENCING
+
+services:
+  mira-nf:
+    container_name: mira-nf
+    image: *mira-nf-image
+    networks:
+      - mira-react
+    restart: always
+    command: ["tail", "-f", "/dev/null"]  # Keep the container running
+
+  mira-backend:
+    container_name: mira-backend
+    image: ghcr.io/rchau88/mira-backend:latest
+    depends_on:
+      - mira-nf
+    networks:
+      - mira-react
+    ports:
+      - 8080:8080
+    restart: always
+    environment:
+      HOST_MIRA_NF_IMAGE: *mira-nf-image
+      HOST_DATA_STORAGE_PATH: *data-storage-path
+    volumes:
+      - type: bind
+        source: *data-storage-path
+        target: /data
+      - /var/run/docker.sock:/var/run/docker.sock # Mount the Docker socket to allow the backend container to run Nextflow pipelines
+    working_dir: /data
+    entrypoint: ["/bin/bash", "-c", "/MIRA-backend/api-kickoff --deploy Docker --data_dir /data --mira_nf_image \"$$HOST_MIRA_NF_IMAGE\" --host_url localhost --host 0.0.0.0 --api_port 8080 --react_port 5175"]
+
+  mira-frontend:
+    container_name: mira-frontend
+    image: ghcr.io/rchau88/mira-frontend:latest
+    depends_on:
+      - mira-nf
+      - mira-backend
+    networks:
+      - mira-react    
+    ports:
+      - 5175:5175
+    restart: always
+    working_dir: /MIRA-frontend
+    entrypoint: ["/bin/sh", "-c", "/MIRA-frontend/react-kickoff --host_url localhost --host 0.0.0.0 --react_port 5175 --api_port 8080"]
+
+networks:
+  mira-react:
+    name: mira-react

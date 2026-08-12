@@ -283,23 +283,23 @@ assembly_pa_schema = pa.DataFrameSchema(
             sc2_primers, required=False,
             checks=pa.Check(
                 lambda data: data.lazyframe.select(
-                    (~pl.col("experiment_type").str.contains("SC2") | pl.col("sc2_primer").is_not_null())
-                    .alias("sc2_primer_required_for_sc2")
+                    (~(pl.col("experiment_type").str.contains("SC2") & pl.col("experiment_type").str.contains("Illumina")) | pl.col("sc2_primer").is_not_null())
+                    .alias("sc2_primer_required_for_sc2_illumina")
                 ),
-                error="sc2_primer is required when experiment_type contains 'SC2'.",
+                error="sc2_primer is required when experiment_type contains 'SC2' and 'Illumina'.",
             ),
-            description=f"Provide a SC2 primer if experiment type is SC2. Options: {sc2_primers}"
+            description=f"Provide a SC2 primer if experiment type is SC2-Illumina. Options: {sc2_primers}"
         ),
         "rsv_primer": _nullable_enum_col(
             rsv_primers, required=False,
             checks=pa.Check(
                 lambda data: data.lazyframe.select(
-                    (~pl.col("experiment_type").str.contains("RSV") | pl.col("rsv_primer").is_not_null())
-                    .alias("rsv_primer_required_for_rsv")
+                    (~(pl.col("experiment_type").str.contains("RSV") & pl.col("experiment_type").str.contains("Illumina")) | pl.col("rsv_primer").is_not_null())
+                    .alias("rsv_primer_required_for_rsv_illumina")
                 ),
-                error="rsv_primer is required when experiment_type contains 'RSV'.",
+                error="rsv_primer is required when experiment_type contains 'RSV' and 'Illumina'.",
             ),
-            description=f"Provide a RSV primer if experiment type is RSV. Options: {rsv_primers}"
+            description=f"Provide a RSV primer if experiment type is RSV-Illumina. Options: {rsv_primers}"
         ),
         "subsample_reads": pa.Column(
             pl.Int64, nullable=False, required=True,
@@ -340,7 +340,14 @@ assembly_pa_schema = pa.DataFrameSchema(
         ),
         "irma_module": _nullable_enum_col(
             irma_modules, required=False,
-            description=f"Specify the IRMA module to use for assembly. Options: {irma_modules}"
+            checks=pa.Check(
+                lambda data: data.lazyframe.select(
+                    (pl.col("irma_module").is_null() | pl.col("experiment_type").str.contains("Illumina"))
+                    .alias("irma_module_only_for_illumina")
+                ),
+                error="irma_module can only be set when experiment_type contains 'Illumina'.",
+            ),
+            description=f"Specify the IRMA module to use for assembly (Illumina experiment types only). Options: {irma_modules}"
         ),
         "custom_irma_config": _nullable_str(
             required=False,
