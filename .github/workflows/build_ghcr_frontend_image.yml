@@ -1,4 +1,4 @@
-name: Build and Push to GHCR
+name: Build Frontend Image and Push to GHCR
 
 on:
   push:
