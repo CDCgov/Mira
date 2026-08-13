@@ -31,6 +31,106 @@ usage() {
     exit 1
 }
 
+# Initialize deployment variables
+DEPLOY="Local"
+DATA_ROOT=""
+MIRA_NF_IMAGE=""
+
+# Initialize app variables
+HOST_URL="localhost"
+HOST="0.0.0.0"
+API_PORT="8080"
+REACT_PORT="5175"
+
+# Parse named arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            print_usage
+            exit 0
+            ;;
+        --deploy)
+            DEPLOY="$2"
+            shift 2
+            ;;
+        --data_dir)
+            DATA_ROOT="$2"
+            shift 2
+            ;;
+        --mira_nf_image)
+            MIRA_NF_IMAGE="$2"
+            shift 2
+            ;;
+        --host_url)
+            HOST_URL="$2"
+            shift 2
+            ;;
+        --host)
+            HOST="$2"
+            shift 2
+            ;;
+        --api_port)
+            API_PORT="$2"
+            shift 2
+            ;;
+        --react_port)
+            REACT_PORT="$2"
+            shift 2
+            ;;
+        *)
+            echo "Error: Unknown argument '$1'." >&2
+            usage
+            ;;
+    esac
+done
+
+# Make sure required arguments are provided
+if [[ -z "${DEPLOY}" || -z "${DATA_ROOT}" || -z "${MIRA_NF_IMAGE}" ]]; then
+    MISSING_ARGS=()
+    [[ -z "${DEPLOY}" ]] && MISSING_ARGS+=("--deploy")
+    [[ -z "${DATA_ROOT}" ]] && MISSING_ARGS+=("--data_dir")
+    [[ -z "${MIRA_NF_IMAGE}" ]] && MISSING_ARGS+=("--mira_nf_image")
+    echo ""
+    echo "Error: Missing required arguments: ${MISSING_ARGS[*]}" >&2
+    usage
+fi
+
+echo "Checking deployment..."
+if [[ "${DEPLOY}" != "Local" ]]; then
+    echo "Error: DEPLOY must be 'Local' for this deployment, got '${DEPLOY}'." >&2
+    exit 1
+fi
+echo "Deployment mode: ${DEPLOY}"
+
+# Cache sudo credentials once up front, and keep them alive in the background so the several
+# sudo calls below (data storage ownership, Docker install, image pull) don't each re-prompt
+echo "Requesting permission to download software and install dependencies. If prompted, please enter the admin password to proceed..."
+sudo -v
+( while true; do sudo -n true; sleep 60; kill -0 "$$" &> /dev/null || exit; done ) &
+SUDO_KEEPALIVE_PID=$!
+disown "${SUDO_KEEPALIVE_PID}"
+
+# Make sure the sudo keep-alive loop is stopped no matter how this script exits
+cleanup() {
+    kill "${SUDO_KEEPALIVE_PID}" &> /dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+echo "Checking data storage..."
+if [[ ! -d "${DATA_ROOT}" ]]; then
+    echo "Error: The data directory '${DATA_ROOT}' does not exist. Please create it before proceeding." >&2
+    exit 1
+fi
+echo "Data storage directory: ${DATA_ROOT}"
+
+# Only fix ownership (requires sudo) if something under DATA_ROOT isn't already ours
+echo "Checking data storage ownership and permissions..."
+if find "${DATA_ROOT}" -not -user "$(whoami)" -print -quit | grep -q .; then
+    echo "Fixing ownership of ${DATA_ROOT}. If prompted, please enter the admin password to proceed..."
+    sudo chown -R "$(id -u):$(id -g)" "${DATA_ROOT}"
+fi
+chmod -R 775 "${DATA_ROOT}"
+
 # Check if micromamba is installed, and if not install it
 echo "Checking for Micromamba..."
 if ! command -v micromamba &> /dev/null; then
@@ -99,6 +199,16 @@ if ! docker compose version &> /dev/null; then
 fi
 echo "Docker Compose: $(docker compose version --short)"
 
+# Check if the MIRA Nextflow image is available locally, and if not pull it
+echo "Checking MIRA Nextflow image. If prompted, please enter the admin password to proceed..."
+if ! sudo docker inspect "${MIRA_NF_IMAGE}" &> /dev/null; then
+    if ! sudo docker pull "${MIRA_NF_IMAGE}" &> /dev/null; then
+        echo "Error: Failed to pull MIRA Nextflow image '${MIRA_NF_IMAGE}'." >&2
+        exit 1
+    fi
+fi
+echo "MIRA Nextflow image: ${MIRA_NF_IMAGE}"
+
 # Check if node is installed, and if not install it via micromamba (works on both Linux and macOS)
 echo "Checking for Node.js..."
 if ! command -v node &> /dev/null; then
@@ -119,88 +229,30 @@ fi
 export PATH="${MAMBA_ROOT_PREFIX}/envs/${ENV_NAME}/bin:${PATH}"
 echo "Python: $(python --version) (env: ${ENV_NAME})"
 
-# Initialize deployment variables
-DEPLOY="Local"
-DATA_ROOT=""
-MIRA_NF_IMAGE=""
-
-# Initialize app variables
-HOST_URL="localhost"
-HOST="0.0.0.0"
-API_PORT="8080"
-REACT_PORT="5175"
-
-# Parse named arguments
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        -h|--help)
-            print_usage
-            exit 0
-            ;;
-        --deploy)
-            DEPLOY="$2"
-            shift 2
-            ;;
-        --data_dir)
-            DATA_ROOT="$2"
-            shift 2
-            ;;
-        --mira_nf_image)
-            MIRA_NF_IMAGE="$2"
-            shift 2
-            ;;
-        --host_url)
-            HOST_URL="$2"
-            shift 2
-            ;;
-        --host)
-            HOST="$2"
-            shift 2
-            ;;
-        --api_port)
-            API_PORT="$2"
-            shift 2
-            ;;
-        --react_port)
-            REACT_PORT="$2"
-            shift 2
-            ;;
-        *)
-            echo "Error: Unknown argument '$1'." >&2
-            usage
-            ;;
-    esac
-done
-
-# Check --deploy, --data_dir and --mira_nf_image are required;
-if [[ -z "${DEPLOY}" || -z "${DATA_ROOT}" || -z "${MIRA_NF_IMAGE}" ]]; then
-    echo ""
-    echo "Invalid arguments." >&2
-    usage
+# Close previous pid in pid.log if it exists
+PID_FILE="${DATA_ROOT}/logs/pid.log"
+if [[ -f "${PID_FILE}" ]]; then
+    echo "Closing previous MIRA processes from ${PID_FILE}..."
+    while read -r PID; do
+        if [[ -n "${PID}" ]] && kill -0 "${PID}" &> /dev/null; then
+            echo "Killing process group ${PID}..."
+            kill -- "-${PID}" || echo "Warning: Failed to kill process group ${PID}."
+            # Wait for the group to actually exit so its ports are released before we
+            # check port availability below, instead of racing the still-shutting-down process
+            WAIT_SECONDS=10
+            while kill -0 "${PID}" &> /dev/null && [[ ${WAIT_SECONDS} -gt 0 ]]; do
+                sleep 1
+                WAIT_SECONDS=$((WAIT_SECONDS - 1))
+            done
+            if kill -0 "${PID}" &> /dev/null; then
+                # If Process group ${PID} did not exit in time; force it"
+                kill -9 -- "-${PID}" || true
+                sleep 1
+            fi
+        fi
+    done < "${PID_FILE}"
+    rm -f "${PID_FILE}"
 fi
-
-echo "Checking deployment..."
-if [[ "${DEPLOY}" != "Local" && "${DEPLOY}" != "Docker" ]]; then
-    echo "Error: DEPLOY must be either 'Local' or 'Docker', got '${DEPLOY}'." >&2
-    exit 1
-fi
-echo "Deployment mode: ${DEPLOY}"
-
-echo "Checking data storage..."
-if [[ ! -d "${DATA_ROOT}" ]]; then
-    echo "Error: The data directory '${DATA_ROOT}' does not exist. Please create it before proceeding." >&2
-    exit 1
-fi
-echo "Data storage directory: ${DATA_ROOT}"
-
-echo "Checking MIRA Nextflow image. If prompted, please enter the admin password to proceed..."
-if ! sudo docker inspect "${MIRA_NF_IMAGE}" &> /dev/null; then
-    if ! sudo docker pull "${MIRA_NF_IMAGE}" &> /dev/null; then
-        echo "Error: Failed to pull MIRA Nextflow image '${MIRA_NF_IMAGE}'." >&2
-        exit 1
-    fi
-fi
-echo "MIRA Nextflow image: ${MIRA_NF_IMAGE}"
 
 # Function to find an available port
 find_available_port () {
@@ -224,12 +276,40 @@ find_available_port () {
 API_PORT=$(find_available_port "API" "${API_PORT}")
 REACT_PORT=$(find_available_port "REACT" "${REACT_PORT}")
 
-# Allow 775 permissions for data storage ####
-echo "Apply 775 permission to the data storage. If prompted, please enter the admin password to proceed..."
-sudo chmod -R 775 "${DATA_ROOT}"
+# Reset frontend build artifacts left root-owned by a previous Docker-based run, so npm can rebuild them cleanly
+echo "Checking for root-owned files under frontend/node_modules and frontend/dist..."
+for FRONTEND_PATH in "${SCRIPT_DIR}/frontend/node_modules" "${SCRIPT_DIR}/frontend/dist"; do
+    if [[ -e "${FRONTEND_PATH}" ]] && find "${FRONTEND_PATH}" -not -user "$(whoami)" -print -quit | grep -q .; then
+        echo "Found files not owned by $(whoami) under ${FRONTEND_PATH}. Removing it so it can be rebuilt. If prompted, please enter the admin password to proceed..."
+        sudo rm -rf "${FRONTEND_PATH}"
+    fi
+done
 
-# Run the backend setup scripts in the background so the frontend can start alongside it
-bash "${SCRIPT_DIR}/backend/api-kickoff" --deploy "${DEPLOY}" --data_dir "${DATA_ROOT}" --mira_nf_image "${MIRA_NF_IMAGE}" --host_url "${HOST_URL}" --host "${HOST}" --api_port "${API_PORT}" --react_port "${REACT_PORT}" &
+# Run the backend and frontend setup scripts fully detached (survive this script/terminal exiting)
+LOG_DIR="${DATA_ROOT}/logs"
+mkdir -p "${LOG_DIR}"
+API_LOG="${LOG_DIR}/api-kickoff.log"
+REACT_LOG="${LOG_DIR}/react-kickoff.log"
+PID_FILE="${LOG_DIR}/pid.log"
 
-# Run the frontend setup scripts in the foreground, keeping this script alive
-bash "${SCRIPT_DIR}/frontend/react-kickoff" --host_url "${HOST_URL}" --host "${HOST}" --react_port "${REACT_PORT}" --api_port "${API_PORT}"
+# setsid makes each wrapper the leader of its own process group, so its PID doubles as a
+# group ID we can later kill with `kill -- -PID` to take down uvicorn/npm/vite descendants too
+setsid nohup bash "${SCRIPT_DIR}/backend/api-kickoff" --deploy "${DEPLOY}" --data_dir "${DATA_ROOT}" --mira_nf_image "${MIRA_NF_IMAGE}" --host_url "${HOST_URL}" --host "${HOST}" --api_port "${API_PORT}" --react_port "${REACT_PORT}" > "${API_LOG}" 2>&1 &
+API_PID=$!
+disown "${API_PID}"
+echo "${API_PID}" >> "${PID_FILE}"
+
+setsid nohup bash "${SCRIPT_DIR}/frontend/react-kickoff" --host_url "${HOST_URL}" --host "${HOST}" --react_port "${REACT_PORT}" --api_port "${API_PORT}" > "${REACT_LOG}" 2>&1 &
+REACT_PID=$!
+disown "${REACT_PID}"
+echo "${REACT_PID}" >> "${PID_FILE}"
+
+echo ""
+echo "API LOG: ${API_LOG}"
+echo "REACT LOG: ${REACT_LOG}"
+echo "PID LOG: ${PID_FILE}"
+echo ""
+echo "MIRA setup is complete!"
+echo "MIRA API will be deployed at http://${HOST_URL}:${API_PORT}, with interactive docs at http://${HOST_URL}:${API_PORT}/docs/"
+echo "MIRA REACT will be deployed at http://${HOST_URL}:${REACT_PORT}"
+echo ""

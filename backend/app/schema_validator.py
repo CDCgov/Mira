@@ -101,7 +101,7 @@ if deploy_type == "Docker":
         raise ValueError("HOST_DATA_STORAGE_PATH must be set in docker-compose.yml as an environment variable.")
     _HOST_MIRA_STORAGE_PATH = os.path.join(_HOST_DATA_STORAGE_PATH, "MIRA")
 elif deploy_type == "Local":
-    _HOST_MIRA_STORAGE_PATH = _DEFAULT_DATA_STORAGE_PATH
+    _HOST_MIRA_STORAGE_PATH = _DEFAULT_MIRA_STORAGE_PATH
 
 # DEFINE MIRA-NF DOCKER IMAGE FOR THE APP
 _HOST_MIRA_NF_IMAGE = get_mira_nf_image()

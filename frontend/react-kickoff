@@ -9,7 +9,7 @@ FRONTEND_DIR="$( realpath $(dirname "${BASH_SOURCE[0]}") )"
 # Command-line argument usage
 print_usage() {
     cat <<USAGE
-Usage: $(basename "$0") --host_url <HOST_URL> --host <HOST> --react_port <REACT_PORT> --api_port <API_PORT>
+Usage: $(basename "$0") [h] [--help] --host_url <HOST_URL> --host <HOST> --react_port <REACT_PORT> --api_port <API_PORT>
 
 Arguments:
   --host_url <HOST_URL>       Hostname used to build the API base URL written to .env. (default: localhost)
@@ -61,10 +61,15 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Require all arguments to be provided
+# Make sure required arguments are provided
 if [[ -z "${HOST_URL}" || -z "${HOST}" || -z "${REACT_PORT}" || -z "${API_PORT}" ]]; then
+    MISSING_ARGS=()
+    [[ -z "${HOST_URL}" ]] && MISSING_ARGS+=("--host_url")
+    [[ -z "${HOST}" ]] && MISSING_ARGS+=("--host")
+    [[ -z "${REACT_PORT}" ]] && MISSING_ARGS+=("--react_port")
+    [[ -z "${API_PORT}" ]] && MISSING_ARGS+=("--api_port")
     echo ""
-    echo "Invalid arguments." >&2
+    echo "Error: Missing required arguments: ${MISSING_ARGS[*]}" >&2
     usage
 fi
 

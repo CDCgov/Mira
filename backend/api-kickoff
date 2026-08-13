@@ -83,8 +83,16 @@ done
 
 # Only --deploy, --data_dir and --mira_nf_image are required; the rest have defaults
 if [[ -z "${DEPLOY}" || -z "${DATA_ROOT}" || -z "${MIRA_NF_IMAGE}" || -z "${HOST_URL}" || -z "${HOST}" || -z "${API_PORT}" || -z "${REACT_PORT}" ]]; then
+    MISSING_ARGS=()
+    [[ -z "${DEPLOY}" ]] && MISSING_ARGS+=("--deploy")
+    [[ -z "${DATA_ROOT}" ]] && MISSING_ARGS+=("--data_dir")
+    [[ -z "${MIRA_NF_IMAGE}" ]] && MISSING_ARGS+=("--mira_nf_image")
+    [[ -z "${HOST_URL}" ]] && MISSING_ARGS+=("--host_url")
+    [[ -z "${HOST}" ]] && MISSING_ARGS+=("--host")
+    [[ -z "${REACT_PORT}" ]] && MISSING_ARGS+=("--react_port")
+    [[ -z "${API_PORT}" ]] && MISSING_ARGS+=("--api_port")
     echo ""
-    echo "Invalid arguments." >&2
+    echo "Error: Missing required arguments: ${MISSING_ARGS[*]}" >&2
     usage
 fi
 

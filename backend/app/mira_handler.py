@@ -1570,6 +1570,8 @@ def create_mira_dag(
                 m = complete_re.search(line)
                 if m and workflow["completed_at"] is None:
                         workflow["completed_at"] = m.group(1)
+    elif assembly_status == "CANCELED" and not os.path.exists(nextflow_log):
+        message.append(f"MIRA run was canceled or interrupted.")
     elif assembly_status != "PROCESSING" and not os.path.exists(nextflow_log):
         message.append(f"Cannot find Nextflow log file for this run. The log file may have been deleted or moved. Try running MIRA again.")
 
@@ -1609,6 +1611,8 @@ def create_mira_dag(
                 })
         # Sort tasks by task_id to ensure consistent ordering
         tasks.sort(key=lambda t: t["task_id"])
+    elif assembly_status == "CANCELED" and trace_file is None:
+        message.append(f"MIRA run was canceled or interrupted.")
     elif assembly_status != "PROCESSING" and trace_file is None:
         message.append(f"Cannot find execution trace file for this run. The trace file may have been deleted or moved. Try running MIRA again.")
 
