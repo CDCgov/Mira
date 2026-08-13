@@ -655,6 +655,9 @@ function AssemblyTab() {
   const [loadedCustomIrmaConfigName, setLoadedCustomIrmaConfigName] = useState(""); // filename already stored server-side for a loaded run
   const [loadedCustomQcSettingsName, setLoadedCustomQcSettingsName] = useState(""); // filename already stored server-side for a loaded run
   const [customConfigDownloadError, setCustomConfigDownloadError] = useState(null); // { field, message } for a failed custom config download
+  const [primersFileError, setPrimersFileError] = useState(null); // validation error when a non-.fasta file is picked for Custom Primers
+  const [irmaConfigFileError, setIrmaConfigFileError] = useState(null); // validation error when a non-.sh file is picked for Custom IRMA Config
+  const [qcSettingsFileError, setQcSettingsFileError] = useState(null); // validation error when a non-YAML file is picked for Custom QC Settings
   const [createParquet, setCreateParquet]           = useState(false);
   const [nextclade, setNextclade]                   = useState(true);
   const [exportFmt, setExportFmt]                   = useState("fasta");
@@ -904,7 +907,7 @@ function AssemblyTab() {
               setResultNextcladeFasta(nextcladeData?.location ?? null);
 
             } catch (resultErr) {
-              
+
               // A single missing/failed result endpoint shouldn't keep the run stuck
               // in "Processing..." forever — log it and still mark the run as done.
               console.error("Failed to load one or more result sets:", resultErr);
@@ -1312,6 +1315,7 @@ function AssemblyTab() {
     setPrimer("");
     setCustomPrimers("");
     setUseCustomPrimers(false);
+    setPrimersFileError(null);
     setPrimerKmerLen("");
     setPrimerRestrictWindow("");
     setSubSample("0");
@@ -1319,8 +1323,10 @@ function AssemblyTab() {
     setIrmaModule("");
     setUseCustomIrmaConfig(false);
     setCustomIrmaConfig("");
+    setIrmaConfigFileError(null);
     setUseCustomQcSettings(false);
     setCustomQcSettings("");
+    setQcSettingsFileError(null);
     setCustomPrimersFile(null);
     setCustomIrmaConfigFile(null);
     setCustomQcSettingsFile(null);
@@ -1689,6 +1695,9 @@ function AssemblyTab() {
       setCustomIrmaConfigFile(null);
       setCustomQcSettingsFile(null);
       setCustomConfigDownloadError(null);
+      setIrmaConfigFileError(null);
+      setQcSettingsFileError(null);
+      setPrimersFileError(null);
 
       // This run is now the page's actively loaded/polled run — set it here rather than
       // relying on the modal's row-selection state, which resets whenever the modal reopens
@@ -1784,8 +1793,12 @@ function AssemblyTab() {
 
     // Custom Primers requires a file path, primer_kmer_len, and primer_restrict_window to also be set
     if (useCustomPrimers) {
-      if (!customPrimers) {
+      if (isNewRun === true && assembled === false && !customPrimers) {
         setSubmitError({ title: "Assembly Error", items: ["Please provide your custom primer FASTA file or turn off Custom Primers."], missing: null });
+        return;
+      }
+      if (isNewRun === true && assembled === false && !/\.fasta$/i.test(customPrimers)) {
+        setSubmitError({ title: "Assembly Error", items: ["Custom Primers file must be a FASTA file (.fasta)."], missing: null });
         return;
       }
       if (!primerKmerLen || isNaN(parseInt(primerKmerLen)) || parseInt(primerKmerLen) < 0) {
@@ -1811,14 +1824,22 @@ function AssemblyTab() {
     }
 
     // Custom IRMA Config requires a file path when enabled
-    if (useCustomIrmaConfig && !customIrmaConfig) {
+    if (isNewRun === true && assembled === false && useCustomIrmaConfig && !customIrmaConfig) {
       setSubmitError({ title: "Assembly Error", items: ["Please provide a custom IRMA config file or turn off Custom IRMA Config."], missing: null });
       return;
     }
+    if (isNewRun === true && assembled === false && useCustomIrmaConfig && customIrmaConfig && !/\.sh$/i.test(customIrmaConfig)) {
+      setSubmitError({ title: "Assembly Error", items: ["Custom IRMA Config file must be a shell script (.sh)."], missing: null });
+      return;
+    }
 
-    // Custom QC Settings requires a file path when enabled
-    if (useCustomQcSettings && !customQcSettings) {
+    // Custom QC Settings requires a file path when enabled, and it must be a YAML file
+    if (isNewRun === true && assembled === false && useCustomQcSettings && !customQcSettings) {
       setSubmitError({ title: "Assembly Error", items: ["Please provide a custom QC settings file or turn off Custom QC Settings."], missing: null });
+      return;
+    }
+    if (isNewRun === true && assembled === false && useCustomQcSettings && customQcSettings && !/\.(yaml|yml)$/i.test(customQcSettings)) {
+      setSubmitError({ title: "Assembly Error", items: ["Custom QC Settings file must be a YAML file (.yaml or .yml)."], missing: null });
       return;
     }
 
@@ -1878,12 +1899,12 @@ function AssemblyTab() {
       sc2_primer:             experimentType.includes("SC2") ? (primer || "") : "",
       rsv_primer:             experimentType.includes("RSV") ? (primer || "") : "",
       subsample_reads:        parseInt(subSample) || 0,
-      custom_primers:         useCustomPrimers && Boolean(customPrimers),
-      primer_kmer_len:        useCustomPrimers && customPrimers && primerKmerLen ? (parseInt(primerKmerLen) || 0) : 0,
-      primer_restrict_window: useCustomPrimers && customPrimers && primerRestrictWindow ? (parseInt(primerRestrictWindow) || 0) : 0,
+      custom_primers:         useCustomPrimers,
+      primer_kmer_len:        useCustomPrimers && primerKmerLen ? (parseInt(primerKmerLen) || 0) : 0,
+      primer_restrict_window: useCustomPrimers && primerRestrictWindow ? (parseInt(primerRestrictWindow) || 0) : 0,
       irma_module:            useIrmaModule && irmaModule ? irmaModule : "",
-      custom_irma_config:     useCustomIrmaConfig && Boolean(customIrmaConfig),
-      custom_qc_settings:     useCustomQcSettings && Boolean(customQcSettings),
+      custom_irma_config:     useCustomIrmaConfig,
+      custom_qc_settings:     useCustomQcSettings,
       parquet_files:          createParquet,
       nextclade:              nextclade,
       samplesheet:            formattedSamplesheet,
@@ -2474,11 +2495,29 @@ function AssemblyTab() {
                               <input
                                 type="file"
                                 className="hidden"
-                                accept=".fasta,.fa,.fna"
-                                onChange={(e) => { const f = e.target.files?.[0]; if (f) { setCustomPrimers(f.name); setCustomPrimersFile(f); setCustomConfigDownloadError(null); } e.target.value = ""; }}
+                                accept=".fasta"
+                                onChange={(e) => {
+                                  const f = e.target.files?.[0];
+                                  if (f) {
+                                    if (!/\.fasta$/i.test(f.name)) {
+                                      setPrimersFileError("Custom Primers file must be a FASTA file (.fasta).");
+                                    } else {
+                                      setPrimersFileError(null);
+                                      setCustomPrimers(f.name);
+                                      setCustomPrimersFile(f);
+                                      setCustomConfigDownloadError(null);
+                                    }
+                                  }
+                                  e.target.value = "";
+                                }}
                               />
                             </label>
                           </div>
+                          {primersFileError && (
+                            <p className="mt-1 flex items-center gap-1 text-xs text-destructive">
+                              <AlertCircle size={11} className="shrink-0" /> {primersFileError}
+                            </p>
+                          )}
                         </div>
 
                         <div className="grid grid-cols-2 gap-3">
@@ -2549,7 +2588,7 @@ function AssemblyTab() {
                     >
                       <div>
                         <p className="text-sm font-medium">Custom IRMA Config</p>
-                        <p className="text-xs text-muted-foreground">When set to true, provide a custom IRMA config file to be used with IRMA assembly.</p>
+                        <p className="text-xs text-muted-foreground">When set to true, this flag will allow you to provide a custom IRMA config file to be used with IRMA assembly.</p>
                       </div>
                       <span className={cn(
                         "relative w-10 h-5 rounded-full transition-colors shrink-0 pointer-events-none",
@@ -2598,10 +2637,29 @@ function AssemblyTab() {
                             <input
                               type="file"
                               className="hidden"
-                              onChange={(e) => { const f = e.target.files?.[0]; if (f) { setCustomIrmaConfig(f.name); setCustomIrmaConfigFile(f); setCustomConfigDownloadError(null); } e.target.value = ""; }}
+                              accept=".sh"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) {
+                                  if (!/\.sh$/i.test(f.name)) {
+                                    setIrmaConfigFileError("Custom IRMA Config file must be a shell script (.sh).");
+                                  } else {
+                                    setIrmaConfigFileError(null);
+                                    setCustomIrmaConfig(f.name);
+                                    setCustomIrmaConfigFile(f);
+                                    setCustomConfigDownloadError(null);
+                                  }
+                                }
+                                e.target.value = "";
+                              }}
                             />
                           </label>
                         </div>
+                        {irmaConfigFileError && (
+                          <p className="mt-1 flex items-center gap-1 text-xs text-destructive">
+                            <AlertCircle size={11} className="shrink-0" /> {irmaConfigFileError}
+                          </p>
+                        )}
                       </div>
                     )}
 
@@ -2611,7 +2669,7 @@ function AssemblyTab() {
                     >
                       <div>
                         <p className="text-sm font-medium">Custom QC Settings</p>
-                        <p className="text-xs text-muted-foreground">When set to true, provide a custom QC file with pass/fail settings for constructing the summary files.</p>
+                        <p className="text-xs text-muted-foreground">When set to true, this flag will allow you to provide a custom QC file with pass/fail settings for constructing the summary files.</p>
                       </div>
                       <span className={cn(
                         "relative w-10 h-5 rounded-full transition-colors shrink-0 pointer-events-none",
@@ -2660,10 +2718,29 @@ function AssemblyTab() {
                             <input
                               type="file"
                               className="hidden"
-                              onChange={(e) => { const f = e.target.files?.[0]; if (f) { setCustomQcSettings(f.name); setCustomQcSettingsFile(f); setCustomConfigDownloadError(null); } e.target.value = ""; }}
+                              accept=".yaml,.yml"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) {
+                                  if (!/\.(yaml|yml)$/i.test(f.name)) {
+                                    setQcSettingsFileError("Custom QC Settings file must be a YAML file (.yaml or .yml).");
+                                  } else {
+                                    setQcSettingsFileError(null);
+                                    setCustomQcSettings(f.name);
+                                    setCustomQcSettingsFile(f);
+                                    setCustomConfigDownloadError(null);
+                                  }
+                                }
+                                e.target.value = "";
+                              }}
                             />
                           </label>
                         </div>
+                        {qcSettingsFileError && (
+                          <p className="mt-1 flex items-center gap-1 text-xs text-destructive">
+                            <AlertCircle size={11} className="shrink-0" /> {qcSettingsFileError}
+                          </p>
+                        )}
                       </div>
                     )}
 
