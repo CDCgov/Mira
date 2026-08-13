@@ -4596,7 +4596,7 @@ export default function App() {
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-background text-foreground">
 
       {/* ── Header ───────────────────────────────── */}
-      <header className="h-24 shrink-0 w-full bg-primary border-b border-border flex items-center px-4 gap-3">
+      <header className="h-24 shrink-0 w-full bg-gradient-to-r from-[#0067d6] via-[#0057B7] to-[#003c86] border-b border-border flex items-center px-4 gap-3">
         {/* Brand */}
         <button
           onClick={() => navigateTo("home")}
