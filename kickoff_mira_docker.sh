@@ -248,7 +248,7 @@ services:
         target: /data
       - /var/run/docker.sock:/var/run/docker.sock
     working_dir: /data
-    entrypoint: ["/bin/bash", "-c", "/MIRA-backend/api-kickoff --deploy Docker --data_dir /data --mira_nf_image \"\$\$HOST_MIRA_NF_IMAGE\" --host_url ${HOST_URL} --host ${HOST} --api_port ${API_PORT} --react_port ${REACT_PORT}"]
+    entrypoint: ["/bin/bash", "-c", "mkdir -p /data/logs && /MIRA-backend/api-kickoff --deploy Docker --data_dir /data --mira_nf_image \"\$\$HOST_MIRA_NF_IMAGE\" --host_url ${HOST_URL} --host ${HOST} --api_port ${API_PORT} --react_port ${REACT_PORT} > /data/logs/api-kickoff.log 2>&1 & wait"]
 
   mira-frontend:
     container_name: mira-frontend
@@ -261,8 +261,12 @@ services:
     ports:
       - ${REACT_PORT}:${REACT_PORT}
     restart: always
-    working_dir: /MIRA-frontend
-    entrypoint: ["/bin/sh", "-c", "/MIRA-frontend/react-kickoff --host_url ${HOST_URL} --host ${HOST} --react_port ${REACT_PORT} --api_port ${API_PORT}"]
+    volumes:
+      - type: bind
+        source: *data-storage-path
+        target: /data
+    working_dir: /data
+    entrypoint: ["/bin/sh", "-c", "mkdir -p /data/logs && /MIRA-frontend/react-kickoff --host_url ${HOST_URL} --host ${HOST} --react_port ${REACT_PORT} --api_port ${API_PORT} > /data/logs/react-kickoff.log 2>&1 & wait"]
 
 networks:
   mira-react:

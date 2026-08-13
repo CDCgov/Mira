@@ -101,8 +101,9 @@ ENV PATH="$PATH:${MAMBA_ROOT_PREFIX}/bin"
 # Make the app available at port 8080
 EXPOSE 8080
 
-# Execute the pipeline
-ENTRYPOINT ["/bin/bash", "-c", "uvicorn app.main:app --reload --reload-dir app --host 0.0.0.0 --port 8080"]
+# Execute the pipeline detached, with output captured to a log file; `wait` keeps this
+# shell (PID 1) alive and propagates uvicorn's exit code once it stops
+ENTRYPOINT ["/bin/bash", "-c", "mkdir -p ${DATA_DIR}/logs && uvicorn app.main:app --reload --reload-dir app --host 0.0.0.0 --port 8080 > ${DATA_DIR}/logs/api-kickoff.log 2>&1 & wait"]
 
 ##############################################
 #
@@ -153,9 +154,10 @@ RUN mkdir -p /etc/apt/keyrings \
 
 # Create a program variable
 ENV DASHBOARD_DIR=/MIRA-frontend
+ENV DATA_DIR=/data
 
 # Set up volume directory
-VOLUME ${DASHBOARD_DIR}
+VOLUME ${DASHBOARD_DIR} ${DATA_DIR}
 
 # Set up working directory
 WORKDIR ${DASHBOARD_DIR}
@@ -180,5 +182,6 @@ EXPOSE 5175
 # Install dependencies listed in package-lock.json and clean npm cache
 RUN npm ci && npm cache clean --force
 
-# Start the Vite dev server
-ENTRYPOINT ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5175"]
+# Start the Vite dev server detached, with output captured to a log file; `wait` keeps this
+# shell (PID 1) alive and propagates npm's exit code once it stops
+ENTRYPOINT ["/bin/sh", "-c", "mkdir -p ${DATA_DIR}/logs && npm run dev -- --host 0.0.0.0 --port 5175 > ${DATA_DIR}/logs/react-kickoff.log 2>&1 & wait"]

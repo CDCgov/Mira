@@ -42,7 +42,7 @@ services:
         target: /data
       - /var/run/docker.sock:/var/run/docker.sock # Mount the Docker socket to allow the backend container to run Nextflow pipelines
     working_dir: /data
-    entrypoint: ["/bin/bash", "-c", "/MIRA-backend/api-kickoff --deploy Docker --data_dir /data --mira_nf_image \"$$HOST_MIRA_NF_IMAGE\" --host_url localhost --host 0.0.0.0 --api_port 8080 --react_port 5175"]
+    entrypoint: ["/bin/bash", "-c", "mkdir -p /data/logs && /MIRA-backend/api-kickoff --deploy Docker --data_dir /data --mira_nf_image \"$$HOST_MIRA_NF_IMAGE\" --host_url localhost --host 0.0.0.0 --api_port 8080 --react_port 5175 > /data/logs/api-kickoff.log 2>&1 & wait"]
 
   mira-frontend:
     container_name: mira-frontend
@@ -62,8 +62,12 @@ services:
     ports:
       - 5175:5175
     restart: always
-    working_dir: /MIRA-frontend
-    entrypoint: ["/bin/sh", "-c", "/MIRA-frontend/react-kickoff --host_url localhost --host 0.0.0.0 --react_port 5175 --api_port 8080"]
+    volumes:
+      - type: bind
+        source: *data-storage-path
+        target: /data
+    working_dir: /data
+    entrypoint: ["/bin/sh", "-c", "mkdir -p /data/logs && /MIRA-frontend/react-kickoff --host_url localhost --host 0.0.0.0 --react_port 5175 --api_port 8080 > /data/logs/react-kickoff.log 2>&1 & wait"]
 
 networks:
   mira-react:
