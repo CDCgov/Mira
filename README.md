@@ -5,8 +5,8 @@ MIRA combines a FastAPI backend, a React frontend, and a MIRA Nextflow pipeline 
 
 There are two types of deployment to run this pipeline:
 
-- **Local:** Run the backend and frontend on the host machine, and the Nextflow pipeline runs in Docker.
-- **Docker Compose:** Run the full application stack in containers.
+- **Local:** Run the backend and frontend on the host, and the Nextflow pipeline runs in Docker.
+- **Docker + Compose:** Run the full application stack in containers.
 
 ## Project Structure
 
@@ -19,9 +19,18 @@ MIRA/
 └── README.md
 ```
 
+## Before you begin
+
+Create a data source in your $HOME directory where you would store the outputs of the MIRA applications
+
+Example
+```bash
+mkdir -p ${HOME}/FLU_SC2_SEQUENCING
+```
+
 ## Local deployment
 
-Use `kickoff_mira_local.sh` to run FastAPI with Uvicorn and React with Vite on the host. The launcher will verify and install required dependencies, create a Micromamba environment defined by `environment.yml`, and configure data directory permissions.
+Use `kickoff_mira_local.sh` to run FastAPI with Uvicorn and React with Vite on the host. The launcher will verify and install required dependencies, create a Micromamba environment defined by `environment.yml`, and configure owner permissions for the data directory.
 
 ```bash
 bash kickoff_mira_local.sh [-h] [--help] --deploy Local --data_dir <DATA_ROOT> --mira_nf_image <MIRA_NF_IMAGE> --host_url <HOST_URL> --host <HOST> --api_port <API_PORT> --react_port <REACT_PORT>
@@ -33,24 +42,24 @@ bash kickoff_mira_local.sh [-h] [--help] --deploy Local --data_dir <DATA_ROOT> -
 | `--deploy` | yes | `Local` | Deployment mode. This launcher accepts only `Local`. |
 | `--data_dir` | Yes | - | Existing host directory used for MIRA data, logs, and SQLite state. |
 | `--mira_nf_image` | Yes | - | MIRA Nextflow Docker image in `name:tag` format. |
-| `--host_url` | Yes | `localhost` | Hostname used to launch the applications. |
-| `--host` | Yes | `0.0.0.0` | Bind address for the backend and frontend servers. |
-| `--api_port` | Yes | `8080` | Backend API port. |
-| `--react_port` | Yes | `5175` | React frontend port. |
+| `--host_url` | No | `localhost` | Hostname used to launch the applications. |
+| `--host` | No | `0.0.0.0` | Bind address for the backend and frontend servers. |
+| `--api_port` | No | `8080` | Backend API port. |
+| `--react_port` | No | `5175` | React frontend port. |
 
 Example:
 
 ```bash
 bash kickoff_mira_local.sh \
     --deploy Local \
-	--data_dir /home/user/MIRA_DATA \
+	--data_dir ${HOME}/FLU_SC2_SEQUENCING \
 	--mira_nf_image cdcgov/mira-nf:v2.2.0
 ```
 
-The launcher starts both applications in the background. If a requested port is unavailable, it selects an available port. Runtime files are stored in `<DATA_ROOT>/logs/`:
+The launcher starts both applications in the background. If a requested port is unavailable, it selects an available port. Runtime log files are stored in `${HOME}/FLU_SC2_SEQUENCING/logs/`:
 
 - `api-kickoff.log`     - FastAPI/Uvicorn output
-- `react-kickoff.log`   - Vite output
+- `react-kickoff.log`   - React Vite output
 - `pid.log`             - process-group IDs for the running backend and frontend
 
 To stop a local deployment, run:
@@ -58,10 +67,8 @@ To stop a local deployment, run:
 ```bash
 while read -r pid; do
 	kill -- "-${pid}"
-done < <DATA_ROOT>/logs/pid.log
+done < ${HOME}/FLU_SC2_SEQUENCING/logs/pid.log
 ```
-
-Rerunning the launcher also stops the processes recorded in `pid.log` before starting replacements.
 
 ## Docker + Compose deployment
 
@@ -77,32 +84,32 @@ bash kickoff_mira_docker.sh [-h] [--help] --deploy Docker --data_dir <DATA_ROOT>
 | `--deploy` | Yes | `Docker` | Deployment mode. This launcher accepts only `Docker`. |
 | `--data_dir` | Yes | - | Existing host directory used for MIRA data, logs, and the generated Compose file. |
 | `--mira_nf_image` | Yes | - | MIRA Nextflow Docker image in `name:tag` format. |
-| `--host_url` | Yes | `localhost` | Hostname used in URLs printed after startup. |
-| `--host` | Yes | `0.0.0.0` | Bind address used within the containers. |
-| `--api_port` | Yes | `8080` | Host port that exposes the backend API. |
-| `--react_port` | Yes | `5175` | Host port that exposes the React frontend. |
+| `--host_url` | No | `localhost` | Hostname used in URLs printed after startup. |
+| `--host` | No | `0.0.0.0` | Bind address used within the containers. |
+| `--api_port` | No | `8080` | Host port that exposes the backend API. |
+| `--react_port` | No| `5175` | Host port that exposes the React frontend. |
 
 Example:
 
 ```bash
 bash kickoff_mira_docker.sh \
     --deploy Docker \
-    --data_dir /home/user/MIRA_DATA \
+    --data_dir ${HOME}/FLU_SC2_SEQUENCING \
 	--mira_nf_image cdcgov/mira-nf:v2.2.0
 ```
 
-The generated configuration is saved to `<DATA_ROOT>/docker-compose.yml`. Container logs are written to `<DATA_ROOT>/logs/api-kickoff.log` and `<DATA_ROOT>/logs/react-kickoff.log`.
+The generated Compose configuration is saved to `${HOME}/FLU_SC2_SEQUENCING/docker-compose.yml`. Container logs are written to `${HOME}/FLU_SC2_SEQUENCING/logs/api-kickoff.log` and `${HOME}/FLU_SC2_SEQUENCING/logs/react-kickoff.log`.
 
 To inspect the services:
 
 ```bash
-docker compose -f <DATA_ROOT>/docker-compose.yml ps
+docker compose -f ${HOME}/FLU_SC2_SEQUENCING/docker-compose.yml ps
 ```
 
 To stop and remove the application containers:
 
 ```bash
-docker compose -f <DATA_ROOT>/docker-compose.yml down
+docker compose -f ${HOME}/FLU_SC2_SEQUENCING/docker-compose.yml down
 ```
 
 ## Access the applications
