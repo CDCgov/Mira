@@ -1,4 +1,3 @@
-name: mira_react_env
 channels:
   - defaults
   - conda-forge

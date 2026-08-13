@@ -12,13 +12,13 @@ print_usage() {
 Usage: $(basename "$0") --deploy Local --data_dir <DATA_ROOT> --mira_nf_image <MIRA_NF_IMAGE> --host_url <HOST_URL> --host <HOST> --api_port <API_PORT> --react_port <REACT_PORT>
 
 Arguments:
-  --deploy <DEPLOY>                 Deployment mode, must be 'Local' or 'Docker'. (default: Local)
+  --deploy <DEPLOY>                 Deployment mode, must be 'Local' or 'Docker'. (Default: Local)
   --data_dir <DATA_ROOT>            Path to the host directory used for MIRA data storage. Must already exist.
   --mira_nf_image <MIRA_NF_IMAGE>   Docker image (name:tag) for the MIRA Nextflow pipeline.
-  --host_url <HOST_URL>             Hostname used to build the URLs printed after startup. (default: localhost)
-  --host <HOST>                     Address the backend/frontend servers bind to. (default: 0.0.0.0)
-  --api_port <API_PORT>             Port to run the MIRA backend API on. (default: 8080)
-  --react_port <REACT_PORT>         Port to run the MIRA React frontend on. (default: 5175)
+  --host_url <HOST_URL>             Hostname used to build the URLs printed after startup. (Default: localhost)
+  --host <HOST>                     Address the backend/frontend servers bind to. (Default: 0.0.0.0)
+  --api_port <API_PORT>             Port to run the MIRA backend API on. (Default: 8080)
+  --react_port <REACT_PORT>         Port to run the MIRA React frontend on. (Default: 5175)
   -h, --help                        Show this help message and exit.
 USAGE
 }
@@ -28,21 +28,93 @@ usage() {
     exit 1
 }
 
-# Check software requirements before proceeding
+# Check if micromamba is installed, and if not install it
+echo "Checking for Micromamba..."
+if ! command -v micromamba &> /dev/null; then
+    echo "Micromamba is not installed. Installing micromamba..."
+    case "$(uname -s)-$(uname -m)" in
+        Linux-x86_64)   MICROMAMBA_PLATFORM="linux-64" ;;
+        Linux-aarch64)  MICROMAMBA_PLATFORM="linux-aarch64" ;;
+        Darwin-x86_64)  MICROMAMBA_PLATFORM="osx-64" ;;
+        Darwin-arm64)   MICROMAMBA_PLATFORM="osx-arm64" ;;
+        *)
+            echo "Error: Unsupported platform '$(uname -s)-$(uname -m)' for Micromamba." >&2
+            exit 1
+            ;;
+    esac
+    mkdir -p "${HOME}/bin"
+    curl -Ls "https://micro.mamba.pm/api/micromamba/${MICROMAMBA_PLATFORM}/latest" | tar -xvj -C "${HOME}" bin/micromamba
+fi
+
+# Initialize micromamba environment
+export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-$HOME/micromamba}"
+export PATH="${HOME}/bin:${PATH}"
+eval "$(micromamba shell hook -s posix)"
+
+# Check if Docker is installed, and if not install it
 echo "Checking for Docker..."
 if ! command -v docker &> /dev/null; then
-    echo "Error: Docker is not installed. Please install Docker before proceeding." >&2
-    exit 1
+    echo "Docker is not installed. Installing Docker. If prompted, please enter the admin password to proceed..."
+    case "$(uname -s)" in
+        Linux)
+            curl -fsSL https://get.docker.com | sudo sh
+            sudo systemctl enable --now docker
+            sudo usermod -aG docker "${USER}"
+            echo "Docker was installed. Log out and back in (or run 'newgrp docker') for group changes to take effect."
+            ;;
+        Darwin)
+            if ! command -v brew &> /dev/null; then
+                echo "Error: Homebrew is required to install Docker Desktop on macOS. Install it from https://brew.sh and re-run this script." >&2
+                exit 1
+            fi
+            brew install --cask docker
+            open -a Docker
+            echo "Waiting for Docker Desktop to start..."
+            DOCKER_WAIT_SECONDS=60
+            until docker system info &> /dev/null; do
+                sleep 2
+                DOCKER_WAIT_SECONDS=$((DOCKER_WAIT_SECONDS - 2))
+                if [[ ${DOCKER_WAIT_SECONDS} -le 0 ]]; then
+                    echo "Error: Docker Desktop did not finish starting. Open it manually from Applications, complete first-time setup, then re-run this script." >&2
+                    exit 1
+                fi
+            done
+            ;;
+        *)
+            echo "Error: Unsupported platform '$(uname -s)' for automatic Docker installation." >&2
+            exit 1
+            ;;
+    esac
 fi
 echo "Docker: $(docker --version)"
 
-# Check if node is installed
-echo "Checking for Node.js..."
-if ! command -v node &> /dev/null; then
-    echo "Error: Node.js is not installed. Please install Node.js before proceeding." >&2
+# Check if Docker Compose (the 'docker compose' plugin, bundled with modern Docker installs) is available
+echo "Checking for Docker Compose..."
+if ! docker compose version &> /dev/null; then
+    echo "Error: Docker Compose plugin is not available. Please update Docker/Docker Desktop to a version that includes 'docker compose'." >&2
     exit 1
 fi
+echo "Docker Compose: $(docker compose version --short)"
+
+# Check if node is installed, and if not install it via micromamba (works on both Linux and macOS)
+echo "Checking for Node.js..."
+if ! command -v node &> /dev/null; then
+    echo "Node.js is not installed. Installing Node.js via Micromamba..."
+    micromamba create -y -n mira_node -c conda-forge nodejs
+    export PATH="${MAMBA_ROOT_PREFIX}/envs/mira_node/bin:${PATH}"
+fi
 echo "Node.js: $(node --version)"
+
+# Check if micromamba environment exists, and if not create it from environment.yml
+ENV_NAME="mira_react_env"
+ENV_FILE="${SCRIPT_DIR}/environment.yml"
+echo "Checking for the '${ENV_NAME}' Python environment..."
+if [[ ! -d "${MAMBA_ROOT_PREFIX}/envs/${ENV_NAME}" ]]; then
+    echo "Creating Python environment '${ENV_NAME}' from ${ENV_FILE}..."
+    micromamba env create -y -n "${ENV_NAME}" -f "${ENV_FILE}"
+fi
+export PATH="${MAMBA_ROOT_PREFIX}/envs/${ENV_NAME}/bin:${PATH}"
+echo "Python: $(python --version) (env: ${ENV_NAME})"
 
 # Initialize deployment variables
 DEPLOY="Local"
