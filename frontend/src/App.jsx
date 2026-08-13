@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense, Fragment } from "react";
 const Plot = lazy(() => import("react-plotly.js"));
+import ShaderAura from "./ShaderAura";
 import {
   Dna,
   Home,
@@ -4596,17 +4597,18 @@ export default function App() {
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-background text-foreground">
 
       {/* ── Header ───────────────────────────────── */}
-      <header className="h-24 shrink-0 w-full bg-gradient-to-r from-[#0067d6] via-[#0057B7] to-[#003c86] border-b border-border flex items-center px-4 gap-3">
+      <header className="h-24 shrink-0 w-full bg-primary border-b border-border flex items-center px-4 gap-3">
         {/* Brand */}
         <button
           onClick={() => navigateTo("home")}
           className="flex items-center gap-3 text-white hover:opacity-90 transition-opacity"
         >
           <div className="relative shrink-0">
+            <ShaderAura className="absolute -inset-2 w-[calc(100%+1rem)] h-[calc(100%+1rem)] pointer-events-none" />
             <img
               src="/mira-logo.png"
               alt="MIRA logo"
-              className="h-20 w-20 object-contain drop-shadow-md"
+              className="relative h-20 w-20 object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.35)]"
             />
           </div>
           <div className="flex flex-col leading-tight">
