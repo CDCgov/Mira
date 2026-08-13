@@ -294,12 +294,21 @@ PID_FILE="${LOG_DIR}/pid.log"
 
 # setsid makes each wrapper the leader of its own process group, so its PID doubles as a
 # group ID we can later kill with `kill -- -PID` to take down uvicorn/npm/vite descendants too
-setsid nohup bash "${SCRIPT_DIR}/backend/api-kickoff" --deploy "${DEPLOY}" --data_dir "${DATA_ROOT}" --mira_nf_image "${MIRA_NF_IMAGE}" --host_url "${HOST_URL}" --host "${HOST}" --api_port "${API_PORT}" --react_port "${REACT_PORT}" > "${API_LOG}" 2>&1 &
+# macOS doesn't have setsid, so we use a perl fallback to emulate it if needed
+detach() {
+    if command -v setsid &> /dev/null; then
+        setsid "$@" &
+    else
+        nohup perl -e 'use POSIX "setsid"; setsid(); exec @ARGV' -- "$@"
+    fi
+}
+
+detach bash "${SCRIPT_DIR}/backend/api-kickoff" --deploy "${DEPLOY}" --data_dir "${DATA_ROOT}" --mira_nf_image "${MIRA_NF_IMAGE}" --host_url "${HOST_URL}" --host "${HOST}" --api_port "${API_PORT}" --react_port "${REACT_PORT}" > "${API_LOG}" 2>&1 &
 API_PID=$!
 disown "${API_PID}"
 echo "${API_PID}" >> "${PID_FILE}"
 
-setsid nohup bash "${SCRIPT_DIR}/frontend/react-kickoff" --host_url "${HOST_URL}" --host "${HOST}" --react_port "${REACT_PORT}" --api_port "${API_PORT}" > "${REACT_LOG}" 2>&1 &
+detach bash "${SCRIPT_DIR}/frontend/react-kickoff" --host_url "${HOST_URL}" --host "${HOST}" --react_port "${REACT_PORT}" --api_port "${API_PORT}" > "${REACT_LOG}" 2>&1 &
 REACT_PID=$!
 disown "${REACT_PID}"
 echo "${REACT_PID}" >> "${PID_FILE}"
