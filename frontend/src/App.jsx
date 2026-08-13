@@ -21,6 +21,7 @@ import {
   ShieldCheck,
   Tag,
   BarChart3,
+  Clock,
   ClipboardList,
   Play,
   RefreshCw,
@@ -215,8 +216,7 @@ const TABS = [
 const STATS = [
   { label: "Sequencing Runs",          value: "1,284",  sub: "successfully completed",  icon: Cpu,        color: "text-primary"     },
   { label: "Sequences to NCBI",        value: "48,312", sub: "GenBank + SRA combined",  icon: Database,   color: "text-sky-600"     },
-  { label: "Sequences to GISAID",      value: "31,047", sub: "EpiFlu + EpiCoV",         icon: Globe,      color: "text-emerald-600" },
-  { label: "Pathogens Supported",      value: "6",      sub: "FLU · COV · RSV · more",  icon: FlaskConical, color: "text-violet-600" },
+  { label: "Sequences to GISAID",      value: "31,047", sub: "EpiFlu + EpiCoV",         icon: Database,   color: "text-emerald-600" },
 ];
 
 const FEATURES = [
@@ -225,6 +225,130 @@ const FEATURES = [
   { icon: Send,         title: "SeqSender",          desc: "One-click submission pipeline to NCBI BioSample, SRA, GenBank, and GISAID with configurable metadata and validation." },
   { icon: Network,      title: "Nextclade Integration", desc: "Build pre-configured Nextclade Web URLs to visualize clade assignments, mutations, and phylogenetic placement." },
 ];
+
+// Illustrative placeholder trends for the Home dashboard charts.
+// Each run holds one value per sample; charts show every sample as a dot
+// with a trend line drawn through the per-run medians.
+const SEGMENTS_PER_SAMPLE_TREND = [
+  { run: "Jan '25", runId: "R2025-01", samples: [8, 7, 8, 6, 8, 7, 5, 8, 7, 8] },
+  { run: "Feb '25", runId: "R2025-02", samples: [8, 8, 7, 8, 6, 8, 8, 7, 8, 8, 7, 8] },
+  { run: "Mar '25", runId: "R2025-03", samples: [7, 8, 6, 8, 7, 8, 8, 5, 7, 8] },
+  { run: "Apr '25", runId: "R2025-04", samples: [8, 8, 8, 7, 8, 8, 6, 8, 7, 8, 8] },
+  { run: "May '25", runId: "R2025-05", samples: [8, 7, 8, 8, 6, 8, 7, 8, 8, 4, 8] },
+  { run: "Jun '25", runId: "R2025-06", samples: [8, 8, 8, 8, 7, 8, 8, 6, 8, 8, 7, 8, 8] },
+  { run: "Jul '25", runId: "R2025-07", samples: [8, 8, 7, 8, 8, 8, 8, 7, 8, 8] },
+  { run: "Aug '25", runId: "R2025-08", samples: [8, 8, 8, 8, 8, 7, 8, 8, 8, 6, 8, 8] },
+];
+
+const TURNAROUND_TREND = [
+  { run: "Jan '25", runId: "R2025-01", samples: [12, 18, 14, 20, 11, 16, 22, 13, 15] },
+  { run: "Feb '25", runId: "R2025-02", samples: [10, 14, 12, 16, 13, 11, 18, 12] },
+  { run: "Mar '25", runId: "R2025-03", samples: [13, 15, 14, 17, 12, 16, 11, 19, 14] },
+  { run: "Apr '25", runId: "R2025-04", samples: [9, 12, 11, 14, 10, 13, 8, 12, 11] },
+  { run: "May '25", runId: "R2025-05", samples: [10, 13, 12, 11, 14, 9, 12, 15, 10] },
+  { run: "Jun '25", runId: "R2025-06", samples: [8, 11, 10, 12, 9, 13, 7, 10] },
+  { run: "Jul '25", runId: "R2025-07", samples: [7, 9, 10, 8, 11, 6, 9, 8, 10] },
+  { run: "Aug '25", runId: "R2025-08", samples: [6, 9, 8, 7, 10, 8, 5, 9, 7, 8] },
+];
+
+// Median of a numeric array.
+function median(values) {
+  if (!values.length) return 0;
+  const s = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+// Dashboard card: a dot per sample plus a trend line through the per-run medians.
+function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, unit, yTitle }) {
+  const xDots = [];
+  const yDots = [];
+  const dotMeta = [];
+  // Plot samples against a numeric run index with horizontal jitter so
+  // overlapping same-value points are all individually visible.
+  data.forEach(({ runId, samples }, i) => samples.forEach((v, j) => {
+    xDots.push(i + (Math.random() - 0.5) * 0.5);
+    yDots.push(v);
+    dotMeta.push([`${runId}-S${String(j + 1).padStart(2, "0")}`, runId]);
+  }));
+  const xMed = data.map((_, i) => i);
+  const yMed = data.map((d) => median(d.samples));
+  const runLabels = data.map((d) => d.run);
+
+  // Default the downloaded image name to the plot's title.
+  const chartConfig = {
+    ...PLOT_CONFIG,
+    toImageButtonOptions: { ...PLOT_CONFIG.toImageButtonOptions, filename: title.replace(/\s+/g, "_") },
+  };
+
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden flex flex-col min-h-0">
+      <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border bg-muted/20 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center justify-center h-7 w-7 rounded-lg bg-primary/10 text-primary shrink-0">
+            <Icon size={15} />
+          </div>
+          <h3 className="text-sm font-bold tracking-wide text-foreground truncate">{title}</h3>
+        </div>
+        <div className="text-right shrink-0">
+          <p className="text-lg font-bold text-primary leading-none">{statValue}</p>
+          <p className="text-[10px] text-muted-foreground">{statLabel}</p>
+        </div>
+      </div>
+      <div className="flex-1 min-h-0 p-2">
+        <Suspense fallback={<div className="flex items-center justify-center h-full text-xs text-muted-foreground">Loading chart…</div>}>
+          <Plot
+            data={[
+              {
+                x: xDots,
+                y: yDots,
+                type: "scatter",
+                mode: "markers",
+                name: "Samples",
+                customdata: dotMeta,
+                marker: { color, size: 6, opacity: 0.35 },
+                hovertemplate: `Sample %{customdata[0]}<br>Run %{customdata[1]}<br>%{y} ${unit}<extra></extra>`,
+              },
+              {
+                x: xMed,
+                y: yMed,
+                type: "scatter",
+                mode: "lines+markers",
+                name: "Median",
+                text: runLabels,
+                line: { color, width: 2, shape: "spline" },
+                marker: { color, size: 8, line: { color: "#ffffff", width: 1.5 } },
+                hovertemplate: `%{text}<br>median %{y} ${unit}<extra></extra>`,
+              },
+            ]}
+            layout={{
+              autosize: true,
+              margin: { l: 40, r: 16, t: 10, b: 30 },
+              paper_bgcolor: "transparent",
+              plot_bgcolor: "transparent",
+              font: { size: 11 },
+              showlegend: true,
+              legend: { orientation: "h", x: 1, xanchor: "right", y: 1.15, font: { size: 10 } },
+              hovermode: "closest",
+              xaxis: {
+                showgrid: false,
+                automargin: true,
+                tickmode: "array",
+                tickvals: xMed,
+                ticktext: runLabels,
+                range: [-0.5, data.length - 0.5],
+              },
+              yaxis: { title: { text: yTitle, font: { size: 11 }, standoff: 8 }, showgrid: true, gridcolor: "rgba(0,0,0,0.06)", zeroline: false, automargin: true, rangemode: "tozero" },
+            }}
+            config={chartConfig}
+            style={{ width: "100%", height: "100%", minHeight: 200 }}
+            useResizeHandler
+          />
+        </Suspense>
+      </div>
+    </div>
+  );
+}
 
 function HomeTab() {
   const [runCount, setRunCount] = useState(null);
@@ -242,16 +366,19 @@ function HomeTab() {
     return () => { cancelled = true; };
   }, []);
 
+  const medSegments = median(SEGMENTS_PER_SAMPLE_TREND.flatMap((d) => d.samples)).toFixed(1);
+  const medTurnaround = median(TURNAROUND_TREND.flatMap((d) => d.samples)).toFixed(1);
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
 
       
 
       {/* ── Body grid ────────────────────────────── */}
-      <div className="flex-1 overflow-hidden p-4 grid grid-cols-2 grid-rows-[auto_1fr] gap-4">
+      <div className="flex-1 overflow-hidden p-4 grid grid-cols-2 grid-rows-[auto_minmax(0,1fr)] gap-4">
 
         {/* ── Stats row — spans both columns ─────── */}
-        <div className="col-span-2 grid grid-cols-4 gap-3">
+        <div className="col-span-2 grid grid-cols-3 gap-3">
           {STATS.map(({ label, value, sub, icon: Icon, color }) => {
             const displayValue = label === "Sequencing Runs"
               ? (runCount === null ? "…" : runCount.toLocaleString())
@@ -269,9 +396,29 @@ function HomeTab() {
           })}
         </div>
 
-        
+        {/* ── Segments per sample over time ─── */}
+        <HomeChartCard
+          icon={BarChart3}
+          title="Segments per Sample"
+          statValue={medSegments}
+          statLabel="median segments / sample"
+          data={SEGMENTS_PER_SAMPLE_TREND}
+          color="#722161"
+          unit="segments"
+          yTitle="Segments per sample"
+        />
 
-        
+        {/* ── Turnaround time over time ─────── */}
+        <HomeChartCard
+          icon={Clock}
+          title="Turnaround Time"
+          statValue={`${medTurnaround}d`}
+          statLabel="median days: submission − collection"
+          data={TURNAROUND_TREND}
+          color="#0081A1"
+          unit="days"
+          yTitle="Turnaround (days)"
+        />
 
       </div>
     </div>
@@ -318,7 +465,7 @@ const PLOT_CONFIG = {
     'hoverClosestCartesian', 'hoverCompareCartesian',
     'toggleSpikelines',
   ],
-  toImageButtonOptions: { format: 'png', scale: 2, filename: 'mira_plot' },
+  toImageButtonOptions: { format: 'svg', scale: 2, filename: 'mira_plot' },
   modeBarButtonsToAdd: [{
     name: 'Download JPEG',
     title: 'Download plot as JPEG',
