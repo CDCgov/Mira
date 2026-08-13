@@ -51,6 +51,22 @@ from .sqlite_handler import (
 # Import shared logger (INFO/DEBUG -> stdout, WARNING/ERROR/CRITICAL -> stderr)
 from .logging_config import logger
 
+# SQLite BOOLEAN columns are read back by Polars as strings ("0"/"1"), and
+# bool("0") is truthy in Python. Coerce such values to a real boolean before use.
+def _as_bool(value: Any) -> bool:
+    return str(value).strip().lower() in ("1", "true", "t", "yes")
+
+# Build a cast expression for a column to a target Polars dtype. Polars cannot
+# cast a string ("0"/"1") straight to Boolean, so map string values explicitly;
+# all other dtypes use a plain cast.
+def _cast_expr(col: str, dtype: Any) -> "pl.Expr":
+    if dtype == pl.Boolean:
+        return (
+            pl.col(col).cast(pl.String).str.strip_chars().str.to_lowercase()
+            .is_in(["1", "true", "t", "yes"]).alias(col)
+        )
+    return pl.col(col).cast(dtype)
+
 # Function to remove previous pipeline outputs for a given run directory
 def _remove_previous_pipeline_outputs(run_dir: str) -> None:
 
@@ -655,10 +671,12 @@ def validate_custom_configs_in_storage(
     pathogen = experiment_type.split("-")[0]
     instrument = experiment_type.split("-")[-1]
 
-    # Extract assembly information from assembly_tbl
-    custom_primers = db_assembly_tbl.select("custom_primers").to_series()[0]
-    custom_irma_config = db_assembly_tbl.select("custom_irma_config").to_series()[0]
-    custom_qc_settings = db_assembly_tbl.select("custom_qc_settings").to_series()[0]
+    # Extract assembly information from assembly_tbl. SQLite BOOLEAN columns are
+    # read back by Polars as strings ("0"/"1"), and bool("0") is truthy in Python,
+    # so coerce to a real boolean before deciding whether a config file is required.
+    custom_primers = _as_bool(db_assembly_tbl.select("custom_primers").to_series()[0])
+    custom_irma_config = _as_bool(db_assembly_tbl.select("custom_irma_config").to_series()[0])
+    custom_qc_settings = _as_bool(db_assembly_tbl.select("custom_qc_settings").to_series()[0])
 
     # Create placeholder to store missing config files
     missing_config_files = []
@@ -716,13 +734,13 @@ def update_assembly_in_database(
         )
         # Make sure db table match the schema data types
         db_assembly_tbl = db_assembly_tbl.with_columns([
-            pl.col(col).cast(assembly_db_schema.columns[col].dtype.type) for col in assembly_db_schema.columns
+            _cast_expr(col, assembly_db_schema.columns[col].dtype.type) for col in assembly_db_schema.columns
         ])
         # Validate db table against the schema
         db_assembly_tbl = validate_tbl(db_assembly_tbl, assembly_db_schema, "assembly")
         # Make sure assembly table match the schema data types
         assembly_tbl = assembly_tbl.with_columns([
-            pl.col(col).cast(assembly_pa_schema.columns[col].dtype.type) for col in assembly_pa_schema.columns
+            _cast_expr(col, assembly_pa_schema.columns[col].dtype.type) for col in assembly_pa_schema.columns
         ])
         # Validate assembly table against the schema
         assembly_tbl = validate_tbl(assembly_tbl, assembly_pa_schema, "assembly")
@@ -792,13 +810,13 @@ def update_samplesheet_in_database(
             )             
             # Make sure db samplesheet match the schema data types
             db_samplesheet_tbl = db_samplesheet_tbl.with_columns([
-                pl.col(col).cast(ont_samplesheet_db_schema.columns[col].dtype.type) for col in ont_samplesheet_db_schema.columns
+                _cast_expr(col, ont_samplesheet_db_schema.columns[col].dtype.type) for col in ont_samplesheet_db_schema.columns
             ])   
             # Validate the db_samplesheet against the schema
             db_samplesheet_tbl = validate_tbl(db_samplesheet_tbl, ont_samplesheet_db_schema, "ont_samplesheet")
             # Make sure samplesheet match the schema data types
             samplesheet_tbl = samplesheet_tbl.with_columns([
-                pl.col(col).cast(ont_samplesheet_pa_schema.columns[col].dtype.type) for col in ont_samplesheet_pa_schema.columns
+                _cast_expr(col, ont_samplesheet_pa_schema.columns[col].dtype.type) for col in ont_samplesheet_pa_schema.columns
             ])            
             samplesheet_tbl = validate_tbl(samplesheet_tbl, ont_samplesheet_pa_schema, "ont_samplesheet")
         elif "ILLUMINA" in instrument.upper():
@@ -812,13 +830,13 @@ def update_samplesheet_in_database(
             )   
             # Make sure db samplesheet match the schema data types
             db_samplesheet_tbl = db_samplesheet_tbl.with_columns([
-                pl.col(col).cast(illumina_samplesheet_db_schema.columns[col].dtype.type) for col in illumina_samplesheet_db_schema.columns
+                _cast_expr(col, illumina_samplesheet_db_schema.columns[col].dtype.type) for col in illumina_samplesheet_db_schema.columns
             ])
             # Validate the db_samplesheet against the schema
             db_samplesheet_tbl = validate_tbl(db_samplesheet_tbl, illumina_samplesheet_db_schema, "illumina_samplesheet")
             # Make sure samplesheet match the schema data types
             samplesheet_tbl = samplesheet_tbl.with_columns([
-                pl.col(col).cast(illumina_samplesheet_pa_schema.columns[col].dtype.type) for col in illumina_samplesheet_pa_schema.columns
+                _cast_expr(col, illumina_samplesheet_pa_schema.columns[col].dtype.type) for col in illumina_samplesheet_pa_schema.columns
             ]) 
             # Validate the samplesheet against the schema
             samplesheet_tbl = validate_tbl(samplesheet_tbl, illumina_samplesheet_pa_schema, "illumina_samplesheet")         
@@ -1208,11 +1226,11 @@ def run_mira_docker(
         else:
             primer = None
         subsample_reads = assembly_row.get("subsample_reads", 0)
-        parquet_files = assembly_row.get("parquet_files", False)
-        nextclade = assembly_row.get("nextclade", True)
+        parquet_files = _as_bool(assembly_row.get("parquet_files", False))
+        nextclade = _as_bool(assembly_row.get("nextclade", True))
 
         # Extract custom primer from assembly_row
-        custom_primers = assembly_row.get("custom_primers", None)
+        custom_primers = _as_bool(assembly_row.get("custom_primers", None))
 
         # If a custom primer is provided, extract the primer_kmer_len and primer_restrict_window as well
         if custom_primers:
@@ -1220,8 +1238,8 @@ def run_mira_docker(
             primer_restrict_window = assembly_row.get("primer_restrict_window", None)
 
         # Get custom irma config and qc settings from assembly_row
-        custom_irma_config = assembly_row.get("custom_irma_config", None)
-        custom_qc_settings  = assembly_row.get("custom_qc_settings", None)
+        custom_irma_config = _as_bool(assembly_row.get("custom_irma_config", None))
+        custom_qc_settings  = _as_bool(assembly_row.get("custom_qc_settings", None))
 
         # Pull samplesheet from DB (Keep rows only)
         if "ONT" in instrument.upper():
