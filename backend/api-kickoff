@@ -9,16 +9,16 @@ BACKEND_DIR="$( realpath $(dirname "${BASH_SOURCE[0]}") )"
 # Command-line argument usage
 print_usage() {
     cat <<USAGE
-Usage: $(basename "$0") --deploy <Local|Docker> --data_dir <DATA_ROOT> --mira_nf_image <MIRA_NF_IMAGE> --host_url <HOST_URL> --host <HOST> --api_port <API_PORT> --react_port <REACT_PORT>
+Usage: $(basename "$0") [-h] [--help] --deploy <Local|Docker> --data_dir <DATA_ROOT> --mira_nf_image <MIRA_NF_IMAGE> --host_url <HOST_URL> --host <HOST> --api_port <API_PORT> --react_port <REACT_PORT>
 
 Arguments:
   --deploy <DEPLOY>                 Deployment mode, must be 'Local' or 'Docker'.
   --data_dir <DATA_ROOT>            Path to the data directory mounted/available to the backend.
   --mira_nf_image <MIRA_NF_IMAGE>   Docker image (name:tag) for the MIRA Nextflow pipeline.
-  --host_url <HOST_URL>             Hostname used to build the React base URL written to config.yml. (default: localhost)
-  --host <HOST>                     Address uvicorn binds to. (default: 0.0.0.0)
-  --api_port <API_PORT>             Port uvicorn serves the backend API on. (default: 8080)
-  --react_port <REACT_PORT>         Port used to build the React base URL written to config.yml. (default: 5175)
+  --host_url <HOST_URL>             Hostname used to build the React base URL written to config.yml. (Default: localhost)
+  --host <HOST>                     Address uvicorn binds to. (Default: 0.0.0.0)
+  --api_port <API_PORT>             Port uvicorn serves the backend API on. (Default: 8080)
+  --react_port <REACT_PORT>         Port used to build the React base URL written to config.yml. (Default: 5175)
   -h, --help                        Show this help message and exit.
 USAGE
 }
@@ -81,11 +81,27 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Require all arguments to be provided
+# Only --deploy, --data_dir and --mira_nf_image are required; the rest have defaults
 if [[ -z "${DEPLOY}" || -z "${DATA_ROOT}" || -z "${MIRA_NF_IMAGE}" || -z "${HOST_URL}" || -z "${HOST}" || -z "${API_PORT}" || -z "${REACT_PORT}" ]]; then
+    echo ""
     echo "Invalid arguments." >&2
     usage
 fi
+
+# Function to check if a port is available
+check_available_port () {
+  local label=$1
+  local port=$2
+  local check_port=$(echo -n $(lsof -i:${port}) | wc -m)
+  if [ ${check_port} -gt 0 ]
+  then
+    echo "Error: The ${label} port ${port} is already in use. Please choose a different port." >&2
+    exit 1
+  fi
+}
+
+# Check if the requested ports are available
+check_available_port "API" "${API_PORT}"
 
 # Generate config.yml to be used by the backend app
 CONFIG_FILE="${BACKEND_DIR}/config.yml"

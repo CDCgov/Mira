@@ -9,12 +9,15 @@ SCRIPT_DIR="$( realpath $(dirname "${BASH_SOURCE[0]}") )"
 # Command-line argument usage
 print_usage() {
     cat <<USAGE
-Usage: $(basename "$0") --deploy Local --data_dir <DATA_ROOT> --mira_nf_image <MIRA_NF_IMAGE> --host_url <HOST_URL> --host <HOST> --api_port <API_PORT> --react_port <REACT_PORT>
+Usage: $(basename "$0") [-h] [--help] --deploy Local --data_dir <DATA_ROOT> --mira_nf_image <MIRA_NF_IMAGE> [--host_url <HOST_URL>] [--host <HOST>] [--api_port <API_PORT>] [--react_port <REACT_PORT>]
 
 Arguments:
+  Required:
   --deploy <DEPLOY>                 Deployment mode, must be 'Local' or 'Docker'. (Default: Local)
   --data_dir <DATA_ROOT>            Path to the host directory used for MIRA data storage. Must already exist.
   --mira_nf_image <MIRA_NF_IMAGE>   Docker image (name:tag) for the MIRA Nextflow pipeline.
+
+  Optional:
   --host_url <HOST_URL>             Hostname used to build the URLs printed after startup. (Default: localhost)
   --host <HOST>                     Address the backend/frontend servers bind to. (Default: 0.0.0.0)
   --api_port <API_PORT>             Port to run the MIRA backend API on. (Default: 8080)
@@ -169,8 +172,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Require all arguments to be provided
-if [[ -z "${DEPLOY}" || -z "${DATA_ROOT}" || -z "${MIRA_NF_IMAGE}" || -z "${HOST_URL}" || -z "${HOST}" || -z "${API_PORT}" || -z "${REACT_PORT}" ]]; then
+# Check --deploy, --data_dir and --mira_nf_image are required;
+if [[ -z "${DEPLOY}" || -z "${DATA_ROOT}" || -z "${MIRA_NF_IMAGE}" ]]; then
+    echo ""
     echo "Invalid arguments." >&2
     usage
 fi
@@ -180,12 +184,14 @@ if [[ "${DEPLOY}" != "Local" && "${DEPLOY}" != "Docker" ]]; then
     echo "Error: DEPLOY must be either 'Local' or 'Docker', got '${DEPLOY}'." >&2
     exit 1
 fi
+echo "Deployment mode: ${DEPLOY}"
 
 echo "Checking data storage..."
 if [[ ! -d "${DATA_ROOT}" ]]; then
     echo "Error: The data directory '${DATA_ROOT}' does not exist. Please create it before proceeding." >&2
     exit 1
 fi
+echo "Data storage directory: ${DATA_ROOT}"
 
 echo "Checking MIRA Nextflow image. If prompted, please enter the admin password to proceed..."
 if ! sudo docker inspect "${MIRA_NF_IMAGE}" &> /dev/null; then
@@ -194,21 +200,29 @@ if ! sudo docker inspect "${MIRA_NF_IMAGE}" &> /dev/null; then
         exit 1
     fi
 fi
+echo "MIRA Nextflow image: ${MIRA_NF_IMAGE}"
 
-# Function to check if a port is available
-check_available_port () {
-  local port=$1
-  local check_port=$(echo -n $(lsof -i:${port}) | wc -m)
-  if [ ${check_port} -gt 0 ]
-  then
-    echo "Error: The requested port ${port} is already in use. Please choose a different port." >&2
+# Function to find an available port
+find_available_port () {
+  local label=$1
+  local port=$2
+  # Make sure the port is an interger
+  if ! [[ "${port}" =~ ^[0-9]+$ ]]; then
+    echo "Error: ${label} port '${port}' is not a valid integer." >&2
     exit 1
   fi
+  local check_port=$(echo -n $(lsof -i:${port}) | wc -m)
+  while [ ${check_port} -gt 0 ]
+  do
+    port=$(printf "%04d" $(( RANDOM % 5999 + 4001 )))
+    check_port=$(echo -n $(lsof -i:${port}) | wc -m)
+  done
+  echo ${port}
 }
 
 # Check if the requested ports are available
-check_available_port "${API_PORT}"
-check_available_port "${REACT_PORT}"
+API_PORT=$(find_available_port "API" "${API_PORT}")
+REACT_PORT=$(find_available_port "REACT" "${REACT_PORT}")
 
 # Allow 775 permissions for data storage ####
 echo "Apply 775 permission to the data storage. If prompted, please enter the admin password to proceed..."

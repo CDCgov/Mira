@@ -63,9 +63,25 @@ done
 
 # Require all arguments to be provided
 if [[ -z "${HOST_URL}" || -z "${HOST}" || -z "${REACT_PORT}" || -z "${API_PORT}" ]]; then
+    echo ""
     echo "Invalid arguments." >&2
     usage
 fi
+
+# Function to check if a port is available
+check_available_port () {
+  local label=$1
+  local port=$2
+  local check_port=$(echo -n $(lsof -i:${port}) | wc -m)
+  if [ ${check_port} -gt 0 ]
+  then
+    echo "Error: The ${label} port ${port} is already in use. Please choose a different port." >&2
+    exit 1
+  fi
+}
+
+# Check if the requested ports are available
+check_available_port "REACT" "${REACT_PORT}"
 
 # Generate .env to be used by the app
 ENV_FILE="${FRONTEND_DIR}/.env"
