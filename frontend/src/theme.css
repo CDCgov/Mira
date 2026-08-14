@@ -43,40 +43,6 @@
     --ring:                  211 100% 36%;  /* #0057B7                            */
     --radius: 0.5rem;
   }
-
-  /* ── Dark mode ─────────────────────────────────────────────────────── */
-  .dark {
-    --background:            216  93% 18%;  /* #032659 — CDC Navy                 */
-    --foreground:            212 100% 96%;  /* #ECF5FF                            */
-
-    --card:                  216  80% 22%;  /* slightly lighter navy              */
-    --card-foreground:       212 100% 96%;
-    --popover:               216  93% 18%;
-    --popover-foreground:    212 100% 96%;
-
-    --primary:               210  62% 51%;  /* #3382CF — cdc-blue-1 on dark bg    */
-    --primary-foreground:      0   0% 100%;
-
-    --secondary:             211 100% 36%;  /* #0057B7 — CDC Blue                 */
-    --secondary-foreground:  212 100% 96%;
-
-    --muted:                 216  60% 25%;  /* dark muted panel                   */
-    --muted-foreground:      210  62% 71%;  /* #87B5E3 — light blue muted text    */
-
-    --accent:                188 100% 40%;  /* #00B1CE — cdc-teal-1 accent        */
-    --accent-foreground:       0   0% 100%;
-
-    --info:                  210  62% 71%;  /* #87B5E3 — soft blue                */
-    --info-foreground:       216  93% 18%;
-
-    --destructive:           358  77% 45%;  /* #CC1B22 — CDC Red                  */
-    --destructive-foreground:  0   0% 100%;
-
-    --border:                216  60% 28%;  /* dark border                        */
-    --input:                 216  60% 28%;
-    --ring:                  210  62% 51%;  /* #3382CF                            */
-    --radius: 0.5rem;
-  }
 }
 
 @layer base {
@@ -97,9 +63,6 @@
     font-weight: 700;
     line-height: 1.15;
     color: hsl(var(--secondary));
-  }
-  .dark h1, .dark h2, .dark h3, .dark h4, .dark h5, .dark h6 {
-    color: hsl(var(--foreground));
   }
   /* Roboto Mono — CDC monospace */
   code, pre, kbd, samp {

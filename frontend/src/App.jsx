@@ -6,7 +6,6 @@ import {
   Home,
   Send,
   BookOpen,
-  Settings,
   Bell,
   ChevronDown,
   ChevronRight,
@@ -14,8 +13,6 @@ import {
   Users,
   LogOut,
   User,
-  Sun,
-  Moon,
   Check,
   Upload,
   Cpu,
@@ -4544,9 +4541,8 @@ export default function App() {
     return TABS.find((t) => t.id === hash) ? hash : "home";
   };
 
-  // State for the active tab, dark mode, and version info
+  // State for the active tab and version info
   const [activeTab, setActiveTab] = useState(getInitialTab);
-  const [darkMode, setDarkMode]   = useState(false);
   const [versionInfo, setVersionInfo] = useState(null);
   const [backendUp, setBackendUp] = useState(true); // assume healthy until the first check completes
 
@@ -4586,10 +4582,6 @@ export default function App() {
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
-
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", darkMode);
-  }, [darkMode]);
 
   const currentTab = TABS.find((t) => t.id === activeTab);
 
@@ -4692,26 +4684,6 @@ export default function App() {
             ) : (
               <DropdownItem>There are no new notifications</DropdownItem>
             )}
-          </Dropdown>
-
-          {/* Settings */}
-          <Dropdown
-            trigger={
-              <button className="p-2 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition-colors">
-                <Settings size={16} />
-              </button>
-            }
-          >
-            <div className="px-4 py-2 text-xs text-muted-foreground font-medium border-b border-border">
-              Settings
-            </div>
-            <DropdownItem
-              icon={darkMode ? Sun : Moon}
-              onClick={() => setDarkMode((v) => !v)}
-            >
-              {darkMode ? "Light mode" : "Dark mode"}
-              {darkMode && <Check size={12} className="ml-auto" />}
-            </DropdownItem>
           </Dropdown>
         </div>
       </header>
