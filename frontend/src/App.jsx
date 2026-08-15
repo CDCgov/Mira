@@ -4099,8 +4099,8 @@ function SeqSenderTab() {
                           <Download size={13} /> Download Config File
                         </a>
                         <a
-                          href={`${API.downloadSeqsenderMetadataTemplate}?organism=${encodeURIComponent(organism)}&${Object.entries(dbs).filter(([, v]) => v).map(([k]) => `${k}=true`).join("&")}`}
-                          download
+                          href="/metadata_template.xlsx"
+                          download="metadata_template.xlsx"
                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border bg-muted/20 hover:bg-muted/40 text-xs font-medium text-foreground transition-colors"
                         >
                           <Download size={13} /> Download Metadata Template
