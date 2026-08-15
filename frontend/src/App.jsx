@@ -2216,33 +2216,39 @@ function AssemblyTab() {
                       <span className="text-xs font-bold tracking-wider text-muted-foreground uppercase">Run Information</span>
                       <div className="flex-1 h-px bg-border" />
                     </div>
-                    <div>
-                      <FieldLabel>Run Name<span className="text-destructive">*</span></FieldLabel>
-                      <p className="mb-2 text-xs text-muted-foreground">The name must not contain any spaces. If exists, spaces will be auto-replaced with underscores.</p>
-                      <input
-                        value={runName}
-                        onChange={(e) => setRunName(e.target.value.replace(/\s+/g, "_"))}
-                        placeholder="e.g. Flu_Illumina_2024-01-01"
-                        disabled={!isNewRun}
-                        className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
-                      />
-                    </div>
-                    <div>
-                      <FieldLabel>Experiment Type <span className="text-destructive">*</span></FieldLabel>
-                      <p className="mb-2 text-xs text-muted-foreground">The experiment type determines the primers and analysis pipeline to be used.</p>
-                      <select
-                        value={experimentType}
-                        onChange={(e) => {
-                          setExperimentType(e.target.value);
-                          setPrimer(e.target.value?.startsWith("SC2") && e.target.value?.endsWith("Illumina") ? SC2_PRIMERS[0].value : e.target.value?.startsWith("RSV") && e.target.value?.endsWith("Illumina") ? RSV_PRIMERS[0].value : "");
-                          if (e.target.value !== "Flu-Illumina") { setUseIrmaModule(false); setIrmaModule(""); }
-                        }}
-                        disabled={!isNewRun}
-                        className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
-                      >
-                        <option value="">— Select experiment type —</option>
-                        {EXPERIMENT_TYPES.map((p) => <option key={p}>{p}</option>)}
-                      </select>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <FieldLabel>Experiment Type <span className="text-destructive">*</span></FieldLabel>
+                        <select
+                          value={experimentType}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setExperimentType(value);
+                            setPrimer(value?.startsWith("SC2") && value?.endsWith("Illumina") ? SC2_PRIMERS[0].value : value?.startsWith("RSV") && value?.endsWith("Illumina") ? RSV_PRIMERS[0].value : "");
+                            if (value !== "Flu-Illumina") { setUseIrmaModule(false); setIrmaModule(""); }
+                            if (value) {
+                              const today = new Date();
+                              const yyyymmdd = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
+                              setRunName(`${yyyymmdd}_${value}`.replace(/\s+/g, "_"));
+                            }
+                          }}
+                          disabled={!isNewRun}
+                          className="w-full max-w-xs h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
+                        >
+                          <option value="">— Select experiment type —</option>
+                          {EXPERIMENT_TYPES.map((p) => <option key={p}>{p}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <FieldLabel>Run Name<span className="text-destructive">*</span></FieldLabel>
+                        <input
+                          value={runName}
+                          onChange={(e) => setRunName(e.target.value.replace(/\s+/g, "_"))}
+                          placeholder="e.g. Flu_Illumina_2024-01-01"
+                          disabled={!isNewRun}
+                          className="w-full max-w-xs h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
+                        />
+                      </div>
                     </div>
                     {(experimentType?.startsWith("SC2") || experimentType?.startsWith("RSV")) && experimentType?.endsWith("Illumina") && (
                       <div>
@@ -2251,7 +2257,7 @@ function AssemblyTab() {
                         <select
                           value={primer}
                           onChange={(e) => setPrimer(e.target.value)}
-                          className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                          className="w-full max-w-md h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                         >
                           {experimentType?.startsWith("SC2") && experimentType?.endsWith("Illumina") && SC2_PRIMERS.map(({ value, label }) => (
                             <option key={value} value={value}>{label}</option>
@@ -2269,7 +2275,7 @@ function AssemblyTab() {
                     </div>
 
                     {(!runName || !experimentType) && (
-                      <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                      <div className="flex items-center gap-2 w-fit max-w-full text-xs text-warning bg-warning/10 rounded-lg px-3 py-2">
                         <AlertCircle size={13} className="shrink-0" /> Please provide a <strong className="mx-0.5">Run Name</strong> and select an <strong className="mx-0.5">Experiment Type</strong> above to continue.
                       </div>
                     )}
@@ -2277,7 +2283,7 @@ function AssemblyTab() {
                     {runName && experimentType && (<>
 
                     {(experimentType.toLowerCase().endsWith("ont") ? ontSampleRows : illuminaSampleRows).length === 0 && (
-                    <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                    <div className="flex items-center gap-2 w-fit max-w-full text-xs text-warning bg-warning/10 rounded-lg px-3 py-2">
                       <AlertCircle size={13} /> Upload FASTQ files to auto-populate the sample sheet.
                     </div>
                     )}
@@ -2514,13 +2520,13 @@ function AssemblyTab() {
                         onChange={(e) => setSubSample(e.target.value)}
                         placeholder="e.g. 100"
                         min={0}
-                        className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                        className="w-full max-w-md h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                       />
                     </div>
 
                     <button
                       onClick={() => setUseCustomPrimers((v) => !v)}
-                      className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
+                      className="w-fit flex items-center justify-start gap-4 p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
                     >
                       <div>
                         <p className="text-sm font-medium">Custom Primers</p>
@@ -2562,7 +2568,7 @@ function AssemblyTab() {
                             </div>
                           )}                          
                           <FieldLabel>Custom Primer FASTA File <span className="text-destructive">*</span></FieldLabel>
-                          <div className="flex gap-2">
+                          <div className="flex gap-2 max-w-md">
                             <input
                               type="text"
                               value={customPrimers}
@@ -2631,7 +2637,7 @@ function AssemblyTab() {
                       <>
                         <button
                           onClick={() => setUseIrmaModule((v) => !v)}
-                          className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
+                          className="w-fit flex items-center justify-start gap-4 p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
                         >
                           <div>
                             <p className="text-sm font-medium">IRMA Module</p>
@@ -2650,7 +2656,7 @@ function AssemblyTab() {
                             <select
                               value={irmaModule}
                               onChange={(e) => setIrmaModule(e.target.value)}
-                              className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                              className="w-full max-w-md h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                             >
                               <option value="">— Select IRMA module —</option>
                               <option value="secondary">secondary</option>
@@ -2664,7 +2670,7 @@ function AssemblyTab() {
 
                     <button
                       onClick={() => setUseCustomIrmaConfig((v) => !v)}
-                      className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
+                      className="w-fit flex items-center justify-start gap-4 p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
                     >
                       <div>
                         <p className="text-sm font-medium">Custom IRMA Config</p>
@@ -2704,7 +2710,7 @@ function AssemblyTab() {
                             )}
                           </div>
                         )}
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 max-w-md">
                           <input
                             type="text"
                             value={customIrmaConfig}
@@ -2745,7 +2751,7 @@ function AssemblyTab() {
 
                     <button
                       onClick={() => setUseCustomQcSettings((v) => !v)}
-                      className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
+                      className="w-fit flex items-center justify-start gap-4 p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
                     >
                       <div>
                         <p className="text-sm font-medium">Custom QC Settings</p>
@@ -2785,7 +2791,7 @@ function AssemblyTab() {
                             )}
                           </div>
                         )}
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 max-w-md">
                           <input
                             type="text"
                             value={customQcSettings}
@@ -2826,7 +2832,7 @@ function AssemblyTab() {
 
                     <button
                       onClick={() => setCreateParquet((v) => !v)}
-                      className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
+                      className="w-fit flex items-center justify-start gap-4 p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
                     >
                       <div>
                         <p className="text-sm font-medium">Create Parquet Files</p>
@@ -2841,7 +2847,7 @@ function AssemblyTab() {
                     </button>
                     <button
                       onClick={() => setNextclade((v) => !v)}
-                      className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
+                      className="w-fit flex items-center justify-start gap-4 p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
                     >
                       <div>
                         <p className="text-sm font-medium">Run Nextclade</p>
@@ -2947,7 +2953,7 @@ function AssemblyTab() {
                   <StepPanel>
                     {/* ── no run loaded yet ── */}
                     {showDAG == false && (
-                      <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                      <div className="flex items-center gap-2 w-fit max-w-full text-xs text-warning bg-warning/10 rounded-lg px-3 py-2">
                         <AlertCircle size={13} /> Run Mira assembly in Step 1 to watch its live progress here.
                       </div>
                     )}
@@ -2993,13 +2999,13 @@ function AssemblyTab() {
                         {pipelineDAG?.workflows?.status && (
                           Array.isArray(pipelineDAG?.message) && pipelineDAG.message.length > 0
                             ? pipelineDAG.message.map((msg, i) => (
-                                <div key={i} className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+                                <div key={i} className="flex items-start gap-2 text-xs text-warning bg-warning/10 border border-warning/30 rounded-lg px-3 py-2">
                                   <AlertCircle size={13} className="shrink-0 mt-0.5" />
                                   <span>{msg}</span>
                                 </div>
                               ))
                             : pipelineDAG?.workflows?.status === "CANCELED" && (
-                                <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+                                <div className="flex items-start gap-2 text-xs text-warning bg-warning/10 border border-warning/30 rounded-lg px-3 py-2">
                                   <AlertCircle size={13} className="shrink-0 mt-0.5" />
                                   <span>Mira run was canceled or interrupted.</span>
                                 </div>
@@ -3085,17 +3091,17 @@ function AssemblyTab() {
                 {id === "results" && (
                   <StepPanel>
                     {!assembled && (
-                      <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                      <div className="flex items-center gap-2 w-fit max-w-full text-xs text-warning bg-warning/10 rounded-lg px-3 py-2">
                         <AlertCircle size={13} /> Results will appear here after assembly is completed.
                       </div>
                     )}
                     {assembled && cancelRun && hasNoResults && (
-                      <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                      <div className="flex items-center gap-2 w-fit max-w-full text-xs text-warning bg-warning/10 rounded-lg px-3 py-2">
                         <AlertCircle size={13} /> Run was canceled. There are no results generated for this run.
                       </div>
                     )}
                     {assembled && !cancelRun && hasNoResults && (
-                      <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                      <div className="flex items-center gap-2 w-fit max-w-full text-xs text-warning bg-warning/10 rounded-lg px-3 py-2">
                         <AlertCircle size={13} /> The assembly completed, but there are no results generated for this run.
                       </div>
                     )}
@@ -3412,17 +3418,17 @@ function AssemblyTab() {
                 {id === "export" && (
                   <StepPanel>
                     {!assembled && (
-                      <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                      <div className="flex items-center gap-2 w-fit max-w-full text-xs text-warning bg-warning/10 rounded-lg px-3 py-2">
                         <AlertCircle size={13} /> Export files will be available after assembly is completed.
                       </div>
                     )}
                     {assembled && cancelRun && !resultNtPassedFasta && !resultAaFailedFasta && !resultNtFailedFasta && !resultAaPassedFasta && !resultNextcladeFasta && (
-                      <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                      <div className="flex items-center gap-2 w-fit max-w-full text-xs text-warning bg-warning/10 rounded-lg px-3 py-2">
                         <AlertCircle size={13} /> Run was canceled. There are no FASTA files generated from this run.
                       </div>
                     )}
                     {assembled && !cancelRun && !resultNtPassedFasta && !resultAaFailedFasta && !resultNtFailedFasta && !resultAaPassedFasta && !resultNextcladeFasta && (
-                      <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                      <div className="flex items-center gap-2 w-fit max-w-full text-xs text-warning bg-warning/10 rounded-lg px-3 py-2">
                         <AlertCircle size={13} /> The assembly completed, but there are no FASTA files generated from this run.
                       </div>
                     )}
@@ -4006,7 +4012,7 @@ function AssemblyTab() {
                       value={editNewName}
                       onChange={(e) => setEditNewName(e.target.value.replace(/\s+/g, "_"))}
                       placeholder="e.g. Flu_Illumina_2024-01-01"
-                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      className="w-full max-w-md h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                     />
                     <div className="flex gap-2 justify-end pt-1">
                       <button
@@ -4118,7 +4124,7 @@ const DB_LIST = [
 // ── SeqSender Tab Component ────────────────────────
 function SeqSenderTab() {
   const [openStep, setOpenStep]           = useState(() => new Set(SEQSENDER_STEPS.map((s) => s.id)));
-  const [dbs, setDbs]                     = useState({ biosample: false, sra: false, genbank: false, gisaid: false });
+  const [dbs, setDbs]                     = useState({ biosample: true, sra: true, genbank: true, gisaid: true });
   const [organism, setOrganism]           = useState("");
   const [subName, setSubName]             = useState("");
   const [configFile, setConfigFile]       = useState("");
@@ -4236,7 +4242,7 @@ function SeqSenderTab() {
                       <FieldLabel>Submission Name <span className="text-destructive">*</span></FieldLabel>
                       <input value={subName} onChange={(e) => setSubName(e.target.value)}
                         placeholder="e.g. FLU_H3N2_2026"
-                        className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                        className="w-full max-w-md h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
                     </div>
 
                     {[
@@ -4248,7 +4254,7 @@ function SeqSenderTab() {
                     ].map(({ label, required, val, set, accept, ph }) => (
                       <div key={label}>
                         <FieldLabel>{label} {required && <span className="text-destructive">*</span>}</FieldLabel>
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 max-w-md">
                           <input value={val} onChange={(e) => set(e.target.value)} placeholder={ph}
                             className="flex-1 h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
                           <label className="flex items-center gap-1.5 px-3 h-9 rounded-md border border-border bg-muted/20 hover:bg-muted/40 cursor-pointer text-xs text-muted-foreground transition-colors">
@@ -4271,7 +4277,7 @@ function SeqSenderTab() {
                       { label: "--test",        desc: "Run in test mode — submit to test servers without affecting production",    val: testMode,  set: setTestMode,  show: true },
                     ].filter(({ show }) => show).map(({ label, desc, val, set }) => (
                       <button key={label} onClick={() => set((v) => !v)}
-                        className="w-full flex items-start justify-between gap-4 p-3 rounded-xl border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left">
+                        className="w-fit flex items-center justify-start gap-4 p-3 rounded-xl border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left">
                         <div>
                           <p className="text-sm font-mono font-semibold">{label}</p>
                           <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
@@ -4296,7 +4302,7 @@ function SeqSenderTab() {
                 {/* Step 2: Status */}
                 {id === "status" && (
                   <StepPanel>
-                    <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+                    <div className="flex items-center gap-2 w-fit max-w-full text-xs text-warning bg-warning/10 rounded-lg px-3 py-2">
                       <AlertCircle size={13} /> Submission status and accession numbers will appear here once the submission is submitted and proccessed.
                     </div>
 
@@ -4637,7 +4643,7 @@ export default function App() {
                 {versionInfo?.mira_status === "out-of-date" && (
                   <div className="px-4 py-3 text-sm text-foreground">
                     <p className="mb-1 flex items-center gap-1.5">
-                      <AlertCircle size={13} className="text-amber-500 shrink-0" />
+                      <AlertCircle size={13} className="text-warning shrink-0" />
                       A new version of Mira is available
                     </p>
                     <div className="flex items-center gap-1.5 mb-1.5 text-xs">
@@ -4660,7 +4666,7 @@ export default function App() {
                 {versionInfo?.mira_nf_status === "out-of-date" && (
                   <div className="px-4 py-3 text-sm text-foreground">
                     <p className="mb-1 flex items-center gap-1.5">
-                      <AlertCircle size={13} className="text-amber-500 shrink-0" />
+                      <AlertCircle size={13} className="text-warning shrink-0" />
                       A new version of MIRA-NF is available
                     </p>
                     <div className="flex items-center gap-1.5 mb-1.5 text-xs">

@@ -35,6 +35,9 @@
     --info:                  210  62% 51%;  /* #3382CF — cdc-blue-1 info          */
     --info-foreground:         0   0% 100%;
 
+    --warning:                37  96% 45%;  /* #DE8A05 — CDC Yellow warning       */
+    --warning-foreground:      0   0%  20%; /* #333333 — cdc-charcoal             */
+
     --destructive:           358  77% 45%;  /* #CC1B22 — CDC Red                  */
     --destructive-foreground:  0   0% 100%;
 
