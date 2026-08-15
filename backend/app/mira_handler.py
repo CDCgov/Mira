@@ -1398,14 +1398,21 @@ def run_mira_docker(
                 (f" --nextclade true\n" if nextclade else ""),
             )
 
-        # Fire and forget — launch in background, do not block
+        # Fire and forget — launch in background, do not block. Capture the pipeline's
+        # console output (which includes the Nextflow completion summary / "Duration")
+        # to a log file in the run directory so the runtime can be parsed later.
+        nextflow_stdout_path = os.path.join(run_dir, "nextflow.stdout.log")
+        stdout_fh = open(nextflow_stdout_path, "w", encoding="utf-8")
         proc = subprocess.Popen(
             cmd,
             cwd=run_dir,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=stdout_fh,
+            stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+        # The child has inherited its own copy of the file descriptor; the parent's copy
+        # is no longer needed and can be closed safely.
+        stdout_fh.close()
 
         # Return the process ID and command for reference
         return {
@@ -1571,7 +1578,11 @@ def create_mira_dag(
     run_dir = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name)
     output_dir = os.path.join(run_dir, "outputs")
     nextflow_log = os.path.join(run_dir, ".nextflow.log")
+    nextflow_stdout = os.path.join(run_dir, "nextflow.stdout.log")
     pipeline_info_dir = os.path.join(output_dir, "pipeline_info")
+
+    # Runtime already persisted from a previous parse (None for runs that haven't completed)
+    db_runtime = db_assembly_tbl.select("runtime").to_series()[0] if "runtime" in db_assembly_tbl.columns else None
 
     # Get the actual sample_ids from the samplesheet, so run-level tasks (e.g.
     # CHECKMIRAVERSION (1)) or reference-dataset tasks (e.g. GETNEXTCLADEDATASET
@@ -1607,6 +1618,7 @@ def create_mira_dag(
         "number_of_samples": len(known_sample_ids),
         "number_of_samples_with_failed_tasks": 0,
         "number_of_samples_with_successful_tasks": 0,
+        "runtime": db_runtime,
     }
 
     # Create a placeholder for the message to be returned to the user
@@ -1641,6 +1653,34 @@ def create_mira_dag(
         message.append(f"MIRA run was canceled or interrupted.")
     elif assembly_status != "PROCESSING" and not os.path.exists(nextflow_log):
         message.append(f"Cannot find Nextflow log file for this run. The log file may have been deleted or moved. Try running MIRA again.")
+
+    # ── 1b. Parse Nextflow stdout for the reported runtime ("Duration : ...") ──
+    # Nextflow prints its completion summary (including the total runtime) to stdout,
+    # which run_mira_docker captures to nextflow.stdout.log.
+    if os.path.exists(nextflow_stdout):
+        ansi_re     = re.compile(r"\x1b\[[0-9;]*m")
+        duration_re = re.compile(r"(?:Execution\s+duration|Duration)\s*:\s*(.+)", re.IGNORECASE)
+        parsed_runtime = None
+        with open(nextflow_stdout, errors="replace") as fh:
+            for line in fh:
+                d = duration_re.search(ansi_re.sub("", line))
+                if d:
+                    parsed_runtime = d.group(1).strip()
+        if parsed_runtime:
+            workflow["runtime"] = parsed_runtime
+            # Persist to the DB whenever it is new/changed so it survives log cleanup
+            if parsed_runtime != db_runtime:
+                try:
+                    update_tbl_in_database(
+                        db_tbl_name = ["assembly"],
+                        table = pl.DataFrame({"runtime": [parsed_runtime]}),
+                        filter_coln_var = ["assembly_id"],
+                        filter_coln_val = {"assembly_id": [assembly_id]},
+                        filter_var_by = ["AND"]
+                    )
+                except Exception as err:
+                    # Persisting runtime is best-effort; never fail the DAG response over it
+                    logger.warning(f"Failed to persist runtime for run '{run_name}': {err}")
 
     # ── 2. Find the latest trace file ──────────────────────────────
     trace_file: Optional[str] = None

@@ -3173,6 +3173,9 @@ function AssemblyTab({ loadRunSignal, setHeaderHidden }) {
                             <div className="flex gap-x-4 flex-wrap gap-y-0.5">
                               <span>Started: <span className="text-foreground">{pipelineDAG?.workflows?.started_at || "—"}</span></span>
                               <span>Completed: <span className="text-foreground">{pipelineDAG?.workflows?.completed_at || "—"}</span></span>
+                              {pipelineDAG?.workflows?.runtime && (
+                                <span>Runtime: <span className="text-foreground font-mono">{pipelineDAG.workflows.runtime}</span></span>
+                              )}
                               {(() => {
                                 const startedAt = pipelineDAG?.workflows?.started_at;
                                 const completedAt = pipelineDAG?.workflows?.completed_at;

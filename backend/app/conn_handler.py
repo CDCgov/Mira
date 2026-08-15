@@ -56,8 +56,26 @@ def init_connection() -> sqlite3.Connection:
         connection = sqlite3.connect(_DEFAULT_SQLITE_FILE, check_same_thread=False)
         connection.row_factory = sqlite3.Row   # column-name access on cursors
         connection.execute("PRAGMA foreign_keys = ON;")
+        # Lightweight, idempotent migrations for columns added after a DB was first created
+        _apply_migrations(connection)
         return connection
     except sqlite3.Error as err:
         raise Exception(f"SQLite Connection Error: {err}") from err
 
-        
+
+# Apply lightweight, idempotent schema migrations to an existing database so that
+# columns added to schema.sql after a DB was first created are backfilled in place.
+def _apply_migrations(connection: sqlite3.Connection) -> None:
+    """Add newer columns to pre-existing databases (no-op when already present)."""
+    # (table, column, definition) tuples to ensure exist
+    _required_columns = [
+        ("assembly", "runtime", "TEXT DEFAULT NULL"),
+    ]
+    for table, column, definition in _required_columns:
+        existing = [row[1] for row in connection.execute(f'PRAGMA table_info("{table}")').fetchall()]
+        # Only migrate when the table exists but the column is missing
+        if existing and column not in existing:
+            connection.execute(f'ALTER TABLE "{table}" ADD COLUMN {column} {definition}')
+            connection.commit()
+
+
