@@ -1631,12 +1631,19 @@ def create_mira_dag(
     # task is submitted). Lets the UI lay out all task rows up front.
     all_process_names: List[str] = []
 
+    # (process_name, sample) pairs that Nextflow has *submitted* — i.e. the task has
+    # started. The execution trace only records a task once it reaches a terminal
+    # state (COMPLETED/FAILED) with its metrics, so submitted-but-unfinished tasks are
+    # taken from the log to drive the UI's live "running" indicator.
+    submitted_pairs: List[tuple] = []
+
     # ── 1. Parse .nextflow.log for workflow-level metadata ───────────
     if os.path.exists(nextflow_log):
         session_re  = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}|\w+-\d+ \d{2}:\d{2}:\d{2}).*Session start")
         complete_re = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}|\w+-\d+ \d{2}:\d{2}:\d{2}).*WorkflowStats")
         error_re = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}|\w+-\d+ \d{2}:\d{2}:\d{2}).*ERROR")
         starting_re = re.compile(r"Starting process\s*>\s*(\S+)")
+        submitted_re = re.compile(r"Submitted process\s*>\s*(\S+)\s*\(([^)]+)\)")
         with open(nextflow_log, errors="replace") as fh:
             for line in fh:
                 if workflow["started_at"] is None:
@@ -1651,6 +1658,12 @@ def create_mira_dag(
                     process_name = sp.group(1).strip().split(":")[-1]
                     if process_name not in all_process_names:
                         all_process_names.append(process_name)
+                sub = submitted_re.search(line)
+                if sub:
+                    sub_process = sub.group(1).strip().split(":")[-1]
+                    sub_sample = sub.group(2).strip()
+                    submitted_pairs.append((sub_process, sub_sample))
+
     elif assembly_status == "CANCELED" and not os.path.exists(nextflow_log):
         message.append(f"MIRA run was canceled or interrupted.")
     elif assembly_status != "PROCESSING" and not os.path.exists(nextflow_log):
@@ -1738,6 +1751,26 @@ def create_mira_dag(
         message.append(f"MIRA run was canceled or interrupted.")
     elif assembly_status != "PROCESSING" and trace_file is None:
         message.append(f"Cannot find execution trace file for this run. The trace file may have been deleted or moved. Try running MIRA again.")
+
+    # ── 3b. Add live "running" tasks for submitted-but-unfinished work ──
+    # While the run is still processing, surface tasks Nextflow has submitted but that
+    # haven't reached a terminal state yet (so they're absent from the trace) as
+    # RUNNING, giving each started task-sample cell a live spinner in the UI.
+    if assembly_status == "PROCESSING":
+        terminal_keys = {(t["process_name"], t["sample"]) for t in tasks}
+        seen_running = set()
+        for proc, smp in submitted_pairs:
+            key = (proc, smp)
+            if key in terminal_keys or key in seen_running:
+                continue
+            seen_running.add(key)
+            tasks.append({
+                "task_id":      -1,
+                "process_name": proc,
+                "sample":       smp,
+                "status":       "RUNNING",
+                "exit_code":    "-",
+            })
 
     # ── 4. Infer completion from trace tasks if DB status is stale ──
     # Covers the case where check_mira_status failed to update the DB

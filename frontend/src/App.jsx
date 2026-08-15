@@ -2561,7 +2561,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       {/* ── Left: accordion steps ─────────────────── */}
       <div className="flex-1 overflow-auto p-4 space-y-2" onScroll={handleContentScroll}>
         {ASSEMBLY_STEPS.map(({ id, title, subtitle, icon }) => (
-          <div key={id} id={`step-${id}`} className="rounded-xl border border-border overflow-hidden">
+          <div key={id} id={`step-${id}`} className="w-fit max-w-full mx-auto rounded-xl border border-border overflow-hidden">
             <button
               onClick={() => toggle(id)}
               className="w-full px-4 py-3 bg-muted/20 hover:bg-muted/40 transition-colors"
