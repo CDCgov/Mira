@@ -571,6 +571,10 @@ function ResultSectionsMenu({ sections, onJump, children }) {
 }
 
 /* ── Shared Plotly modebar config ───────────────── */
+// Per-row pixel height shared by the QC Decisions and Median Coverage heatmaps so
+// their rows render at the same height.
+const HEATMAP_ROW_PX = 4.125;
+
 const PLOT_CONFIG = {
   responsive: true,
   displayModeBar: 'hover',
@@ -3446,6 +3450,10 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                           </div>
                         );
                       }
+                      // Size the plot height to the number of rows so each row matches the
+                      // per-row height of the Median Coverage Heatmap below (HEATMAP_ROW_PX).
+                      const qcYLabels = resultQcDecisions.data?.[0]?.y ?? [];
+                      const qcHeight = Math.max(60, qcYLabels.length * HEATMAP_ROW_PX + 120);
                       return (
                         <div id="result-section-qc" className="rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
@@ -3488,7 +3496,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                                     xaxis: { ...(resultQcDecisions.layout?.xaxis ?? {}), side: "top" },
                                   }}
                                   config={PLOT_CONFIG}
-                                  style={{ width: "100%", minHeight: 260 }}
+                                  style={{ width: "100%", height: qcHeight }}
                                   useResizeHandler
                                 />
                               </Suspense>
@@ -3507,34 +3515,29 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                           </div>
                         );
                       }
-                      // Ensure every sample label along the x-axis, and every row label along
-                      // the y-axis, has enough room to render — size the scrollable container
-                      // to the number of columns/rows rather than trusting only the
-                      // backend-supplied layout dimensions, and force Plotly to draw every
-                      // tick (instead of auto-skipping ones that don't fit).
+                      // Fit the entire heatmap within the container view — size only the
+                      // height to the number of rows so every y label renders, and let the
+                      // width fill the available container so no horizontal scrolling is needed.
                       const heatmapXLabels = resultCoverageHeatmap.data?.[0]?.x ?? [];
                       const heatmapYLabels = resultCoverageHeatmap.data?.[0]?.y ?? [];
-                      const heatmapMinWidth = Math.max(
-                        resultCoverageHeatmap.layout?.width || 0,
-                        heatmapXLabels.length * 32 + 120
-                      );
                       const heatmapMinHeight = Math.max(
                         260,
-                        heatmapYLabels.length * 22 + 120
+                        heatmapYLabels.length * HEATMAP_ROW_PX + 120
                       );
                       return (
                         <div id="result-section-heatmap" className="rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                             <p className="text-xs font-bold text-foreground uppercase tracking-wider">Median Coverage Heatmap</p>
                           </div>
-                          <div className="p-2 overflow-x-auto">
-                            <div style={{ minWidth: `${heatmapMinWidth}px` }}>
+                          <div className="p-2">
+                            <div style={{ width: "100%" }}>
                               <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
                                 <Plot
                                   data={resultCoverageHeatmap.data ?? []}
                                   layout={{
                                     ...(resultCoverageHeatmap.layout ?? {}),
                                     autosize: true,
+                                    width: undefined,
                                     margin: { l: 100, r: 20, t: 90, b: 20 },
                                     paper_bgcolor: "transparent",
                                     plot_bgcolor: "transparent",
