@@ -2607,7 +2607,7 @@ function AssemblyTab() {
                           <div>
                             <FieldLabel>
                               <span className="inline-flex items-center gap-1.5">
-                                Primer k-mer Length
+                                K-mer length to decompose primers into:
                                 <a
                                   href="https://github.com/CDCgov/MIRA-NF#:~:text=with%20this%20flag-,primer_kmer_len,-When%20primer_kmer_len%20is"
                                   target="_blank"
@@ -2632,7 +2632,7 @@ function AssemblyTab() {
                           <div>
                             <FieldLabel>
                               <span className="inline-flex items-center gap-1.5">
-                                Search for primers within N bases of read ends
+                                Number of bases from read end to search for primer k-mers
                                 <a
                                   href="https://github.com/CDCgov/MIRA-NF#:~:text=reads)%20is%20performed.-,primer_restrict_window,-The%20N%20number"
                                   target="_blank"
@@ -2649,7 +2649,7 @@ function AssemblyTab() {
                               type="number"
                               value={primerRestrictWindow}
                               onChange={(e) => setPrimerRestrictWindow(e.target.value)}
-                              placeholder="e.g. 30"
+                              placeholder="∀ p ∈ primer.fasta : |p|"
                               min={0}
                               className="w-full max-w-[182px] h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                             />
