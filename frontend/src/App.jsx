@@ -4306,12 +4306,12 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
 }
 
 /* ── SeqSender Tab ──────────────────────────────── */
-const ORGANISMS = ["FLU", "COV", "RSV", "POX", "ARBO", "OTHER"];
+const ORGANISMS = ["INFLUENZA", "SARS-COV-2", "RSV"];
 const DB_LIST = [
-  { key: "biosample", label: "BioSample",  desc: "NCBI BioSample — biological source metadata" },
-  { key: "sra",       label: "SRA",        desc: "NCBI Sequence Read Archive — raw read data" },
-  { key: "genbank",   label: "GenBank",    desc: "NCBI GenBank — assembled consensus sequences" },
-  { key: "gisaid",    label: "GISAID",     desc: "GISAID — submissions of Influenza, SARS-CoV-2, & other pathogens genomic data" },
+  { key: "biosample", label: "BioSample", url: "https://www.ncbi.nlm.nih.gov/biosample/"},
+  { key: "sra",       label: "SRA", url: "https://www.ncbi.nlm.nih.gov/sra/ "},
+  { key: "genbank",   label: "GenBank", url: "https://www.ncbi.nlm.nih.gov/genbank/"},
+  { key: "gisaid",    label: "GISAID", url: "https://www.gisaid.org/"},
 ];
 
 // ── SeqSender panel — rendered as Step 5 inside the Mira accordion ──
@@ -4336,18 +4336,29 @@ function SeqSenderPanel() {
                       <span className="text-xs font-bold tracking-wider text-muted-foreground uppercase">Database Targets</span>
                       <div className="flex-1 h-px bg-border" />
                     </div>
-                    <p className="text-xs text-muted-foreground">Select one or more target databases for this submission. <span className="text-destructive font-bold">*</span></p>
-                    <div className="grid grid-cols-2 gap-2">
-                      {DB_LIST.map(({ key, label, desc }) => (
+                    <div className="grid grid-cols-2 gap-2 max-w-md">
+                      {DB_LIST.map(({ key, label, desc, url }) => (
                         <label key={key} className={cn(
                           "flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors",
                           dbs[key] ? "border-primary bg-primary/5" : "border-border hover:bg-muted/20"
                         )}>
                           <input type="checkbox" checked={dbs[key]} onChange={() => toggleDb(key)} className="mt-0.5 accent-primary" />
-                          <div>
+                          <div className="flex-1 min-w-0">
                             <p className="text-sm font-semibold">{label}</p>
                             <p className="text-xs text-muted-foreground">{desc}</p>
                           </div>
+                          {url && (
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              title={`Learn more about ${label}`}
+                              className="shrink-0 text-muted-foreground hover:text-primary transition-colors"
+                            >
+                              <ExternalLink size={13} />
+                            </a>
+                          )}
                         </label>
                       ))}
                     </div>
@@ -4497,10 +4508,6 @@ function SeqSenderPanel() {
                         <RefreshCw size={14} /> Refresh Status
                       </button>
                     )}
-
-                    <div className="border-t border-border pt-3">
-                      <p className="text-center text-xs text-muted-foreground"><a href="https://cdcgov.github.io/seqsender/" target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline">cdcgov.github.io/seqsender/</a></p>
-                    </div>
     </>
   );
 }
