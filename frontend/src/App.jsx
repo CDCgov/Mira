@@ -498,6 +498,78 @@ function FieldLabel({ children }) {
   return <p className="text-xs font-semibold text-foreground mb-1">{children}</p>;
 }
 
+// Hover menu that flows a vertical cascade of result-section link pills out of a
+// trigger pill (and smoothly back on leave). Rendered in a portal so it is not
+// clipped by the Jump-To band's overflow.
+function ResultSectionsMenu({ sections, onJump, children }) {
+  const [render, setRender] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const anchorRef = useRef(null);
+  const hideTimer = useRef(null);
+  const closeTimer = useRef(null);
+  const rafRef = useRef(null);
+
+  const show = () => {
+    clearTimeout(hideTimer.current);
+    clearTimeout(closeTimer.current);
+    const el = anchorRef.current;
+    if (el) {
+      const r = el.getBoundingClientRect();
+      setPos({ top: r.bottom + 6, left: r.left });
+    }
+    setRender(true);
+    cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() =>
+      requestAnimationFrame(() => setOpen(true))
+    );
+  };
+  const hide = () => {
+    clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => {
+      setOpen(false);
+      closeTimer.current = setTimeout(() => setRender(false), 260);
+    }, 120);
+  };
+  useEffect(() => () => {
+    clearTimeout(hideTimer.current);
+    clearTimeout(closeTimer.current);
+    cancelAnimationFrame(rafRef.current);
+  }, []);
+
+  return (
+    <div ref={anchorRef} onMouseEnter={show} onMouseLeave={hide} className="shrink-0">
+      {children}
+      {render && createPortal(
+        <div
+          onMouseEnter={show}
+          onMouseLeave={hide}
+          style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 60, transformOrigin: "top left" }}
+          className={cn(
+            "flex flex-col gap-1 p-1.5 rounded-xl border border-border bg-popover/95 backdrop-blur shadow-xl transition-all duration-200 ease-out",
+            open ? "opacity-100 translate-y-0 scale-100" : "opacity-0 -translate-y-2 scale-95 pointer-events-none"
+          )}
+        >
+          {sections.map(({ id, label }, i) => (
+            <button
+              key={id}
+              onClick={() => onJump(id)}
+              style={{ transitionDelay: `${open ? i * 35 : 0}ms` }}
+              className={cn(
+                "flex items-center px-2.5 py-1 rounded-full text-xs text-muted-foreground hover:text-primary hover:bg-muted/60 border border-dashed border-border whitespace-nowrap text-left transition-all duration-200 ease-out",
+                open ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-2"
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
 /* ── Shared Plotly modebar config ───────────────── */
 const PLOT_CONFIG = {
   responsive: true,
@@ -817,7 +889,7 @@ function OntFastqCell({ fastqList, uploadedMap }) {
   );
 }
 
-function AssemblyTab({ loadRunSignal, setHeaderHidden }) {
+function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   const [openStep, setOpenStep]                           = useState(() => new Set(ASSEMBLY_STEPS.map((s) => s.id)));
   const [runName, setRunName]                             = useState("");
   const [experimentType, setExperimentType]               = useState("");
@@ -1658,6 +1730,65 @@ function AssemblyTab({ loadRunSignal, setHeaderHidden }) {
     if (loadRunSignal) openLoadRunModal();
   }, [loadRunSignal, openLoadRunModal]);
 
+  // Reset every assembly-page input to a clean "new run" state.
+  const resetInputs = useCallback(() => {
+    // Step 1 — run configuration
+    setRunName("");
+    setExperimentType("");
+    setPrimer("");
+    setSubSample("0");
+    setIrmaModule("");
+    setUseCustomPrimers(false);
+    setCustomPrimers("");
+    setPrimerKmerLen("");
+    setPrimerRestrictWindow("");
+    setUseCustomIrmaConfig(false);
+    setCustomIrmaConfig("");
+    setUseCustomQcSettings(false);
+    setCustomQcSettings("");
+    setCustomPrimersFile(null);
+    setCustomIrmaConfigFile(null);
+    setCustomQcSettingsFile(null);
+    setLoadedCustomPrimersName("");
+    setLoadedCustomIrmaConfigName("");
+    setLoadedCustomQcSettingsName("");
+    setCustomConfigDownloadError(null);
+    setPrimersFileError(null);
+    setIrmaConfigFileError(null);
+    setQcSettingsFileError(null);
+    setCreateParquet(false);
+    setNextclade(true);
+    // Sample sheet + uploads
+    setOntSampleRows([]);
+    setIlluminaSampleRows([]);
+    setUploadedOntFileObjects({});
+    setUploadedIlluminaFileObjects({});
+    setUploadOntFastq([]);
+    setUploadIlluminaFastq([]);
+    setUploadOntError(null);
+    setUploadIlluminaError(null);
+    setSampleSearch("");
+    setSortConfig({ key: "sample_id", dir: "asc" });
+    setConfirmRemoveIdx(null);
+    // Run / processing / results context — start fresh
+    setIsNewRun(true);
+    setSelectedRun(null);
+    setSubmitError(null);
+    setSubmitSuccess(null);
+    setSubmitProcessId(null);
+    setSubmitting(false);
+    setAssembled(false);
+    setCancelRun(false);
+    setShowDAG(false);
+    setPipelineDAG(null);
+    setPipelinePolling(false);
+  }, []);
+
+  // Refresh the inputs when signaled from outside (e.g. the Home "New Run" card).
+  useEffect(() => {
+    if (newRunSignal) resetInputs();
+  }, [newRunSignal, resetInputs]);
+
   const openExportRunModal = useCallback(async () => {
     setExportRunModal(true);
     setExportRunLoading(true);
@@ -2340,10 +2471,16 @@ function AssemblyTab({ loadRunSignal, setHeaderHidden }) {
     <div className="flex flex-col h-full overflow-hidden">
 
       {/* ── Jump To navigation band ───────────────── */}
-      <div className="shrink-0 flex items-center justify-center gap-2 px-4 py-2 border-b border-border bg-muted/10 overflow-x-auto">
-        <span className="text-[10px] font-bold tracking-wider text-muted-foreground uppercase shrink-0 mr-1"></span>
-        {ASSEMBLY_STEPS.map(({ id, title, icon: Icon }) => (
-          <Fragment key={id}>
+      <div className="shrink-0 flex items-center gap-2 px-4 py-2 border-b border-border bg-muted/10 overflow-x-auto">
+        <button
+          onClick={resetInputs}
+          className="shrink-0 mr-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-colors border border-primary/30 text-primary bg-primary/5 hover:bg-primary/10"
+        >
+          <PlusCircle size={13} className="shrink-0" />
+          <span className="whitespace-nowrap">New Run</span>
+        </button>
+        {ASSEMBLY_STEPS.map(({ id, title, icon: Icon }) => {
+          const stepButton = (
             <button
               onClick={() => {
                 setOpenStep(prev => { const next = new Set(prev); next.add(id); return next; });
@@ -2359,20 +2496,32 @@ function AssemblyTab({ loadRunSignal, setHeaderHidden }) {
               <Icon size={13} className="text-primary shrink-0" />
               <span className="whitespace-nowrap">{title}</span>
             </button>
-            {id === "results" && assembled && !hasNoResults && resultSections.length > 0 && resultSections.map(({ id: sectionId, label }) => (
-              <button
-                key={sectionId}
-                onClick={() => {
+          );
+
+          if (id === "results" && assembled && !hasNoResults && resultSections.length > 0) {
+            return (
+              <ResultSectionsMenu
+                key={id}
+                sections={resultSections}
+                onJump={(sectionId) => {
                   setOpenStep(prev => { const next = new Set(prev); next.add("results"); return next; });
                   setTimeout(() => document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
                 }}
-                className="shrink-0 flex items-center px-2.5 py-1 rounded-full text-xs text-muted-foreground hover:text-primary hover:bg-muted/60 transition-colors border border-dashed border-border"
               >
-                <span className="whitespace-nowrap">{label}</span>
-              </button>
-            ))}
-          </Fragment>
-        ))}
+                {stepButton}
+              </ResultSectionsMenu>
+            );
+          }
+
+          return <Fragment key={id}>{stepButton}</Fragment>;
+        })}
+        <button
+          onClick={openLoadRunModal}
+          className="shrink-0 ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-colors border border-border text-foreground hover:bg-muted/60 hover:border-primary/30 hover:text-primary"
+        >
+          <FolderOpen size={13} className="shrink-0" />
+          <span className="whitespace-nowrap">Past Runs</span>
+        </button>
       </div>
 
       {/* ── Main row: accordion + run panel ─────────── */}
@@ -2667,8 +2816,8 @@ function AssemblyTab({ loadRunSignal, setHeaderHidden }) {
                                         className={cn(
                                           "px-2 py-0.5 rounded-full text-xs font-semibold border transition-colors",
                                           row.status === "Keep"
-                                            ? "bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800"
-                                            : "bg-red-100 text-red-700 border-red-200 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800"
+                                            ? "bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 dark:bg-emerald-900/10 dark:text-emerald-400 dark:border-emerald-800"
+                                            : "bg-red-100 text-red-700 border-red-200 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 dark:bg-red-900/10 dark:text-red-400 dark:border-red-800"
                                         )}
                                       >
                                         {row.status === "Keep" ? "Keep" : "Exclude"}
@@ -3057,9 +3206,9 @@ function AssemblyTab({ loadRunSignal, setHeaderHidden }) {
                           {pipelineDAG?.workflows?.status && (() => {
                             const s = pipelineDAG?.workflows?.status;
                             const { cls, Icon } = {
-                              COMPLETED:  { cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400", Icon: Check },
-                              FAILED:     { cls: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400", Icon: AlertCircle },
-                              PROCESSING: { cls: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400", Icon: RefreshCw },
+                              COMPLETED:  { cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/10 dark:text-emerald-400", Icon: Check },
+                              FAILED:     { cls: "bg-red-100 text-red-700 dark:bg-red-900/10 dark:text-red-400", Icon: AlertCircle },
+                              PROCESSING: { cls: "bg-sky-100 text-sky-700 dark:bg-sky-900/10 dark:text-sky-400", Icon: RefreshCw },
                             }[s] ?? { cls: "bg-muted text-muted-foreground", Icon: AlertCircle };
                             return (
                               <span className={cn("flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold shrink-0", cls)}>
@@ -3215,10 +3364,10 @@ function AssemblyTab({ loadRunSignal, setHeaderHidden }) {
                               <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
                                 {pipelineDAG?.workflows?.number_of_samples ?? 0} total samples
                               </span>
-                              <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 font-mono">
+                              <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/10 dark:text-red-400 font-mono">
                                 {pipelineDAG?.workflows?.number_of_samples_with_failed_tasks ?? 0} samples failed
                               </span>
-                              <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 font-mono">
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/05 dark:text-emerald-400 font-mono">
                                 {pipelineDAG?.workflows?.number_of_samples_with_successful_tasks ?? 0} samples passed
                               </span>
                             </div>
@@ -3645,8 +3794,8 @@ function AssemblyTab({ loadRunSignal, setHeaderHidden }) {
 
       {/* ── Export Run modal ─────────────────── */}
       {exportRunModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="bg-background border border-border rounded-xl p-6 max-w-2xl w-full mx-4 shadow-xl flex flex-col gap-4">
+        <div onClick={() => setExportRunModal(false)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div onClick={(e) => e.stopPropagation()} className="bg-background border border-border rounded-xl p-6 max-w-2xl w-full mx-4 shadow-xl flex flex-col gap-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-foreground">Export Mira Reports</h3>
               <button onClick={() => setExportRunModal(false)} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -3782,8 +3931,8 @@ function AssemblyTab({ loadRunSignal, setHeaderHidden }) {
 
       {/* ── Load Run modal ────────────────────── */}
       {loadRunModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="bg-background border border-border rounded-xl p-6 max-w-2xl w-full mx-4 shadow-xl flex flex-col gap-4">
+        <div onClick={() => setLoadRunModal(false)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div onClick={(e) => e.stopPropagation()} className="bg-background border border-border rounded-xl p-6 max-w-2xl w-full mx-4 shadow-xl flex flex-col gap-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-foreground">Load Existing Runs</h3>
               <button onClick={() => setLoadRunModal(false)} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -3907,8 +4056,8 @@ function AssemblyTab({ loadRunSignal, setHeaderHidden }) {
 
       {/* ── Edit Run modal ────────────────────── */}
       {editRunModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="bg-background border border-border rounded-xl p-6 max-w-2xl w-full mx-4 shadow-xl flex flex-col gap-4">
+        <div onClick={closeEditRunModal} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div onClick={(e) => e.stopPropagation()} className="bg-background border border-border rounded-xl p-6 max-w-2xl w-full mx-4 shadow-xl flex flex-col gap-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-foreground">{editSelectedRun ? "Edit Run" : "Select a Run to Edit"}</h3>
               <button onClick={closeEditRunModal} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -4115,8 +4264,8 @@ function AssemblyTab({ loadRunSignal, setHeaderHidden }) {
         const isOnt = experimentType.toLowerCase().endsWith("ont");
         const sample = (isOnt ? ontSampleRows : illuminaSampleRows)[confirmRemoveIdx];
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-            <div className="bg-background border border-border rounded-xl p-8 max-w-lg w-full mx-4 shadow-xl flex flex-col gap-5">
+          <div onClick={() => setConfirmRemoveIdx(null)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div onClick={(e) => e.stopPropagation()} className="bg-background border border-border rounded-xl p-8 max-w-lg w-full mx-4 shadow-xl flex flex-col gap-5">
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-bold text-foreground">Remove Sample</h3>
                 <button onClick={() => setConfirmRemoveIdx(null)} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -4503,9 +4652,9 @@ function ResourcesTab() {
 }
 
 /* ── Placeholder tab content ─────────────────────── */
-function TabContent({ tab, navigateTo, loadRunSignal, onLoadRun, setHeaderHidden }) {
-  if (tab.id === "home")       return <HomeTab onNewRun={() => navigateTo("assembly")} onLoadRun={onLoadRun} />;
-  if (tab.id === "assembly")   return <AssemblyTab loadRunSignal={loadRunSignal} setHeaderHidden={setHeaderHidden} />;
+function TabContent({ tab, navigateTo, loadRunSignal, newRunSignal, onLoadRun, onNewRun, setHeaderHidden }) {
+  if (tab.id === "home")       return <HomeTab onNewRun={onNewRun} onLoadRun={onLoadRun} />;
+  if (tab.id === "assembly")   return <AssemblyTab loadRunSignal={loadRunSignal} newRunSignal={newRunSignal} setHeaderHidden={setHeaderHidden} />;
   return (
     <div className="p-6">
       <div className="rounded-xl border border-border bg-card p-8 text-center text-muted-foreground">
@@ -4531,6 +4680,7 @@ export default function App() {
   const [backendUp, setBackendUp] = useState(true); // assume healthy until the first check completes
   const [resourcesOpen, setResourcesOpen] = useState(false); // Resources overlay visibility
   const [loadRunSignal, setLoadRunSignal] = useState(0); // bumped to signal AssemblyTab to open its Load Run modal
+  const [newRunSignal, setNewRunSignal] = useState(0);   // bumped to signal AssemblyTab to reset its inputs for a new run
   const [headerHidden, setHeaderHidden] = useState(false); // whether the top header is collapsed (auto-hide on scroll)
 
   // Check MIRA-NF version on app startup so we can alert users if it's out-of-date,
@@ -4565,6 +4715,11 @@ export default function App() {
   const openLoadRunFromHome = () => {
     navigateTo("assembly");
     setLoadRunSignal((n) => n + 1);
+  };
+
+  const openNewRunFromHome = () => {
+    navigateTo("assembly");
+    setNewRunSignal((n) => n + 1);
   };
 
   // Sync active tab when browser back/forward is used
@@ -4702,8 +4857,8 @@ export default function App() {
 
       {/* ── Resources modal ──────────────────────── */}
       {resourcesOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-background border border-border rounded-xl shadow-xl w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden">
+        <div onClick={() => setResourcesOpen(false)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div onClick={(e) => e.stopPropagation()} className="bg-background border border-border rounded-xl shadow-xl w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
               <div className="flex items-center gap-2">
                 <BookOpen size={16} className="text-primary" />
@@ -4735,7 +4890,7 @@ export default function App() {
         <main className="flex-1 overflow-hidden px-6">
           {TABS.map((tab) => (
             <div key={tab.id} className={cn("h-full", activeTab !== tab.id && "hidden")}>
-              <TabContent tab={tab} navigateTo={navigateTo} loadRunSignal={loadRunSignal} onLoadRun={openLoadRunFromHome} setHeaderHidden={setHeaderHidden} />
+              <TabContent tab={tab} navigateTo={navigateTo} loadRunSignal={loadRunSignal} newRunSignal={newRunSignal} onLoadRun={openLoadRunFromHome} onNewRun={openNewRunFromHome} setHeaderHidden={setHeaderHidden} />
             </div>
           ))}
         </main>
