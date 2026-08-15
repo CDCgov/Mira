@@ -1612,11 +1612,17 @@ def create_mira_dag(
     # Create a placeholder for the message to be returned to the user
     message = []
 
+    # Ordered list of every distinct process that the pipeline will run, parsed
+    # from the "Starting process > ..." lines Nextflow emits at launch (before any
+    # task is submitted). Lets the UI lay out all task rows up front.
+    all_process_names: List[str] = []
+
     # ── 1. Parse .nextflow.log for workflow-level metadata ───────────
     if os.path.exists(nextflow_log):
         session_re  = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}|\w+-\d+ \d{2}:\d{2}:\d{2}).*Session start")
         complete_re = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}|\w+-\d+ \d{2}:\d{2}:\d{2}).*WorkflowStats")
         error_re = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}|\w+-\d+ \d{2}:\d{2}:\d{2}).*ERROR")
+        starting_re = re.compile(r"Starting process\s*>\s*(\S+)")
         with open(nextflow_log, errors="replace") as fh:
             for line in fh:
                 if workflow["started_at"] is None:
@@ -1626,6 +1632,11 @@ def create_mira_dag(
                 m = complete_re.search(line)
                 if m and workflow["completed_at"] is None:
                         workflow["completed_at"] = m.group(1)
+                sp = starting_re.search(line)
+                if sp:      
+                    process_name = sp.group(1).strip().split(":")[-1]
+                    if process_name not in all_process_names:
+                        all_process_names.append(process_name)
     elif assembly_status == "CANCELED" and not os.path.exists(nextflow_log):
         message.append(f"MIRA run was canceled or interrupted.")
     elif assembly_status != "PROCESSING" and not os.path.exists(nextflow_log):
@@ -1702,6 +1713,8 @@ def create_mira_dag(
     return {
         "workflows": workflow,
         "tasks":    tasks,
+        "process_names": all_process_names,
+        "sample_ids": sorted(known_sample_ids),
         "message":   message
     }
 
