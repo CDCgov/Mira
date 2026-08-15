@@ -3129,6 +3129,18 @@ function AssemblyTab({ loadRunSignal, setHeaderHidden }) {
                               bump(rowLevelMap, p, bucket);
                             }
                           });
+                          // PASSFAILED only runs for samples that FAIL QC, so passing samples leave the
+                          // row empty. Once the run is done, mark it per sample: red X for a QC failure,
+                          // green check for samples that finished without any failure.
+                          const runDone = ["COMPLETED", "FAILED", "CANCELED"].includes(pipelineDAG?.workflows?.status);
+                          const passFailedSamples = new Set();
+                          const anyFailedSamples = new Set();
+                          tasks.forEach(t => {
+                            if (t.sample && knownSet.has(t.sample)) {
+                              if (t.process_name === "PASSFAILED") passFailedSamples.add(t.sample);
+                              if (bucketOf(t) === "failed") anyFailedSamples.add(t.sample);
+                            }
+                          });
                           return (
                             <div className="rounded-xl border border-border overflow-hidden">
                               <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
@@ -3149,7 +3161,12 @@ function AssemblyTab({ loadRunSignal, setHeaderHidden }) {
                                       <tr key={p} className="border-b border-border/50">
                                         <td className="sticky left-0 z-10 bg-background px-3 py-1.5 font-mono text-foreground border-r border-border whitespace-nowrap">{p}</td>
                                         {samples.map(s => {
-                                          const bucket = cellMap.get(`${p}||${s}`) ?? rowLevelMap.get(p);
+                                          let bucket = cellMap.get(`${p}||${s}`) ?? rowLevelMap.get(p);
+                                          if (p === "PASSFAILED") {
+                                            bucket = passFailedSamples.has(s)
+                                              ? "failed"
+                                              : (runDone && !anyFailedSamples.has(s) ? "success" : undefined);
+                                          }
                                           return (
                                             <td key={s} className="px-3 py-1.5 text-center align-middle">
                                               {bucket === "success" && <Check size={13} className="inline text-emerald-500" />}
@@ -3797,7 +3814,7 @@ function AssemblyTab({ loadRunSignal, setHeaderHidden }) {
                 const q = runSearch.trim().toLowerCase();
                 const filtered = (q
                   ? availableRuns.filter(r =>
-                      [r.run_name, r.experiment_type, r.assembly_status, r.run_date]
+                      [r.run_name, r.experiment_type, r.assembly_status, r.finished_at, r.created_at]
                         .some(v => (v ?? "").toLowerCase().includes(q))
                     )
                   : availableRuns
@@ -3828,46 +3845,39 @@ function AssemblyTab({ loadRunSignal, setHeaderHidden }) {
                     {filtered.length === 0 ? (
                       <p className="text-xs text-muted-foreground text-center py-3">No runs match your search.</p>
                     ) : (
-                      <div className={cn("rounded-xl border border-border divide-y divide-border", availableRuns.length > 10 && "max-h-96 overflow-y-auto")}>
-                        {filtered.map(run => (
-                          <button
-                            key={run.assembly_id}
-                            onClick={() => setLoadRunSelectedRow(run)}
-                            onDoubleClick={() => { setLoadRunSelectedRow(run); handleLoadRun(run); }}
-                            className={cn(
-                              "w-full text-left px-4 py-3 text-xs transition-colors",
-                              loadRunSelectedRow?.assembly_id === run.assembly_id
-                                ? "bg-primary/10 border-l-2 border-primary"
-                                : "hover:bg-muted/40"
-                            )}
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="flex items-center gap-3 min-w-0">
-                                <div className="flex items-center gap-1.5 min-w-0">
-                                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Name:</span>
-                                  <span className="font-semibold text-foreground font-mono truncate">{run.run_name}</span>
-                                </div>
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Type:</span>
-                                  <span className="font-mono text-foreground">{run.experiment_type}</span>
-                                </div>
-                                {run.run_date && (
-                                  <div className="flex items-center gap-1.5 shrink-0">
-                                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Date:</span>
-                                    <span className="font-mono text-foreground">{run.run_date}</span>
-                                  </div>
+                      <div className={cn("rounded-xl border border-border overflow-hidden", availableRuns.length > 10 && "max-h-96 overflow-y-auto")}>
+                        <table className="w-full text-xs">
+                          <thead className="bg-muted sticky top-0 z-10">
+                            <tr>
+                              <th className="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Name</th>
+                              <th className="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Type</th>
+                              <th className="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Timestamp</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {filtered.map(run => (
+                              <tr
+                                key={run.assembly_id}
+                                onClick={() => setLoadRunSelectedRow(run)}
+                                onDoubleClick={() => { setLoadRunSelectedRow(run); handleLoadRun(run); }}
+                                className={cn(
+                                  "cursor-pointer transition-colors",
+                                  loadRunSelectedRow?.assembly_id === run.assembly_id
+                                    ? "bg-primary/10"
+                                    : "hover:bg-muted/40"
                                 )}
-                              </div>
-                              <span className={cn(
-                                "px-2 py-0.5 rounded-full text-xs font-medium shrink-0",
-                                run.assembly_status === "SUBMITTED"  ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400" :
-                                run.assembly_status === "PROCESSING" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" :
-                                run.assembly_status === "PROCESSED"  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" :
-                                "bg-muted text-muted-foreground"
-                              )}>{run.assembly_status}</span>
-                            </div>
-                          </button>
-                        ))}
+                              >
+                                <td className="px-4 py-2 font-mono font-semibold text-foreground truncate max-w-[240px]">{run.run_name}</td>
+                                <td className="px-4 py-2 font-mono text-foreground whitespace-nowrap">{run.experiment_type}</td>
+                                <td className="px-4 py-2 font-mono text-muted-foreground whitespace-nowrap">{(() => {
+                                  // Prefer Nextflow's reported finish time; trim seconds to minute precision
+                                  const ts = run.finished_at || run.created_at;
+                                  return ts ? ts.replace(/(\d{1,2}:\d{2}):\d{2}/, "$1") : "—";
+                                })()}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     )}
                   </>

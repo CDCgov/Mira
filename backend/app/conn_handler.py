@@ -69,6 +69,8 @@ def _apply_migrations(connection: sqlite3.Connection) -> None:
     """Add newer columns to pre-existing databases (no-op when already present)."""
     # (table, column, definition) tuples to ensure exist
     _required_columns = [
+        ("assembly", "created_at", "TEXT"),
+        ("assembly", "finished_at", "TEXT DEFAULT NULL"),
         ("assembly", "runtime", "TEXT DEFAULT NULL"),
     ]
     for table, column, definition in _required_columns:

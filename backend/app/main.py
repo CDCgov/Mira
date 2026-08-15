@@ -15,6 +15,7 @@ import json
 import shutil
 import zipfile
 import requests
+from datetime import datetime
 
 # Import asyncio for running blocking operations in a thread
 import asyncio
@@ -486,6 +487,7 @@ async def create_run(req: AssemblyRequest):
             "parquet_files":            [req.parquet_files],
             "nextclade":                [req.nextclade],
             "assembly_status":          [req.assembly_status],
+            "created_at":               [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
         })
         # Log the request parameters for debugging and auditing purposes
         logger.info(

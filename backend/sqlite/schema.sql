@@ -137,6 +137,8 @@ CREATE TABLE assembly (
                               'SUBMITTED', 'PROCESSING', 'CANCELED',
                               'FAILED', 'COMPLETED'
                             )),
+  created_at              TEXT DEFAULT CURRENT_TIMESTAMP,
+  finished_at             TEXT DEFAULT NULL,
   runtime                 TEXT DEFAULT NULL,
   UNIQUE (run_name, experiment_type)
 );

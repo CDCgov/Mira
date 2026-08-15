@@ -1583,6 +1583,7 @@ def create_mira_dag(
 
     # Runtime already persisted from a previous parse (None for runs that haven't completed)
     db_runtime = db_assembly_tbl.select("runtime").to_series()[0] if "runtime" in db_assembly_tbl.columns else None
+    db_finished_at = db_assembly_tbl.select("finished_at").to_series()[0] if "finished_at" in db_assembly_tbl.columns else None
 
     # Get the actual sample_ids from the samplesheet, so run-level tasks (e.g.
     # CHECKMIRAVERSION (1)) or reference-dataset tasks (e.g. GETNEXTCLADEDATASET
@@ -1619,6 +1620,7 @@ def create_mira_dag(
         "number_of_samples_with_failed_tasks": 0,
         "number_of_samples_with_successful_tasks": 0,
         "runtime": db_runtime,
+        "finished_at": db_finished_at,
     }
 
     # Create a placeholder for the message to be returned to the user
@@ -1654,33 +1656,47 @@ def create_mira_dag(
     elif assembly_status != "PROCESSING" and not os.path.exists(nextflow_log):
         message.append(f"Cannot find Nextflow log file for this run. The log file may have been deleted or moved. Try running MIRA again.")
 
-    # ── 1b. Parse Nextflow stdout for the reported runtime ("Duration : ...") ──
-    # Nextflow prints its completion summary (including the total runtime) to stdout,
-    # which run_mira_docker captures to nextflow.stdout.log.
+    # ── 1b. Parse Nextflow stdout for the reported runtime and finish time ──
+    # Nextflow prints its completion summary ("Completed at" / "Duration") to stdout,
+    # which run_mira_docker captures to nextflow.stdout.log (overwritten each run, so
+    # it always reflects the most recent run).
     if os.path.exists(nextflow_stdout):
-        ansi_re     = re.compile(r"\x1b\[[0-9;]*m")
-        duration_re = re.compile(r"(?:Execution\s+duration|Duration)\s*:\s*(.+)", re.IGNORECASE)
+        ansi_re      = re.compile(r"\x1b\[[0-9;]*m")
+        duration_re  = re.compile(r"(?:Execution\s+duration|Duration)\s*:\s*(.+)", re.IGNORECASE)
+        completed_re = re.compile(r"Completed\s+at\s*:\s*(.+)", re.IGNORECASE)
         parsed_runtime = None
+        parsed_finished = None
         with open(nextflow_stdout, errors="replace") as fh:
             for line in fh:
-                d = duration_re.search(ansi_re.sub("", line))
+                clean = ansi_re.sub("", line)
+                d = duration_re.search(clean)
                 if d:
                     parsed_runtime = d.group(1).strip()
+                c = completed_re.search(clean)
+                if c:
+                    parsed_finished = c.group(1).strip()
         if parsed_runtime:
             workflow["runtime"] = parsed_runtime
-            # Persist to the DB whenever it is new/changed so it survives log cleanup
-            if parsed_runtime != db_runtime:
-                try:
-                    update_tbl_in_database(
-                        db_tbl_name = ["assembly"],
-                        table = pl.DataFrame({"runtime": [parsed_runtime]}),
-                        filter_coln_var = ["assembly_id"],
-                        filter_coln_val = {"assembly_id": [assembly_id]},
-                        filter_var_by = ["AND"]
-                    )
-                except Exception as err:
-                    # Persisting runtime is best-effort; never fail the DAG response over it
-                    logger.warning(f"Failed to persist runtime for run '{run_name}': {err}")
+        if parsed_finished:
+            workflow["finished_at"] = parsed_finished
+        # Persist any new values to the DB so they survive log cleanup
+        updates = {}
+        if parsed_runtime and parsed_runtime != db_runtime:
+            updates["runtime"] = parsed_runtime
+        if parsed_finished and parsed_finished != db_finished_at:
+            updates["finished_at"] = parsed_finished
+        if updates:
+            try:
+                update_tbl_in_database(
+                    db_tbl_name = ["assembly"],
+                    table = pl.DataFrame({k: [v] for k, v in updates.items()}),
+                    filter_coln_var = ["assembly_id"],
+                    filter_coln_val = {"assembly_id": [assembly_id]},
+                    filter_var_by = ["AND"]
+                )
+            except Exception as err:
+                # Persisting runtime/finish time is best-effort; never fail the DAG response over it
+                logger.warning(f"Failed to persist runtime/finish time for run '{run_name}': {err}")
 
     # ── 2. Find the latest trace file ──────────────────────────────
     trace_file: Optional[str] = None
