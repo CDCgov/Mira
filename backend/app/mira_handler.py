@@ -1241,6 +1241,9 @@ def run_mira_docker(
         custom_irma_config = _as_bool(assembly_row.get("custom_irma_config", None))
         custom_qc_settings  = _as_bool(assembly_row.get("custom_qc_settings", None))
 
+        # Get IRMA module from assembly_row ("" / None / "none" => built-in FLU default)
+        irma_module = assembly_row.get("irma_module", None)
+
         # Pull samplesheet from DB (Keep rows only)
         if "ONT" in instrument.upper():
             db_samplesheet_tbl = lookup_tbl_in_database(
@@ -1329,6 +1332,9 @@ def run_mira_docker(
                 cmd.extend(["--primer_restrict_window", str(primer_restrict_window)])
         if subsample_reads and int(subsample_reads) >= 0:
             cmd.extend(["--subsample_reads", str(int(subsample_reads))])
+        # Pass a specific IRMA module when selected; "" / None / "none" / "flu" uses the built-in FLU default
+        if irma_module and str(irma_module).strip().lower() not in ("", "none", "flu"):
+            cmd.extend(["--irma_module", str(irma_module).strip()])
         if custom_irma_config:
             container_custom_irma_config_file = f"{run_dir}/{CUSTOM_IRMA_CONFIG_FILENAME}"
             cmd.extend(["--custom_irma_config", container_custom_irma_config_file])
@@ -1363,6 +1369,7 @@ def run_mira_docker(
                 (f" --custom_primers {run_dir}/{CUSTOM_PRIMER_CONFIG_FILENAME}\n" if custom_primers else "") +
                 (f" --primer_kmer_len {primer_kmer_len}\n" if custom_primers and primer_kmer_len else "") +
                 (f" --primer_restrict_window {primer_restrict_window}\n" if custom_primers and primer_restrict_window else "") +
+                (f" --irma_module {str(irma_module).strip()}\n" if irma_module and str(irma_module).strip().lower() not in ("", "none", "flu") else "") +
                 (f" --custom_irma_config {run_dir}/{CUSTOM_IRMA_CONFIG_FILENAME}\n" if custom_irma_config else "") +
                 (f" --custom_qc_settings {run_dir}/{CUSTOM_QC_SETTINGS_FILENAME}\n" if custom_qc_settings else "") +
                 (f" --subsample_reads {int(subsample_reads)}\n" if subsample_reads and int(subsample_reads) >= 0 else "") +
@@ -1383,12 +1390,13 @@ def run_mira_docker(
                 (f" --custom_primers {run_dir}/{CUSTOM_PRIMER_CONFIG_FILENAME}\n" if custom_primers else "") +
                 (f" --primer_kmer_len {primer_kmer_len}\n" if custom_primers and primer_kmer_len else "") +
                 (f" --primer_restrict_window {primer_restrict_window}\n" if custom_primers and primer_restrict_window else "") +
+                (f" --irma_module {str(irma_module).strip()}\n" if irma_module and str(irma_module).strip().lower() not in ("", "none", "flu") else "") +
                 (f" --custom_irma_config {run_dir}/{CUSTOM_IRMA_CONFIG_FILENAME}\n" if custom_irma_config else "") +
                 (f" --custom_qc_settings {run_dir}/{CUSTOM_QC_SETTINGS_FILENAME}\n" if custom_qc_settings else "") +
                 (f" --subsample_reads {int(subsample_reads)}\n" if subsample_reads and int(subsample_reads) >= 0 else "") +
                 (f" --parquet_files true\n" if parquet_files else "") +
                 (f" --nextclade true\n" if nextclade else ""),
-            )            
+            )
 
         # Fire and forget — launch in background, do not block
         proc = subprocess.Popen(

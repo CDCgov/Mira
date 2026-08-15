@@ -722,8 +722,7 @@ function AssemblyTab() {
   const [primerKmerLen, setPrimerKmerLen]                 = useState("");   // required alongside customPrimers
   const [primerRestrictWindow, setPrimerRestrictWindow]   = useState(""); // required alongside customPrimers
   const [subSample, setSubSample]                         = useState("0");
-  const [useIrmaModule, setUseIrmaModule]                 = useState(false); // whether the IRMA Module option is enabled (Flu-Illumina only)
-  const [irmaModule, setIrmaModule]                       = useState("");   // sensitive | secondary | utr
+  const [irmaModule, setIrmaModule]                       = useState("");   // "" = FLU (default) | secondary | sensitive | utr
   const [useCustomIrmaConfig, setUseCustomIrmaConfig]     = useState(false); // whether a custom IRMA config file is used
   const [customIrmaConfig, setCustomIrmaConfig]           = useState("");    // file path to a custom IRMA config file
   const [useCustomQcSettings, setUseCustomQcSettings]     = useState(false); // whether custom QC pass/fail settings are used
@@ -1399,7 +1398,6 @@ function AssemblyTab() {
     setPrimerKmerLen("");
     setPrimerRestrictWindow("");
     setSubSample("0");
-    setUseIrmaModule(false);
     setIrmaModule("");
     setUseCustomIrmaConfig(false);
     setCustomIrmaConfig("");
@@ -1732,7 +1730,6 @@ function AssemblyTab() {
       setPrimerRestrictWindow(info.primer_restrict_window ? String(info.primer_restrict_window) : "");
       setSubSample(String(info.subsample_reads ?? 0));
       setIrmaModule(info.irma_module || "");
-      setUseIrmaModule(Boolean(info.irma_module));
       setCustomIrmaConfig(info.custom_irma_config ? CUSTOM_IRMA_CONFIG_FILENAME : "");
       setUseCustomIrmaConfig(Boolean(info.custom_irma_config));
       setLoadedCustomIrmaConfigName(info.custom_irma_config ? CUSTOM_IRMA_CONFIG_FILENAME : "");
@@ -1891,18 +1888,6 @@ function AssemblyTab() {
       }
     }
 
-    // IRMA Module can only be invoked for Flu-Illumina experiments, and requires a module selection
-    if (useIrmaModule) {
-      if (experimentType !== "Flu-Illumina") {
-        setSubmitError({ title: "Assembly Error", items: ["IRMA Module can only be used with the Flu-Illumina experiment type."], missing: null });
-        return;
-      }
-      if (!irmaModule) {
-        setSubmitError({ title: "Assembly Error", items: ["Please select an IRMA Module (sensitive, secondary, or utr) or turn off IRMA Module."], missing: null });
-        return;
-      }
-    }
-
     // Custom IRMA Config requires a file path when enabled
     if (isNewRun === true && assembled === false && useCustomIrmaConfig && !customIrmaConfig) {
       setSubmitError({ title: "Assembly Error", items: ["Please provide a custom IRMA config file or turn off Custom IRMA Config."], missing: null });
@@ -1982,7 +1967,7 @@ function AssemblyTab() {
       custom_primers:         useCustomPrimers,
       primer_kmer_len:        useCustomPrimers && primerKmerLen ? (parseInt(primerKmerLen) || 0) : 0,
       primer_restrict_window: useCustomPrimers && primerRestrictWindow ? (parseInt(primerRestrictWindow) || 0) : 0,
-      irma_module:            useIrmaModule && irmaModule ? irmaModule : "",
+      irma_module:            experimentType === "Flu-Illumina" ? irmaModule : "",
       custom_irma_config:     useCustomIrmaConfig,
       custom_qc_settings:     useCustomQcSettings,
       parquet_files:          createParquet,
@@ -2158,7 +2143,7 @@ function AssemblyTab() {
       setSubmitting(false);
     }
 
-  }, [runName, experimentType, ontSampleRows, illuminaSampleRows, subSample, primer, customPrimers, useCustomPrimers, primerKmerLen, primerRestrictWindow, useIrmaModule, irmaModule, useCustomIrmaConfig, customIrmaConfig, useCustomQcSettings, customQcSettings, customPrimersFile, customIrmaConfigFile, customQcSettingsFile, createParquet, nextclade, isNewRun, assembled]);
+  }, [runName, experimentType, ontSampleRows, illuminaSampleRows, subSample, primer, customPrimers, useCustomPrimers, primerKmerLen, primerRestrictWindow, irmaModule, useCustomIrmaConfig, customIrmaConfig, useCustomQcSettings, customQcSettings, customPrimersFile, customIrmaConfigFile, customQcSettingsFile, createParquet, nextclade, isNewRun, assembled]);
 
   // True once assembly finishes but every result field is still empty (nothing to display).
   const hasNoResults = [
@@ -2218,14 +2203,14 @@ function AssemblyTab() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
-                        <FieldLabel>Experiment Type <span className="text-destructive">*</span></FieldLabel>
+                        <FieldLabel>Experiment Type <span className="text-destructive"></span></FieldLabel>
                         <select
                           value={experimentType}
                           onChange={(e) => {
                             const value = e.target.value;
                             setExperimentType(value);
                             setPrimer(value?.startsWith("SC2") && value?.endsWith("Illumina") ? SC2_PRIMERS[0].value : value?.startsWith("RSV") && value?.endsWith("Illumina") ? RSV_PRIMERS[0].value : "");
-                            if (value !== "Flu-Illumina") { setUseIrmaModule(false); setIrmaModule(""); }
+                            if (value !== "Flu-Illumina") { setIrmaModule(""); }
                             if (value) {
                               const today = new Date();
                               const yyyymmdd = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
@@ -2240,7 +2225,7 @@ function AssemblyTab() {
                         </select>
                       </div>
                       <div>
-                        <FieldLabel>Run Name<span className="text-destructive">*</span></FieldLabel>
+                        <FieldLabel>Run Name<span className="text-destructive"></span></FieldLabel>
                         <input
                           value={runName}
                           onChange={(e) => setRunName(e.target.value.replace(/\s+/g, "_"))}
@@ -2266,6 +2251,40 @@ function AssemblyTab() {
                             <option key={value} value={value}>{label}</option>
                           ))}
                         </select>
+                      </div>
+                    )}
+
+                    {runName && experimentType && (
+                      <div>
+                        <FieldLabel>Upload FASTQ Files</FieldLabel>
+                        <div
+                          onClick={() => fastqFileInputRef.current?.click()}
+                          onDragOver={(e) => { e.preventDefault(); setFastqDragOver(true); }}
+                          onDragLeave={() => setFastqDragOver(false)}
+                          onDrop={async (e) => {
+                            e.preventDefault();
+                            setFastqDragOver(false);
+                            const files = await collectFilesFromDataTransfer(e.dataTransfer);
+                            handleIncomingFastqFiles(files);
+                          }}
+                          className={cn(
+                            "flex flex-col items-center justify-center gap-2 h-28 rounded-xl border-2 border-dashed bg-muted/10 hover:bg-muted/20 cursor-pointer transition-colors text-muted-foreground text-sm",
+                            fastqDragOver ? "border-primary bg-primary/5" : "border-border"
+                          )}
+                        >
+                          <Upload size={22} />
+                          <span>
+                            Drag &amp; drop files or folders, or <span className="text-primary underline">browse files</span>
+                          </span>
+                          <span className="text-xs opacity-60">.fastq, .fastq.gz, .fq, .fq.gz accepted — dropped folders are scanned recursively. Sample names must not contain any spaces — spaces will be replaced with underscores.</span>
+                          <input
+                            ref={fastqFileInputRef}
+                            type="file"
+                            className="hidden"
+                            multiple
+                            onChange={(e) => { handleIncomingFastqFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
+                          />
+                        </div>
                       </div>
                     )}
 
@@ -2308,38 +2327,6 @@ function AssemblyTab() {
                         ))}
                       </div>
                     )}
-
-                    <div>
-                      <FieldLabel>Upload FASTQ Files</FieldLabel>
-                      <div
-                        onClick={() => fastqFileInputRef.current?.click()}
-                        onDragOver={(e) => { e.preventDefault(); setFastqDragOver(true); }}
-                        onDragLeave={() => setFastqDragOver(false)}
-                        onDrop={async (e) => {
-                          e.preventDefault();
-                          setFastqDragOver(false);
-                          const files = await collectFilesFromDataTransfer(e.dataTransfer);
-                          handleIncomingFastqFiles(files);
-                        }}
-                        className={cn(
-                          "flex flex-col items-center justify-center gap-2 h-28 rounded-xl border-2 border-dashed bg-muted/10 hover:bg-muted/20 cursor-pointer transition-colors text-muted-foreground text-sm",
-                          fastqDragOver ? "border-primary bg-primary/5" : "border-border"
-                        )}
-                      >
-                        <Upload size={22} />
-                        <span>
-                          Drag &amp; drop files or folders, or <span className="text-primary underline">browse files</span>
-                        </span>
-                        <span className="text-xs opacity-60">.fastq, .fastq.gz, .fq, .fq.gz accepted — dropped folders are scanned recursively. Sample names must not contain any spaces — spaces will be replaced with underscores.</span>
-                        <input
-                          ref={fastqFileInputRef}
-                          type="file"
-                          className="hidden"
-                          multiple
-                          onChange={(e) => { handleIncomingFastqFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
-                        />
-                      </div>
-                    </div>
 
                     {(experimentType.toLowerCase().endsWith("ont") ? ontSampleRows : illuminaSampleRows).length > 0 && (
                       <div className="flex items-center gap-2">
@@ -2510,9 +2497,20 @@ function AssemblyTab() {
                       <div className="flex-1 h-px bg-border" />
                     </div>
                     <div>
-                      <FieldLabel>Number of reads to subsample <span className="text-destructive">*</span></FieldLabel>
+                      <FieldLabel>
+                        <span className="relative inline-flex items-center group">
+                          <span className="cursor-help decoration-dotted underline underline-offset-2 decoration-muted-foreground/50">Subsample Reads</span>
+                          <span
+                            role="tooltip"
+                            className="pointer-events-none absolute bottom-full left-0 z-50 mb-1.5 w-max max-w-xs rounded-md border border-border bg-popover px-2.5 py-1.5 text-xs font-normal text-popover-foreground shadow-lg opacity-0 translate-y-1 transition-all duration-150 group-hover:opacity-100 group-hover:translate-y-0"
+                          >
+                            The number of reads to randomly subsample to.<br /><code className="font-mono bg-muted px-1 rounded">0</code> <em>skips</em> subsampling.
+                          </span>
+                        </span>
+                        {" "}
+                        <span className="text-destructive"></span>
+                      </FieldLabel>
                       <p className="text-xs text-muted-foreground mb-2 leading-relaxed">
-                        Set to <code className="font-mono bg-muted px-1 rounded">0</code> to skip subsampling.
                       </p>
                       <input
                         type="number"
@@ -2520,7 +2518,7 @@ function AssemblyTab() {
                         onChange={(e) => setSubSample(e.target.value)}
                         placeholder="e.g. 100"
                         min={0}
-                        className="w-full max-w-md h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                        className="w-[182px] max-w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                       />
                     </div>
 
@@ -2566,7 +2564,7 @@ function AssemblyTab() {
                               )}
                             </div>
                           )}                          
-                          <FieldLabel>Custom Primer FASTA File <span className="text-destructive">*</span></FieldLabel>
+                          <FieldLabel>Custom Primer FASTA File <span className="text-destructive"></span></FieldLabel>
                           <div className="flex gap-2 max-w-md">
                             <input
                               type="text"
@@ -2607,25 +2605,53 @@ function AssemblyTab() {
 
                         <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <FieldLabel>primer_kmer_len <span className="text-destructive">*</span></FieldLabel>
+                            <FieldLabel>
+                              <span className="inline-flex items-center gap-1.5">
+                                Primer k-mer Length
+                                <a
+                                  href="https://github.com/CDCgov/MIRA-NF#:~:text=with%20this%20flag-,primer_kmer_len,-When%20primer_kmer_len%20is"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title="Learn more about primer_kmer_len"
+                                  className="text-muted-foreground hover:text-primary transition-colors"
+                                >
+                                  <ExternalLink size={13} />
+                                </a>
+                              </span>
+                              <span className="text-destructive"></span>
+                            </FieldLabel>
                             <input
                               type="number"
                               value={primerKmerLen}
                               onChange={(e) => setPrimerKmerLen(e.target.value)}
-                              placeholder="e.g. 25"
+                              placeholder="∀ p ∈ primer.fasta : |p|"
                               min={0}
-                              className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                              className="w-full max-w-[182px] h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                             />
                           </div>
                           <div>
-                            <FieldLabel>primer_restrict_window <span className="text-destructive">*</span></FieldLabel>
+                            <FieldLabel>
+                              <span className="inline-flex items-center gap-1.5">
+                                Search for primers within N bases of read ends
+                                <a
+                                  href="https://github.com/CDCgov/MIRA-NF#:~:text=reads)%20is%20performed.-,primer_restrict_window,-The%20N%20number"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title="Learn more about primer_restrict_window"
+                                  className="text-muted-foreground hover:text-primary transition-colors"
+                                >
+                                  <ExternalLink size={13} />
+                                </a>
+                              </span>
+                              <span className="text-destructive"></span>
+                            </FieldLabel>
                             <input
                               type="number"
                               value={primerRestrictWindow}
                               onChange={(e) => setPrimerRestrictWindow(e.target.value)}
                               placeholder="e.g. 30"
                               min={0}
-                              className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                              className="w-full max-w-[182px] h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                             />
                           </div>
                         </div>
@@ -2633,38 +2659,32 @@ function AssemblyTab() {
                     )}
 
                     {experimentType === "Flu-Illumina" && (
-                      <>
-                        <button
-                          onClick={() => setUseIrmaModule((v) => !v)}
-                          className="w-fit flex items-center justify-start gap-4 p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
-                        >
-                          <div>
-                            <p className="text-sm font-medium">IRMA Module</p>
-                            <p className="text-xs text-muted-foreground">When set to true, this flag will allow you to call flu-sensitive, flu-secondary or flu-utr IRMA module instead of the built-in flu configs.</p>
-                          </div>
-                          <span className={cn(
-                            "relative w-10 h-5 rounded-full transition-colors shrink-0 pointer-events-none",
-                            useIrmaModule ? "bg-primary" : "bg-muted"
-                          )}>
-                            <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform", useIrmaModule ? "translate-x-5" : "translate-x-0.5")} />
-                          </span>
-                        </button>
-
-                        {useIrmaModule && (
-                          <div>
-                            <select
-                              value={irmaModule}
-                              onChange={(e) => setIrmaModule(e.target.value)}
-                              className="w-full max-w-md h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      <div>
+                        <FieldLabel>
+                          <span className="inline-flex items-center gap-1.5">
+                            IRMA module
+                            <a
+                              href="https://wonder.cdc.gov/amd/flu/irma/modules.html"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Learn more about IRMA modules"
+                              className="text-muted-foreground hover:text-primary transition-colors"
                             >
-                              <option value="">— Select IRMA module —</option>
-                              <option value="secondary">secondary</option>
-                              <option value="sensitive">sensitive</option>
-                              <option value="utr">utr</option>
-                            </select>
-                          </div>
-                        )}
-                      </>
+                              <ExternalLink size={13} />
+                            </a>
+                          </span>
+                        </FieldLabel>
+                        <select
+                          value={irmaModule}
+                          onChange={(e) => setIrmaModule(e.target.value)}
+                          className="w-full max-w-md h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                        >
+                          <option value="">FLU (default)</option>
+                          <option value="secondary">secondary</option>
+                          <option value="sensitive">sensitive</option>
+                          <option value="utr">utr</option>
+                        </select>
+                      </div>
                     )}
 
                     
@@ -2673,9 +2693,17 @@ function AssemblyTab() {
                       onClick={() => setCreateParquet((v) => !v)}
                       className="w-fit flex items-center justify-start gap-4 p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
                     >
-                      <div>
-                        <p className="text-sm font-medium">Create Parquet Files</p>
-                        <p className="text-xs text-muted-foreground">When set to true, this flag will save the assembly outputs from CSV files to Parquet format for downstream analysis.</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-sm font-medium">Output Parquet</p>
+                        <span
+                          role="link"
+                          tabIndex={0}
+                          title="Learn more about Apache Parquet"
+                          onClick={(e) => { e.stopPropagation(); window.open("https://parquet.apache.org/", "_blank", "noopener,noreferrer"); }}
+                          className="text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+                        >
+                          <ExternalLink size={13} />
+                        </span>
                       </div>
                       <span className={cn(
                         "relative w-10 h-5 rounded-full transition-colors shrink-0 pointer-events-none",
@@ -2688,9 +2716,17 @@ function AssemblyTab() {
                       onClick={() => setNextclade((v) => !v)}
                       className="w-fit flex items-center justify-start gap-4 p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
                     >
-                      <div>
+                      <div className="flex items-center gap-1.5">
                         <p className="text-sm font-medium">Run Nextclade</p>
-                        <p className="text-xs text-muted-foreground">When set to true, this flag will run Nextclade with your passing samples.</p>
+                        <span
+                          role="link"
+                          tabIndex={0}
+                          title="Learn more about Nextclade"
+                          onClick={(e) => { e.stopPropagation(); window.open("https://github.com/nextstrain/nextclade", "_blank", "noopener,noreferrer"); }}
+                          className="text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+                        >
+                          <ExternalLink size={13} />
+                        </span>
                       </div>
                       <span className={cn(
                         "relative w-10 h-5 rounded-full transition-colors shrink-0 pointer-events-none",
