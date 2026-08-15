@@ -2510,9 +2510,9 @@ function AssemblyTab() {
                       <div className="flex-1 h-px bg-border" />
                     </div>
                     <div>
-                      <FieldLabel>Number of Subsamples <span className="text-destructive">*</span></FieldLabel>
+                      <FieldLabel>Number of reads to subsample <span className="text-destructive">*</span></FieldLabel>
                       <p className="text-xs text-muted-foreground mb-2 leading-relaxed">
-                        The number of reads used for subsampling. Set to <code className="font-mono bg-muted px-1 rounded">0</code> to skip subsampling.
+                        Set to <code className="font-mono bg-muted px-1 rounded">0</code> to skip subsampling.
                       </p>
                       <input
                         type="number"
@@ -2530,7 +2530,6 @@ function AssemblyTab() {
                     >
                       <div>
                         <p className="text-sm font-medium">Custom Primers</p>
-                        <p className="text-xs text-muted-foreground">When set to true, this flag will allow you to provide a custom primer FASTA file and its associated parameters.</p>
                       </div>
                       <span className={cn(
                         "relative w-10 h-5 rounded-full transition-colors shrink-0 pointer-events-none",
@@ -2668,167 +2667,7 @@ function AssemblyTab() {
                       </>
                     )}
 
-                    <button
-                      onClick={() => setUseCustomIrmaConfig((v) => !v)}
-                      className="w-fit flex items-center justify-start gap-4 p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
-                    >
-                      <div>
-                        <p className="text-sm font-medium">Custom IRMA Config</p>
-                        <p className="text-xs text-muted-foreground">When set to true, this flag will allow you to provide a custom IRMA config file to be used with IRMA assembly.</p>
-                      </div>
-                      <span className={cn(
-                        "relative w-10 h-5 rounded-full transition-colors shrink-0 pointer-events-none",
-                        useCustomIrmaConfig ? "bg-primary" : "bg-muted"
-                      )}>
-                        <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform", useCustomIrmaConfig ? "translate-x-5" : "translate-x-0.5")} />
-                      </span>
-                    </button>
-
-                    {useCustomIrmaConfig && (
-                      <div>
-                        {!isNewRun && loadedCustomIrmaConfigName && (
-                          <div className="mb-2 text-md text-muted-foreground">
-                            <p>
-                              Currently stored file:{" "}
-                              <button
-                                type="button"
-                                onClick={() => downloadCustomConfigFile(
-                                  `${API.downloadCustomIrmaConfig}?run_name=${encodeURIComponent(selectedRun?.run_name ?? runName)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type ?? experimentType)}`,
-                                  loadedCustomIrmaConfigName,
-                                  "irma"
-                                )}
-                                className="inline-flex items-center gap-1 font-mono text-primary hover:underline"
-                              >
-                                <Download size={11} className="shrink-0" />
-                                {loadedCustomIrmaConfigName}
-                              </button>
-                            </p>
-                            {customConfigDownloadError?.field === "irma" && (
-                              <p className="mt-1 flex items-center gap-1 text-xs text-destructive">
-                                <AlertCircle size={11} className="shrink-0" /> {customConfigDownloadError.message}
-                              </p>
-                            )}
-                          </div>
-                        )}
-                        <div className="flex gap-2 max-w-md">
-                          <input
-                            type="text"
-                            value={customIrmaConfig}
-                            onChange={(e) => setCustomIrmaConfig(e.target.value)}
-                            placeholder="e.g. custom_irma_config.sh"
-                            className="flex-1 h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                          />
-                          <label className="flex items-center gap-1.5 px-3 h-9 rounded-md border border-border bg-muted/20 hover:bg-muted/40 cursor-pointer text-xs text-muted-foreground transition-colors shrink-0">
-                            <FolderOpen size={13} /> Browse
-                            <input
-                              type="file"
-                              className="hidden"
-                              accept=".sh"
-                              onChange={(e) => {
-                                const f = e.target.files?.[0];
-                                if (f) {
-                                  if (!/\.sh$/i.test(f.name)) {
-                                    setIrmaConfigFileError("Custom IRMA Config file must be a shell script (.sh).");
-                                  } else {
-                                    setIrmaConfigFileError(null);
-                                    setCustomIrmaConfig(f.name);
-                                    setCustomIrmaConfigFile(f);
-                                    setCustomConfigDownloadError(null);
-                                  }
-                                }
-                                e.target.value = "";
-                              }}
-                            />
-                          </label>
-                        </div>
-                        {irmaConfigFileError && (
-                          <p className="mt-1 flex items-center gap-1 text-xs text-destructive">
-                            <AlertCircle size={11} className="shrink-0" /> {irmaConfigFileError}
-                          </p>
-                        )}
-                      </div>
-                    )}
-
-                    <button
-                      onClick={() => setUseCustomQcSettings((v) => !v)}
-                      className="w-fit flex items-center justify-start gap-4 p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
-                    >
-                      <div>
-                        <p className="text-sm font-medium">Custom QC Settings</p>
-                        <p className="text-xs text-muted-foreground">When set to true, this flag will allow you to provide a custom QC file with pass/fail settings for constructing the summary files.</p>
-                      </div>
-                      <span className={cn(
-                        "relative w-10 h-5 rounded-full transition-colors shrink-0 pointer-events-none",
-                        useCustomQcSettings ? "bg-primary" : "bg-muted"
-                      )}>
-                        <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform", useCustomQcSettings ? "translate-x-5" : "translate-x-0.5")} />
-                      </span>
-                    </button>
-
-                    {useCustomQcSettings && (
-                      <div>
-                        {!isNewRun && loadedCustomQcSettingsName && (
-                          <div className="mb-2 text-md text-muted-foreground">
-                            <p>
-                              Currently stored file:{" "}
-                              <button
-                                type="button"
-                                onClick={() => downloadCustomConfigFile(
-                                  `${API.downloadCustomQcSettings}?run_name=${encodeURIComponent(selectedRun?.run_name ?? runName)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type ?? experimentType)}`,
-                                  loadedCustomQcSettingsName,
-                                  "qc"
-                                )}
-                                className="inline-flex items-center gap-1 font-mono text-primary hover:underline"
-                              >
-                                <Download size={11} className="shrink-0" />
-                                {loadedCustomQcSettingsName}
-                              </button>
-                            </p>
-                            {customConfigDownloadError?.field === "qc" && (
-                              <p className="mt-1 flex items-center gap-1 text-xs text-destructive">
-                                <AlertCircle size={11} className="shrink-0" /> {customConfigDownloadError.message}
-                              </p>
-                            )}
-                          </div>
-                        )}
-                        <div className="flex gap-2 max-w-md">
-                          <input
-                            type="text"
-                            value={customQcSettings}
-                            onChange={(e) => setCustomQcSettings(e.target.value)}
-                            placeholder="e.g. custom_qc_settings.yaml"
-                            className="flex-1 h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                          />
-                          <label className="flex items-center gap-1.5 px-3 h-9 rounded-md border border-border bg-muted/20 hover:bg-muted/40 cursor-pointer text-xs text-muted-foreground transition-colors shrink-0">
-                            <FolderOpen size={13} /> Browse
-                            <input
-                              type="file"
-                              className="hidden"
-                              accept=".yaml,.yml"
-                              onChange={(e) => {
-                                const f = e.target.files?.[0];
-                                if (f) {
-                                  if (!/\.(yaml|yml)$/i.test(f.name)) {
-                                    setQcSettingsFileError("Custom QC Settings file must be a YAML file (.yaml or .yml).");
-                                  } else {
-                                    setQcSettingsFileError(null);
-                                    setCustomQcSettings(f.name);
-                                    setCustomQcSettingsFile(f);
-                                    setCustomConfigDownloadError(null);
-                                  }
-                                }
-                                e.target.value = "";
-                              }}
-                            />
-                          </label>
-                        </div>
-                        {qcSettingsFileError && (
-                          <p className="mt-1 flex items-center gap-1 text-xs text-destructive">
-                            <AlertCircle size={11} className="shrink-0" /> {qcSettingsFileError}
-                          </p>
-                        )}
-                      </div>
-                    )}
+                    
 
                     <button
                       onClick={() => setCreateParquet((v) => !v)}
