@@ -491,7 +491,7 @@ function StepHeader({ icon: Icon, title, subtitle, open }) {
 }
 
 function StepPanel({ children }) {
-  return <div className="px-4 pb-4 pt-2 space-y-4">{children}</div>;
+  return <div className="flex flex-col items-center px-4 pb-4 pt-2 space-y-4">{children}</div>;
 }
 
 function FieldLabel({ children }) {
