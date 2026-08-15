@@ -964,6 +964,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
 
   const [isNewRun, setIsNewRun]                       = useState(true);   // true = new run, false = loaded existing run
   const [confirmRemoveIdx, setConfirmRemoveIdx]       = useState(null); // index of sample row pending removal confirmation
+  const [ontConfirmFiles, setOntConfirmFiles]         = useState(null); // [{ file, name }] awaiting confirmation when no flowcell-ID files were found
+  const [ontConfirmSelected, setOntConfirmSelected]   = useState(() => new Set()); // sanitized filenames checked in the confirm dialog
   const [uploadOntFastq, setUploadOntFastq]           = useState([]);      // list of sanitized ONT fastq filenames uploaded this session
   const [uploadOntError, setUploadOntError]           = useState(null);   // file-naming validation errors for ONT uploads
   const [uploadIlluminaFastq, setUploadIlluminaFastq] = useState([]); // list of sanitized Illumina fastq filenames uploaded this session
@@ -1328,6 +1330,89 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   const fastqFileInputRef = useRef(null);
   const [fastqDragOver, setFastqDragOver] = useState(false);
 
+  // Populate the ONT sample sheet from parallel arrays of File objects and their
+  // sanitized filenames. Shared by the normal (flowcell-ID prefixed) path and the
+  // user-confirmed path for files that lack a flowcell ID.
+  const processOntFiles = useCallback((ontFiles, ontSanitized) => {
+    // Validate: ONT filenames must contain barcode##
+    const invalidFiles = ontSanitized.filter(fname => !/barcode\d+/i.test(fname));
+    if (invalidFiles.length > 0) {
+      setUploadOntError({ items: [`For ONT run, the FASTQ files must contain a barcode pattern (barcode##) in their filenames.`], missing: [...invalidFiles] });
+      return;
+    } else {
+      setUploadOntError(null);
+    }
+
+    // Store File objects keyed by sanitized filename
+    const fileMap = {};
+    ontFiles.forEach((f, i) => { fileMap[ontSanitized[i]] = f; });
+    setUploadedOntFileObjects(prev => ({ ...prev, ...fileMap }));
+
+    // Group ONT files by barcode extracted from filename
+    const grouped = {};
+    ontSanitized.forEach(fname => {
+      const match = fname.match(/_barcode(\d+)_/i);
+      const barcode = match
+        ? `barcode${String(parseInt(match[1])).padStart(2, "0")}`
+        : fname.replace(/\.(fastq|fq)(\.gz)?$/i, "");
+      if (!grouped[barcode]) grouped[barcode] = [];
+      grouped[barcode].push(fname);
+    });
+
+    // Sort barcodes ascending (barcode01, barcode02, ...)
+    const sortedBarcodes = Object.keys(grouped).sort((a, b) => {
+      const na = parseInt(a.match(/\d+/)?.[0] ?? "0");
+      const nb = parseInt(b.match(/\d+/)?.[0] ?? "0");
+      return na - nb;
+    });
+
+    // Continue sample numbering after existing rows
+    const existingNums = ontSampleRows
+      .map(r => parseInt(r.sample_id.replace(/\D+/g, "") || "0"))
+      .filter(Boolean);
+    let sampleCounter = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
+
+    // Build one row per sample (barcode); each row's fastq is a list of filenames.
+    const allPotentialRows = sortedBarcodes.map(barcode => {
+      const existingByBarcode = ontSampleRows.find(r => r.barcode === barcode);
+      const sample_id = existingByBarcode ? existingByBarcode.sample_id : `sample_${sampleCounter++}`;
+      const sample_type = existingByBarcode ? existingByBarcode.sample_type : "Test";
+      const status = existingByBarcode ? existingByBarcode.status : "Keep";
+      // Merge any already-present fastqs for this sample with the newly uploaded ones
+      const existingFastqs = existingByBarcode && Array.isArray(existingByBarcode.fastq) ? existingByBarcode.fastq : [];
+      const fastq = [...new Set([...existingFastqs, ...grouped[barcode]])].sort((a, b) => a.localeCompare(b));
+      return {
+        barcode: barcode,
+        sample_id: sample_id,
+        sample_type: sample_type,
+        single_end: "true",
+        fastq: fastq,
+        status: status
+      };
+    });
+
+    // Update existing sample rows in place (matched by barcode) and append new ones
+    setOntSampleRows(prev => {
+      const byBarcode = new Map(allPotentialRows.map(r => [r.barcode, r]));
+      const updated = prev.map(r => byBarcode.has(r.barcode) ? { ...r, ...byBarcode.get(r.barcode) } : r);
+      const ontNewRows = allPotentialRows.filter(r => !prev.some(e => e.barcode === r.barcode));
+      return ontNewRows.length > 0 ? [...updated, ...ontNewRows] : updated;
+    });
+
+    // Accumulate uploaded ONT fastq filenames
+    setUploadOntFastq(prev => [...new Set([...prev, ...ontSanitized])]);
+  }, [ontSampleRows]);
+
+  // Confirm using the FASTQ files that were found when none carried a flowcell ID —
+  // processes only the files the user checked in the dialog, then closes it.
+  const confirmOntFilesWithoutFlowcell = useCallback(() => {
+    setOntConfirmFiles(prev => {
+      const chosen = (prev ?? []).filter(({ name }) => ontConfirmSelected.has(name));
+      if (chosen.length > 0) processOntFiles(chosen.map(c => c.file), chosen.map(c => c.name));
+      return null;
+    });
+  }, [ontConfirmSelected, processOntFiles]);
+
   const handleIncomingFastqFiles = useCallback((files) => {
     if (!files.length) return;
 
@@ -1349,86 +1434,24 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     if (isOnt) {
 
       // Ignore any files that don't start with an apparent ONT flowcell ID.
-      // MinKNOW names its outputs "<FLOWCELL>_..." (e.g. FAP12345_..., PAM11162_...);
-      // files not beginning with a flowcell ID are silently skipped.
+      // MinKNOW names its outputs "<FLOWCELL>_..." (e.g. FAP12345_..., PAM11162_...).
       const ONT_FLOWCELL_RE = /^[A-Za-z]{3}\d{3,}/;
       const ontKeep = sanitized
         .map((name, i) => (ONT_FLOWCELL_RE.test(name) ? i : -1))
         .filter(i => i >= 0);
       const ontFiles = ontKeep.map(i => files[i]);
       const ontSanitized = ontKeep.map(i => sanitized[i]);
+
+      // No flowcell-ID-prefixed files were found — rather than rejecting outright,
+      // surface every FASTQ that WAS found and let the user opt in to using them.
       if (ontSanitized.length === 0) {
-        setUploadOntError({ items: [`No ONT FASTQ files were found — filenames must start with a flowcell ID (e.g. FAP12345_...).`], missing: [] });
-        return;
-      }
-
-      // Validate: ONT filenames must contain _barcode##_
-      const invalidFiles = ontSanitized.filter(fname => !/_barcode\d+_/i.test(fname));
-      if (invalidFiles.length > 0) {
-        setUploadOntError({ items: [`For ONT run, the FASTQ files must contain a barcode pattern (_barcode##_) in their filenames.`], missing: [...invalidFiles] });
-        return;
-      } else {
         setUploadOntError(null);
+        setOntConfirmFiles(files.map((f, i) => ({ file: f, name: sanitized[i] })));
+        setOntConfirmSelected(new Set(sanitized));
+        return;
       }
 
-      // Store File objects keyed by sanitized filename
-      const fileMap = {};
-      ontFiles.forEach((f, i) => { fileMap[ontSanitized[i]] = f; });
-      setUploadedOntFileObjects(prev => ({ ...prev, ...fileMap }));
-
-      // Group ONT files by barcode extracted from filename
-      const grouped = {};
-      ontSanitized.forEach(fname => {
-        const match = fname.match(/_barcode(\d+)_/i);
-        const barcode = match
-          ? `barcode${String(parseInt(match[1])).padStart(2, "0")}`
-          : fname.replace(/\.(fastq|fq)(\.gz)?$/i, "");
-        if (!grouped[barcode]) grouped[barcode] = [];
-        grouped[barcode].push(fname);
-      });
-
-      // Sort barcodes ascending (barcode01, barcode02, ...)
-      const sortedBarcodes = Object.keys(grouped).sort((a, b) => {
-        const na = parseInt(a.match(/\d+/)?.[0] ?? "0");
-        const nb = parseInt(b.match(/\d+/)?.[0] ?? "0");
-        return na - nb;
-      });
-
-      // Continue sample numbering after existing rows
-      const existingNums = ontSampleRows
-        .map(r => parseInt(r.sample_id.replace(/\D+/g, "") || "0"))
-        .filter(Boolean);
-      let sampleCounter = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
-
-      // Build one row per sample (barcode); each row's fastq is a list of filenames.
-      const allPotentialRows = sortedBarcodes.map(barcode => {
-        const existingByBarcode = ontSampleRows.find(r => r.barcode === barcode);
-        const sample_id = existingByBarcode ? existingByBarcode.sample_id : `sample_${sampleCounter++}`;
-        const sample_type = existingByBarcode ? existingByBarcode.sample_type : "Test";
-        const status = existingByBarcode ? existingByBarcode.status : "Keep";
-        // Merge any already-present fastqs for this sample with the newly uploaded ones
-        const existingFastqs = existingByBarcode && Array.isArray(existingByBarcode.fastq) ? existingByBarcode.fastq : [];
-        const fastq = [...new Set([...existingFastqs, ...grouped[barcode]])].sort((a, b) => a.localeCompare(b));
-        return {
-          barcode: barcode,
-          sample_id: sample_id,
-          sample_type: sample_type,
-          single_end: "true",
-          fastq: fastq,
-          status: status
-        };
-      });
-
-      // Update existing sample rows in place (matched by barcode) and append new ones
-      setOntSampleRows(prev => {
-        const byBarcode = new Map(allPotentialRows.map(r => [r.barcode, r]));
-        const updated = prev.map(r => byBarcode.has(r.barcode) ? { ...r, ...byBarcode.get(r.barcode) } : r);
-        const ontNewRows = allPotentialRows.filter(r => !prev.some(e => e.barcode === r.barcode));
-        return ontNewRows.length > 0 ? [...updated, ...ontNewRows] : updated;
-      });
-
-      // Accumulate uploaded ONT fastq filenames
-      setUploadOntFastq(prev => [...new Set([...prev, ...ontSanitized])]);
+      processOntFiles(ontFiles, ontSanitized);
 
     } else {
 
@@ -1511,7 +1534,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       setUploadIlluminaFastq(prev => [...new Set([...prev, ...sanitized])]);
 
     }
-  }, [experimentType, ontSampleRows, illuminaSampleRows]);
+  }, [experimentType, ontSampleRows, illuminaSampleRows, processOntFiles]);
 
   // Ref-based (synchronous) guard against double-submission — React state updates
   // (e.g. `submitting`) are batched, so a fast double-click can invoke submitAssembly
@@ -1675,6 +1698,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     setEditActionLoading(false);
     setEditActionError(null);
     setConfirmRemoveIdx(null);
+    setOntConfirmFiles(null);
+    setOntConfirmSelected(new Set());
     setShowDAG(false);
     setFastqDragOver(false);
     setUploadOntError(null);
@@ -1774,6 +1799,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     setSampleSearch("");
     setSortConfig({ key: "sample_id", dir: "asc" });
     setConfirmRemoveIdx(null);
+    setOntConfirmFiles(null);
+    setOntConfirmSelected(new Set());
     // Run / processing / results context — start fresh
     setIsNewRun(true);
     setSelectedRun(null);
@@ -4261,6 +4288,64 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
           </div>
         </div>
       )}
+
+      {/* ── ONT files without flowcell ID confirmation modal ────────────── */}
+      {ontConfirmFiles !== null && (() => {
+        const allSelected = ontConfirmFiles.length > 0 && ontConfirmFiles.every(({ name }) => ontConfirmSelected.has(name));
+        const toggleName = (name) => setOntConfirmSelected(prev => {
+          const next = new Set(prev);
+          next.has(name) ? next.delete(name) : next.add(name);
+          return next;
+        });
+        const toggleAll = () => setOntConfirmSelected(allSelected ? new Set() : new Set(ontConfirmFiles.map(f => f.name)));
+        return (
+          <div onClick={() => setOntConfirmFiles(null)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div onClick={(e) => e.stopPropagation()} className="bg-background border border-border rounded-xl p-6 max-w-lg w-full mx-4 shadow-xl flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-bold text-foreground">No Flowcell ID Detected</h3>
+                <button onClick={() => setOntConfirmFiles(null)} className="text-muted-foreground hover:text-foreground transition-colors">
+                  <X size={16} />
+                </button>
+              </div>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                None of the uploaded FASTQ files start with a flowcell ID (e.g. <span className="font-mono">FAP12345_…</span>).
+                Select the files you want to use anyway — they must still contain a barcode pattern
+                (<span className="font-mono">_barcode##_</span>) to populate the sample sheet.
+              </p>
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 text-sm font-medium text-foreground cursor-pointer">
+                  <input type="checkbox" checked={allSelected} onChange={toggleAll} className="accent-primary" />
+                  Select all
+                </label>
+                <span className="text-xs text-muted-foreground">{ontConfirmSelected.size} of {ontConfirmFiles.length} selected</span>
+              </div>
+              <div className="rounded-lg border border-border divide-y divide-border max-h-64 overflow-y-auto">
+                {ontConfirmFiles.map(({ name }) => (
+                  <label key={name} className="flex items-center gap-2 px-3 py-2 text-xs font-mono cursor-pointer hover:bg-muted/40 transition-colors">
+                    <input type="checkbox" checked={ontConfirmSelected.has(name)} onChange={() => toggleName(name)} className="accent-primary shrink-0" />
+                    <span className="break-all">{name}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="flex gap-3 justify-end pt-1">
+                <button
+                  onClick={() => setOntConfirmFiles(null)}
+                  className="px-5 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:bg-muted/60 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmOntFilesWithoutFlowcell}
+                  disabled={ontConfirmSelected.size === 0}
+                  className="flex items-center gap-1.5 px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Check size={13} /> Use Selected
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Confirm Remove Sample modal ────────────── */}
       {confirmRemoveIdx !== null && (() => {
