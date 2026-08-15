@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense, Fragment } from "react";
+import { createPortal } from "react-dom";
 const Plot = lazy(() => import("react-plotly.js"));
 import ShaderAura from "./ShaderAura";
 import {
@@ -60,11 +61,15 @@ function cn(...classes) {
 }
 
 /* ── recursively read a dropped folder's contents via the FileSystem entry API ── */
+// Only these FASTQ file types are collected from a drop (files and folders alike).
+const FASTQ_FILENAME_RE = /\.(fastq|fq)(\.gz)?$/i;
+
+// Fully drain a directory reader: readEntries() only returns a batch (≤100) per
+// call, so keep calling until it returns an empty batch to get every child entry.
 function readAllDirectoryEntries(reader) {
   return new Promise((resolve, reject) => {
     const allEntries = [];
     const readBatch = () => {
-      // readEntries() only returns a batch at a time — keep calling until it returns empty
       reader.readEntries((entries) => {
         if (!entries.length) { resolve(allEntries); return; }
         allEntries.push(...entries);
@@ -75,26 +80,44 @@ function readAllDirectoryEntries(reader) {
   });
 }
 
-async function collectFilesFromEntry(entry, out) {
-  if (!entry) return;
-  if (entry.isFile) {
-    const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
-    out.push(file);
-  } else if (entry.isDirectory) {
-    const entries = await readAllDirectoryEntries(entry.createReader());
-    for (const child of entries) await collectFilesFromEntry(child, out);
+// Read a single file entry into a File object.
+function fileFromEntry(entry) {
+  return new Promise((resolve, reject) => entry.file(resolve, reject));
+}
+
+// Walk an arbitrarily deep tree of FileSystem entries (files + directories),
+// collecting every file at any depth. Uses an explicit stack so deeply-nested
+// folders can't overflow the call stack, and drains each directory completely.
+async function collectFilesFromEntry(rootEntry, out) {
+  if (!rootEntry) return;
+  const stack = [rootEntry];
+  while (stack.length) {
+    const entry = stack.pop();
+    if (!entry) continue;
+    if (entry.isFile) {
+      // Only collect FASTQ files; ignore everything else in the tree.
+      if (FASTQ_FILENAME_RE.test(entry.name)) out.push(await fileFromEntry(entry));
+    } else if (entry.isDirectory) {
+      const children = await readAllDirectoryEntries(entry.createReader());
+      // Push all children (files and subdirectories) so they're visited too.
+      for (const child of children) stack.push(child);
+    }
   }
 }
 
-// Supports a drop containing a mix of loose files and whole folders in one gesture
+// Supports a drop containing a mix of loose files and whole folders (at any depth)
+// in one gesture. Entries must be captured synchronously from the drop event before
+// any await, otherwise the DataTransferItem entries become invalid.
 async function collectFilesFromDataTransfer(dataTransfer) {
   const items = dataTransfer.items;
   const out = [];
   if (items && items.length && typeof items[0].webkitGetAsEntry === "function") {
+    // Capture every entry synchronously first (before awaiting anything).
     const entries = Array.from(items).map((item) => item.webkitGetAsEntry()).filter(Boolean);
+    // Then walk each captured entry tree exhaustively.
     for (const entry of entries) await collectFilesFromEntry(entry, out);
   } else {
-    out.push(...Array.from(dataTransfer.files || []));
+    out.push(...Array.from(dataTransfer.files || []).filter((f) => FASTQ_FILENAME_RE.test(f.name)));
   }
   return out;
 }
@@ -206,15 +229,13 @@ function DropdownItem({ onClick, icon: Icon, children }) {
 const TABS = [
   { id: "home",       label: "Home",       icon: Home },
   { id: "assembly",   label: "Mira",   icon: Dna },
-  { id: "seqsender",  label: "SeqSender",  icon: Send },
-  { id: "resources",  label: "Resources",  icon: BookOpen },
 ];
 
 /* ── Home Tab ────────────────────────────────────── */
 const STATS = [
-  { label: "Sequencing Runs",          value: "1,284",  sub: "successfully completed",  icon: Cpu,        color: "text-primary"     },
-  { label: "Sequences to NCBI",        value: "48,312", sub: "GenBank + SRA combined",  icon: Database,   color: "text-sky-600"     },
-  { label: "Sequences to GISAID",      value: "31,047", sub: "EpiFlu + EpiCoV",         icon: Database,   color: "text-emerald-600" },
+  { label: "Sequencing Runs",          value: "1,284",  sub: "Click here to see past runs",  icon: Cpu,        color: "text-teal-600"     },
+  { label: "Sequences to NCBI",        value: "48,312", sub: "GenBank + SRA combined",  icon: Database,   color: "text-purple-500"     },
+  { label: "Sequences to GISAID",      value: "31,047", sub: "EpiFlu + EpiCoV",         icon: Database,   color: "text-purple-500" },
 ];
 
 const FEATURES = [
@@ -289,7 +310,7 @@ function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, u
           <h3 className="text-sm font-bold tracking-wide text-foreground truncate">{title}</h3>
         </div>
         <div className="text-right shrink-0">
-          <p className="text-lg font-bold text-primary leading-none">{statValue}</p>
+          <p className="text-lg font-bold leading-none" style={{ color }}>{statValue}</p>
           <p className="text-[10px] text-muted-foreground">{statLabel}</p>
         </div>
       </div>
@@ -348,7 +369,7 @@ function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, u
   );
 }
 
-function HomeTab() {
+function HomeTab({ onNewRun, onLoadRun }) {
   const [runCount, setRunCount] = useState(null);
 
   useEffect(() => {
@@ -364,8 +385,8 @@ function HomeTab() {
     return () => { cancelled = true; };
   }, []);
 
-  const medSegments = median(SEGMENTS_PER_SAMPLE_TREND.flatMap((d) => d.samples)).toFixed(1);
-  const medTurnaround = median(TURNAROUND_TREND.flatMap((d) => d.samples)).toFixed(1);
+  const medSegments = Math.round(median(SEGMENTS_PER_SAMPLE_TREND.flatMap((d) => d.samples)));
+  const medTurnaround = Math.round(median(TURNAROUND_TREND.flatMap((d) => d.samples)));
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -376,20 +397,42 @@ function HomeTab() {
       <div className="flex-1 overflow-hidden p-4 grid grid-cols-2 grid-rows-[auto_minmax(0,1fr)] gap-4">
 
         {/* ── Stats row — spans both columns ─────── */}
-        <div className="col-span-2 grid grid-cols-3 gap-3">
-          {STATS.map(({ label, value, sub, icon: Icon, color }) => {
+        <div className="col-span-2 grid grid-cols-7 gap-3">
+          {/* ── New Run card-button ── */}
+          <button
+            onClick={onNewRun}
+            className="col-start-1 rounded-xl border border-emerald-400 bg-emerald-100 hover:bg-emerald-300 text-gray-600 px-4 py-3 flex items-center gap-3 transition-colors text-left"
+          >
+            <PlusCircle size={22} className="shrink-0" />
+            <div>
+              <p className="text-xl font-bold leading-none">New Run</p>
+
+            </div>
+          </button>
+          {STATS.map(({ label, value, sub, icon: Icon, color }, i) => {
             const displayValue = label === "Sequencing Runs"
               ? (runCount === null ? "…" : runCount.toLocaleString())
               : value;
-            return (
-              <div key={label} className="rounded-xl border border-border bg-card px-4 py-3 flex items-center gap-3">
+            const isRuns = label === "Sequencing Runs";
+            const cardClass = cn(
+              "rounded-xl border border-border bg-card px-4 py-3 flex items-center gap-3",
+              ["col-start-2", "col-start-6", "col-start-7"][i],
+              isRuns && "text-left hover:bg-muted/40 transition-colors"
+            );
+            const inner = (
+              <>
                 <Icon size={22} className={`${color} shrink-0`} />
                 <div>
                   <p className={`text-xl font-bold leading-none ${color}`}>{displayValue}</p>
                   <p className="text-xs font-semibold text-foreground mt-0.5">{label}</p>
                   <p className="text-xs text-muted-foreground">{sub}</p>
                 </div>
-              </div>
+              </>
+            );
+            return isRuns ? (
+              <button key={label} onClick={onLoadRun} className={cardClass}>{inner}</button>
+            ) : (
+              <div key={label} className={cardClass}>{inner}</div>
             );
           })}
         </div>
@@ -401,21 +444,21 @@ function HomeTab() {
           statValue={medSegments}
           statLabel="median segments / sample"
           data={SEGMENTS_PER_SAMPLE_TREND}
-          color="#722161"
+          color="#0081A1"
           unit="segments"
-          yTitle="Segments per sample"
+          yTitle="Segment Count"
         />
 
         {/* ── Turnaround time over time ─────── */}
         <HomeChartCard
           icon={Clock}
           title="Turnaround Time"
-          statValue={`${medTurnaround}d`}
+          statValue={`${medTurnaround} days`}
           statLabel="median days: submission − collection"
           data={TURNAROUND_TREND}
-          color="#0081A1"
+          color="#722161"
           unit="days"
-          yTitle="Turnaround (days)"
+          yTitle="Days"
         />
 
       </div>
@@ -425,10 +468,11 @@ function HomeTab() {
 
 /* ── Assembly Tab ────────────────────────────────── */
 const ASSEMBLY_STEPS = [
-  { id: "setup",    title: "STEP 1: Mira SETUP",  subtitle: "Define run, configure sample sheet, and set assembly parameters", icon: Upload },
-  { id: "progress", title: "STEP 2: PROCESSING",  subtitle: "Monitor assembly progress and stage status",                      icon: RefreshCw },
-  { id: "results",  title: "STEP 3: RESULTS",     subtitle: "Assembly statistics, QC decisions, and coverage plots",           icon: BarChart3 },
-  { id: "export",   title: "STEP 4: EXPORT",      subtitle: "Download FASTA outputs from the assembly run",                    icon: Download },
+  { id: "setup",    title: "Step 1: Setup",  subtitle: "Define run, configure sample sheet, and set assembly parameters", icon: Upload },
+  { id: "progress", title: "Step 2: Processing",  subtitle: "Monitor assembly progress and stage status",                      icon: RefreshCw },
+  { id: "results",  title: "Step 3: Results",     subtitle: "Assembly statistics, QC decisions, and coverage plots",           icon: BarChart3 },
+  { id: "export",   title: "Step 4: Export",      subtitle: "Download FASTA outputs from the assembly run",                    icon: Download },
+  { id: "seqsender", title: "Step 5: SeqSender",  subtitle: "Submit assembled sequences to NCBI & GISAID databases",           icon: Send },
 ];
 
 function StepHeader({ icon: Icon, title, subtitle, open }) {
@@ -712,7 +756,68 @@ function EmptyResultTable({ title, message = "There is no data returned from thi
   );
 }
 
-function AssemblyTab() {
+// ONT samplesheet fastq cell: shows the sample's fastq list truncated on one line,
+// and a styled, scrollable hover card listing every file with a count header.
+function OntFastqCell({ fastqList, uploadedMap }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const anchorRef = useRef(null);
+  const hideTimer = useRef(null);
+
+  const anyUploaded = fastqList.some(fq => uploadedMap[fq]);
+
+  const openCard = () => {
+    clearTimeout(hideTimer.current);
+    const el = anchorRef.current;
+    if (el) {
+      const r = el.getBoundingClientRect();
+      setPos({ top: r.bottom, left: r.left });
+    }
+    setOpen(true);
+  };
+  const scheduleHide = () => {
+    clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => setOpen(false), 120);
+  };
+  useEffect(() => () => clearTimeout(hideTimer.current), []);
+
+  return (
+    <span
+      ref={anchorRef}
+      onMouseEnter={openCard}
+      onMouseLeave={scheduleHide}
+      className="relative flex items-center gap-1 max-w-[300px] cursor-default"
+    >
+      {anyUploaded && <Upload size={10} className="text-emerald-500 shrink-0" />}
+      <span className="block truncate">{fastqList.join(", ")}</span>
+      {open && fastqList.length > 0 && createPortal(
+        <div
+          onMouseEnter={openCard}
+          onMouseLeave={scheduleHide}
+          style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 60 }}
+          className="w-[380px] max-w-[80vw] rounded-lg border border-border bg-popover text-popover-foreground shadow-xl overflow-hidden"
+        >
+          <div className="px-3 py-2 border-b border-border bg-muted/40">
+            <span className="text-xs font-semibold text-foreground">
+              {fastqList.length} FASTQ file{fastqList.length === 1 ? "" : "s"} to concatenate during processing
+            </span>
+          </div>
+          <div className="max-h-[220px] overflow-y-auto p-1.5 space-y-0.5 scrollbar-thin">
+            {fastqList.map((fq, fi) => (
+              <div key={fi} className="flex items-center gap-1.5 px-1.5 py-0.5 text-xs font-mono text-foreground">
+                {uploadedMap[fq] && <Upload size={9} className="text-emerald-500 shrink-0" title="Uploaded this session" />}
+                <span className="break-all">{fq}</span>
+              </div>
+            ))}
+          </div>
+        </div>,
+        document.body
+      )}
+    </span>
+  );
+}
+
+function AssemblyTab({ loadRunSignal, setHeaderHidden }) {
   const [openStep, setOpenStep]                           = useState(() => new Set(ASSEMBLY_STEPS.map((s) => s.id)));
   const [runName, setRunName]                             = useState("");
   const [experimentType, setExperimentType]               = useState("");
@@ -1055,22 +1160,42 @@ function AssemblyTab() {
 
     // Loaded run: sample is already persisted, delete it from the database first
     try {
-      const res = await fetch(API.deleteSample, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          run_name: runName,
-          experiment_type: experimentType,
-          sample_id: sample.sample_id,
-          fastq: isOnt ? sample.fastq : null,
-          fastq_1: isOnt ? null : sample.fastq_1,
-          fastq_2: isOnt ? null : sample.fastq_2,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
-      if (isOnt) setOntSampleRows((prev) => prev.filter((_, i) => i !== idx));
-      else setIlluminaSampleRows((prev) => prev.filter((_, i) => i !== idx));
+      if (isOnt) {
+        // ONT rows are one-per-sample with a list of fastqs; delete each fastq row from the DB
+        for (const fq of (Array.isArray(sample.fastq) ? sample.fastq : [])) {
+          const res = await fetch(API.deleteSample, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              run_name: runName,
+              experiment_type: experimentType,
+              sample_id: sample.sample_id,
+              fastq: fq,
+              fastq_1: null,
+              fastq_2: null,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
+        }
+        setOntSampleRows((prev) => prev.filter((_, i) => i !== idx));
+      } else {
+        const res = await fetch(API.deleteSample, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            run_name: runName,
+            experiment_type: experimentType,
+            sample_id: sample.sample_id,
+            fastq: null,
+            fastq_1: sample.fastq_1,
+            fastq_2: sample.fastq_2,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
+        setIlluminaSampleRows((prev) => prev.filter((_, i) => i !== idx));
+      }
     } catch (err) {
       setSubmitError({ title: "Remove Sample Error", items: [err.message || "Failed to remove sample from the database."], missing: null });
     }
@@ -1092,10 +1217,11 @@ function AssemblyTab() {
     const headers = isOnt
       ? ["barcode", "sample_id", "sample_type", "single_end", "fastq", "status"]
       : ["sample_id", "sample_type", "single_end", "fastq_1", "fastq_2", "status"];
-    const data = activeRows.map(row => isOnt
-      ? [row.barcode, row.sample_id, row.sample_type, row.single_end, row.fastq, row.status]
-      : [row.sample_id, row.sample_type, row.single_end, row.fastq_1, row.fastq_2, row.status]
-    );
+    const data = isOnt
+      ? activeRows.flatMap(row => (Array.isArray(row.fastq) ? row.fastq : [row.fastq]).map(fq =>
+          [row.barcode, row.sample_id, row.sample_type, row.single_end, fq, row.status]
+        ))
+      : activeRows.map(row => [row.sample_id, row.sample_type, row.single_end, row.fastq_1, row.fastq_2, row.status]);
     const fname = selectedRun?.run_name || "samplesheet";
     if (format === "csv") {
       const csv = [headers, ...data]
@@ -1146,8 +1272,22 @@ function AssemblyTab() {
     // Validate filenames based on experiment type
     if (isOnt) {
 
+      // Ignore any files that don't start with an apparent ONT flowcell ID.
+      // MinKNOW names its outputs "<FLOWCELL>_..." (e.g. FAP12345_..., PAM11162_...);
+      // files not beginning with a flowcell ID are silently skipped.
+      const ONT_FLOWCELL_RE = /^[A-Za-z]{3}\d{3,}/;
+      const ontKeep = sanitized
+        .map((name, i) => (ONT_FLOWCELL_RE.test(name) ? i : -1))
+        .filter(i => i >= 0);
+      const ontFiles = ontKeep.map(i => files[i]);
+      const ontSanitized = ontKeep.map(i => sanitized[i]);
+      if (ontSanitized.length === 0) {
+        setUploadOntError({ items: [`No ONT FASTQ files were found — filenames must start with a flowcell ID (e.g. FAP12345_...).`], missing: [] });
+        return;
+      }
+
       // Validate: ONT filenames must contain _barcode##_
-      const invalidFiles = sanitized.filter(fname => !/_barcode\d+_/i.test(fname));
+      const invalidFiles = ontSanitized.filter(fname => !/_barcode\d+_/i.test(fname));
       if (invalidFiles.length > 0) {
         setUploadOntError({ items: [`For ONT run, the FASTQ files must contain a barcode pattern (_barcode##_) in their filenames.`], missing: [...invalidFiles] });
         return;
@@ -1157,12 +1297,12 @@ function AssemblyTab() {
 
       // Store File objects keyed by sanitized filename
       const fileMap = {};
-      files.forEach((f, i) => { fileMap[sanitized[i]] = f; });
+      ontFiles.forEach((f, i) => { fileMap[ontSanitized[i]] = f; });
       setUploadedOntFileObjects(prev => ({ ...prev, ...fileMap }));
 
       // Group ONT files by barcode extracted from filename
       const grouped = {};
-      sanitized.forEach(fname => {
+      ontSanitized.forEach(fname => {
         const match = fname.match(/_barcode(\d+)_/i);
         const barcode = match
           ? `barcode${String(parseInt(match[1])).padStart(2, "0")}`
@@ -1184,40 +1324,35 @@ function AssemblyTab() {
         .filter(Boolean);
       let sampleCounter = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
 
-      const allPotentialRows = [];
-      sortedBarcodes.forEach(barcode => {
+      // Build one row per sample (barcode); each row's fastq is a list of filenames.
+      const allPotentialRows = sortedBarcodes.map(barcode => {
         const existingByBarcode = ontSampleRows.find(r => r.barcode === barcode);
         const sample_id = existingByBarcode ? existingByBarcode.sample_id : `sample_${sampleCounter++}`;
         const sample_type = existingByBarcode ? existingByBarcode.sample_type : "Test";
-        grouped[barcode].forEach(fname => {
-          // Look up status by the specific fastq file first; fall back to barcode-level row
-          const existingByFastq = ontSampleRows.find(r => r.fastq === fname);
-          const status = existingByFastq ? existingByFastq.status : (existingByBarcode ? existingByBarcode.status : "Keep");
-          allPotentialRows.push({
-            barcode: barcode,
-            sample_id: sample_id,
-            sample_type: sample_type,
-            single_end: "true",
-            fastq: fname,
-            status: status
-          });
-        });
+        const status = existingByBarcode ? existingByBarcode.status : "Keep";
+        // Merge any already-present fastqs for this sample with the newly uploaded ones
+        const existingFastqs = existingByBarcode && Array.isArray(existingByBarcode.fastq) ? existingByBarcode.fastq : [];
+        const fastq = [...new Set([...existingFastqs, ...grouped[barcode]])].sort((a, b) => a.localeCompare(b));
+        return {
+          barcode: barcode,
+          sample_id: sample_id,
+          sample_type: sample_type,
+          single_end: "true",
+          fastq: fastq,
+          status: status
+        };
       });
 
-      // Overwrite existing rows with matching fastq and add new ones
-      const ontNewRows = allPotentialRows.filter(r => !ontSampleRows.some(e => e.fastq === r.fastq));
-      const ontUpdates = allPotentialRows.filter(r => ontSampleRows.some(e => e.fastq === r.fastq));
-
+      // Update existing sample rows in place (matched by barcode) and append new ones
       setOntSampleRows(prev => {
-        const updated = prev.map(r => {
-          const u = ontUpdates.find(m => m.fastq === r.fastq);
-          return u ? { ...r, ...u } : r;
-        });
+        const byBarcode = new Map(allPotentialRows.map(r => [r.barcode, r]));
+        const updated = prev.map(r => byBarcode.has(r.barcode) ? { ...r, ...byBarcode.get(r.barcode) } : r);
+        const ontNewRows = allPotentialRows.filter(r => !prev.some(e => e.barcode === r.barcode));
         return ontNewRows.length > 0 ? [...updated, ...ontNewRows] : updated;
       });
 
       // Accumulate uploaded ONT fastq filenames
-      setUploadOntFastq(prev => [...new Set([...prev, ...sanitized])]);
+      setUploadOntFastq(prev => [...new Set([...prev, ...ontSanitized])]);
 
     } else {
 
@@ -1347,6 +1482,19 @@ function AssemblyTab() {
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   }, []);
+
+  // Hide the app header when the accordion is scrolled down, reveal it when scrolling back up.
+  const lastScrollTopRef = useRef(0);
+  const handleContentScroll = useCallback((e) => {
+    const st = e.currentTarget.scrollTop;
+    const last = lastScrollTopRef.current;
+    if (st > last && st > 60) setHeaderHidden?.(true);
+    else if (st < last) setHeaderHidden?.(false);
+    lastScrollTopRef.current = st;
+  }, [setHeaderHidden]);
+
+  // Always restore the header when this tab unmounts.
+  useEffect(() => () => setHeaderHidden?.(false), [setHeaderHidden]);
 
   // 
   const toggle = (id) => setOpenStep((prev) => {
@@ -1504,6 +1652,11 @@ function AssemblyTab() {
       setLoadRunLoading(false);
     }
   }, []);
+
+  // Open the Load Run modal when signaled from outside (e.g. the Home "Sequencing Runs" card).
+  useEffect(() => {
+    if (loadRunSignal) openLoadRunModal();
+  }, [loadRunSignal, openLoadRunModal]);
 
   const openExportRunModal = useCallback(async () => {
     setExportRunModal(true);
@@ -1741,14 +1894,23 @@ function AssemblyTab() {
       const isOnt = (info.experiment_type ?? "").toLowerCase().endsWith("ont");
       const rows = Array.isArray(data.samplesheet) ? data.samplesheet : [];
       if (isOnt) {
-        setOntSampleRows(rows.map(r => ({
-          barcode:     r.barcode    ?? "",
-          sample_id:   r.sample_id  ?? "",
-          sample_type: r.sample_type ?? "Test",
-          single_end:  r.single_end ? "true" : "false",
-          fastq:       r.fastq      ?? "",
-          status:      (r.status ?? "Keep").toLowerCase() === "keep" ? "Keep" : "Exclude",
-        })));
+        // DB stores one row per fastq; collapse to one row per sample with a fastq list
+        const groups = new Map();
+        rows.forEach(r => {
+          const key = `${r.barcode ?? ""}||${r.sample_id ?? ""}`;
+          if (!groups.has(key)) {
+            groups.set(key, {
+              barcode:     r.barcode    ?? "",
+              sample_id:   r.sample_id  ?? "",
+              sample_type: r.sample_type ?? "Test",
+              single_end:  r.single_end ? "true" : "false",
+              fastq:       [],
+              status:      (r.status ?? "Keep").toLowerCase() === "keep" ? "Keep" : "Exclude",
+            });
+          }
+          if (r.fastq) groups.get(key).fastq.push(r.fastq);
+        });
+        setOntSampleRows([...groups.values()].map(g => ({ ...g, fastq: [...g.fastq].sort((a, b) => a.localeCompare(b)) })));
         setIlluminaSampleRows([]);
       } else {
         setIlluminaSampleRows(rows.map(r => ({
@@ -1932,7 +2094,7 @@ function AssemblyTab() {
         return;
       }
     }else{
-      const badRows = samplesheet.filter(r => !r.fastq || r.single_end !== "true");
+      const badRows = samplesheet.filter(r => !r.fastq || r.fastq.length === 0 || r.single_end !== "true");
       if (badRows.length > 0) {
         const missingFastq = badRows.map(r => `${r.sample_id}: missing fastq`);
         setSubmitError({ title: "Validation Error", items: [`ONT samples require a single-end fastq file.`], missing: { title: "Missing Samples", samples: missingFastq } });
@@ -1940,22 +2102,25 @@ function AssemblyTab() {
       }
     }
 
-    // Construct the samplesheet for submission
-    const formattedSamplesheet = samplesheet.map(r => isOnt ? {
-      barcode:       r.barcode,
-      sample_id:     r.sample_id,
-      sample_type:   r.sample_type,
-      single_end:    r.single_end,
-      fastq:         r.fastq,
-      status:        r.status,
-    } : {
-      sample_id:     r.sample_id,
-      sample_type:   r.sample_type,
-      single_end:    r.single_end,
-      fastq_1:       r.fastq_1,
-      fastq_2:       r.fastq_2,
-      status:        r.status,
-    });
+    // Construct the samplesheet for submission. ONT rows are one-per-sample with a
+    // fastq list in the UI; expand them back to the backend's one-row-per-fastq format.
+    const formattedSamplesheet = isOnt
+      ? samplesheet.flatMap(r => (Array.isArray(r.fastq) ? r.fastq : [r.fastq]).map(fq => ({
+          barcode:       r.barcode,
+          sample_id:     r.sample_id,
+          sample_type:   r.sample_type,
+          single_end:    r.single_end,
+          fastq:         fq,
+          status:        r.status,
+        })))
+      : samplesheet.map(r => ({
+          sample_id:     r.sample_id,
+          sample_type:   r.sample_type,
+          single_end:    r.single_end,
+          fastq_1:       r.fastq_1,
+          fastq_2:       r.fastq_2,
+          status:        r.status,
+        }));
 
     // Construct the request body for the API
     const body = {
@@ -2011,8 +2176,9 @@ function AssemblyTab() {
       // ── Step 2.1: upload FASTQ files the user provided via the file picker ──
       const filesToUpload = samplesheet.flatMap(r => {
         if (isOnt) {
-          const f = r.fastq && uploadedOntFileObjects[r.fastq];
-          return f ? [f] : [];
+          return (Array.isArray(r.fastq) ? r.fastq : [r.fastq])
+            .map(fq => fq && uploadedOntFileObjects[fq])
+            .filter(Boolean);
         } else {
           return [
             r.fastq_1 && uploadedIlluminaFileObjects[r.fastq_1],
@@ -2171,10 +2337,49 @@ function AssemblyTab() {
   ].filter(({ show }) => show);
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden">
+
+      {/* ── Jump To navigation band ───────────────── */}
+      <div className="shrink-0 flex items-center justify-center gap-2 px-4 py-2 border-b border-border bg-muted/10 overflow-x-auto">
+        <span className="text-[10px] font-bold tracking-wider text-muted-foreground uppercase shrink-0 mr-1"></span>
+        {ASSEMBLY_STEPS.map(({ id, title, icon: Icon }) => (
+          <Fragment key={id}>
+            <button
+              onClick={() => {
+                setOpenStep(prev => { const next = new Set(prev); next.add(id); return next; });
+                setTimeout(() => document.getElementById(`step-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+              }}
+              className={cn(
+                "shrink-0 flex items-center gap-1.5 px-3 py-1 rounded-full text-xs transition-colors border",
+                openStep.has(id)
+                  ? "text-primary border-primary/20 bg-primary/5"
+                  : "text-foreground border-transparent hover:bg-muted/60 hover:border-border"
+              )}
+            >
+              <Icon size={13} className="text-primary shrink-0" />
+              <span className="whitespace-nowrap">{title}</span>
+            </button>
+            {id === "results" && assembled && !hasNoResults && resultSections.length > 0 && resultSections.map(({ id: sectionId, label }) => (
+              <button
+                key={sectionId}
+                onClick={() => {
+                  setOpenStep(prev => { const next = new Set(prev); next.add("results"); return next; });
+                  setTimeout(() => document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+                }}
+                className="shrink-0 flex items-center px-2.5 py-1 rounded-full text-xs text-muted-foreground hover:text-primary hover:bg-muted/60 transition-colors border border-dashed border-border"
+              >
+                <span className="whitespace-nowrap">{label}</span>
+              </button>
+            ))}
+          </Fragment>
+        ))}
+      </div>
+
+      {/* ── Main row: accordion + run panel ─────────── */}
+      <div className="flex flex-1 overflow-hidden">
 
       {/* ── Left: accordion steps ─────────────────── */}
-      <div className="flex-1 overflow-auto p-4 space-y-2">
+      <div className="flex-1 overflow-auto p-4 space-y-2" onScroll={handleContentScroll}>
         {ASSEMBLY_STEPS.map(({ id, title, subtitle, icon }) => (
           <div key={id} id={`step-${id}`} className="rounded-xl border border-border overflow-hidden">
             <button
@@ -2258,7 +2463,6 @@ function AssemblyTab() {
                       <div>
                         <FieldLabel>Upload FASTQ Files</FieldLabel>
                         <div
-                          onClick={() => fastqFileInputRef.current?.click()}
                           onDragOver={(e) => { e.preventDefault(); setFastqDragOver(true); }}
                           onDragLeave={() => setFastqDragOver(false)}
                           onDrop={async (e) => {
@@ -2268,22 +2472,13 @@ function AssemblyTab() {
                             handleIncomingFastqFiles(files);
                           }}
                           className={cn(
-                            "flex flex-col items-center justify-center gap-2 h-28 rounded-xl border-2 border-dashed bg-muted/10 hover:bg-muted/20 cursor-pointer transition-colors text-muted-foreground text-sm",
+                            "flex flex-col items-center justify-center gap-2 h-28 rounded-xl border-2 border-dashed bg-muted/10 transition-colors text-muted-foreground text-sm",
                             fastqDragOver ? "border-primary bg-primary/5" : "border-border"
                           )}
                         >
                           <Upload size={22} />
-                          <span>
-                            Drag &amp; drop files or folders, or <span className="text-primary underline">browse files</span>
-                          </span>
-                          <span className="text-xs opacity-60">.fastq, .fastq.gz, .fq, .fq.gz accepted — dropped folders are scanned recursively. Sample names must not contain any spaces — spaces will be replaced with underscores.</span>
-                          <input
-                            ref={fastqFileInputRef}
-                            type="file"
-                            className="hidden"
-                            multiple
-                            onChange={(e) => { handleIncomingFastqFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
-                          />
+                          <span>Drag &amp; drop folder containing fastq files here</span>
+                          <span className="text-xs opacity-60">*.fastq, *.fastq.gz, *.fq, &amp; *.fq.gz accepted — dropped folders are scanned recursively.</span>
                         </div>
                       </div>
                     )}
@@ -2393,13 +2588,13 @@ function AssemblyTab() {
                             const filteredRows = q
                               ? activeRows.filter(row => {
                                   const vals = isOnt
-                                    ? [row.barcode, row.sample_id, row.sample_type, row.single_end, row.fastq, row.status]
+                                    ? [row.barcode, row.sample_id, row.sample_type, row.single_end, (Array.isArray(row.fastq) ? row.fastq.join(" ") : row.fastq), row.status]
                                     : [row.sample_id, row.sample_type, row.single_end, row.fastq_1, row.fastq_2, row.status];
                                   return vals.some(v => (v ?? "").toString().toLowerCase().includes(q));
                                 })
                               : activeRows;
                             const getVal = (row, k) => {
-                              if (isOnt && k === "fastq") return (row.fastq ?? "").toString().toLowerCase();
+                              if (isOnt && k === "fastq") return (Array.isArray(row.fastq) ? row.fastq.join(" ") : (row.fastq ?? "")).toLowerCase();
                               return (row[k] ?? "").toString().toLowerCase();
                             };
                             const sortedRows = sortConfig.key
@@ -2448,12 +2643,17 @@ function AssemblyTab() {
                                         </select>
                                       ) : (
                                         key.startsWith("fastq") ? (
-                                          <span className="flex items-center gap-1">
-                                            {colVals[ci] && (isOnt ? uploadedOntFileObjects[colVals[ci]] : uploadedIlluminaFileObjects[colVals[ci]]) && (
-                                              <Upload size={10} className="text-emerald-500 shrink-0" title="Uploaded this session" />
-                                            )}
-                                            <span className="block overflow-x-auto whitespace-nowrap max-w-[300px] scrollbar-thin">{colVals[ci]}</span>
-                                          </span>
+                                          isOnt ? (() => {
+                                            const fastqList = Array.isArray(colVals[ci]) ? colVals[ci] : (colVals[ci] ? [colVals[ci]] : []);
+                                            return <OntFastqCell fastqList={fastqList} uploadedMap={uploadedOntFileObjects} />;
+                                          })() : (
+                                            <span className="flex items-center gap-1">
+                                              {colVals[ci] && uploadedIlluminaFileObjects[colVals[ci]] && (
+                                                <Upload size={10} className="text-emerald-500 shrink-0" title="Uploaded this session" />
+                                              )}
+                                              <span className="block overflow-x-auto whitespace-nowrap max-w-[300px] scrollbar-thin">{colVals[ci]}</span>
+                                            </span>
+                                          )
                                         ) : (
                                           <span className="block overflow-x-auto whitespace-nowrap max-w-[300px] scrollbar-thin">{colVals[ci]}</span>
                                         )
@@ -2887,38 +3087,85 @@ function AssemblyTab() {
                               )
                         )}
 
-                        {/* pipeline tasks — flat list */}
-                        {pipelineDAG?.tasks?.length > 0 && (
-                          <div className="rounded-xl border border-border overflow-hidden">
-                            <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
-                              <p className="text-xs font-bold text-foreground uppercase tracking-wider">Running Tasks</p>                           
+                        {/* pipeline tasks — grid: distinct tasks (rows) x samples (columns) */}
+                        {(pipelineDAG?.tasks?.length > 0 || pipelineDAG?.process_names?.length > 0) && (() => {
+                          const tasks = pipelineDAG.tasks ?? [];
+                          // Seed rows with every potential task parsed from the .nextflow.log
+                          // ("Starting process > ...") so all rows appear up front.
+                          const taskNames = Array.isArray(pipelineDAG.process_names) ? [...pipelineDAG.process_names] : [];
+                          tasks.forEach(t => {
+                            const p = t.process_name || "unknown";
+                            if (!taskNames.includes(p)) taskNames.push(p);
+                          });
+
+                          // Columns = real samples from the samplesheet. Fall back to task-derived
+                          // samples only when the backend didn't provide sample_ids.
+                          const knownSamples = Array.isArray(pipelineDAG.sample_ids) ? pipelineDAG.sample_ids : [];
+                          const samples = [...knownSamples];
+                          if (knownSamples.length === 0) {
+                            tasks.forEach(t => { if (t.sample && !samples.includes(t.sample)) samples.push(t.sample); });
+                          }
+                          samples.sort((a, b) => a.localeCompare(b));
+                          const knownSet = new Set(samples);
+
+                          const rank = { failed: 3, running: 2, success: 1 };
+                          const bucketOf = (t) => (t.status === "FAILED" || t.process_name === "PASSFAILED")
+                            ? "failed"
+                            : t.status === "COMPLETED" ? "success" : "running";
+                          const bump = (map, key, bucket) => {
+                            const prev = map.get(key);
+                            if (!prev || rank[bucket] > rank[prev]) map.set(key, bucket);
+                          };
+                          // Per-sample cells keyed by "process||sample"; run-level tasks (not tied to a
+                          // real sample, e.g. NEXTFLOWSAMPLESHEET (1)) get one status applied to every column.
+                          const cellMap = new Map();
+                          const rowLevelMap = new Map();
+                          tasks.forEach(t => {
+                            const p = t.process_name || "unknown";
+                            const bucket = bucketOf(t);
+                            if (t.sample && knownSet.has(t.sample)) {
+                              bump(cellMap, `${p}||${t.sample}`, bucket);
+                            } else {
+                              bump(rowLevelMap, p, bucket);
+                            }
+                          });
+                          return (
+                            <div className="rounded-xl border border-border overflow-hidden">
+                              <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
+                                <p className="text-xs font-bold text-foreground uppercase tracking-wider">Task Progress</p>
+                              </div>
+                              <div className="max-h-[360px] overflow-auto">
+                                <table className="text-xs border-collapse">
+                                  <thead>
+                                    <tr>
+                                      <th className="sticky left-0 top-0 z-20 bg-muted px-3 py-2 text-left font-semibold text-muted-foreground border-b border-r border-border whitespace-nowrap">Task \ Sample</th>
+                                      {samples.map(s => (
+                                        <th key={s} className="sticky top-0 z-10 bg-muted px-3 py-2 text-center font-mono font-semibold text-foreground border-b border-border whitespace-nowrap">{s}</th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {taskNames.map(p => (
+                                      <tr key={p} className="border-b border-border/50">
+                                        <td className="sticky left-0 z-10 bg-background px-3 py-1.5 font-mono text-foreground border-r border-border whitespace-nowrap">{p}</td>
+                                        {samples.map(s => {
+                                          const bucket = cellMap.get(`${p}||${s}`) ?? rowLevelMap.get(p);
+                                          return (
+                                            <td key={s} className="px-3 py-1.5 text-center align-middle">
+                                              {bucket === "success" && <Check size={13} className="inline text-emerald-500" />}
+                                              {bucket === "failed" && <X size={13} className="inline text-red-500" />}
+                                              {bucket === "running" && <RefreshCw size={13} className="inline text-sky-500 animate-spin" />}
+                                            </td>
+                                          );
+                                        })}
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
                             </div>
-                            <div className="divide-y divide-border/50 max-h-[360px] overflow-y-auto">
-                              {pipelineDAG?.tasks?.map(task => {
-                                const done   = task.status === "COMPLETED";
-                                // PASSFAILED means the sample failed the QC pass/fail check, regardless of the task's own run status
-                                const failed = task.status === "FAILED" || task.process_name === "PASSFAILED";
-                                return (
-                                  <div key={task.task_id} className={cn("flex items-center justify-between gap-3 px-3 py-1.5", failed && "bg-red-50 dark:bg-red-950/20")}>
-                                    <div className="flex items-center gap-2 min-w-0">
-                                      {done && !failed && <Check size={10} className="text-emerald-500 shrink-0" />}
-                                      {failed && <AlertCircle size={10} className="text-destructive shrink-0" />}
-                                      {!done && !failed && <AlertCircle size={10} className="text-destructive shrink-0" />}
-                                      <span className={cn("text-xs font-mono truncate", failed ? "text-destructive font-semibold" : "text-foreground")}>{task.process_name}</span>
-                                      {task.sample && <span className="text-xs text-muted-foreground shrink-0">({task.sample})</span>}
-                                    </div>
-                                    <span className={cn(
-                                      "px-1.5 py-0.5 rounded font-mono text-xs shrink-0",
-                                      failed ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                                      : done ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                                      : "bg-muted text-muted-foreground"
-                                    )}>{task.status}</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
+                          );
+                        })()}
 
                         {/* timing footer */}
                         {pipelineDAG?.workflows && (
@@ -3361,107 +3608,20 @@ function AssemblyTab() {
                     </div>
                   </StepPanel>
                 )}
+
+                {/* ── Step 5: SeqSender ──────────── */}
+                {id === "seqsender" && (
+                  <StepPanel>
+                    <SeqSenderPanel />
+                  </StepPanel>
+                )}
               </>
             )}
           </div>
         ))}
       </div>
 
-      {/* ── Resizable divider ────────────────────── */}
-      <div
-        onMouseDown={onMouseDown}
-        className="w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/40 transition-colors"
-      />
-
-      {/* ── Right: run panel ─────────────────────── */}
-      <aside
-        style={{ width: rightWidth }}
-        className="shrink-0 border-l border-border p-4 flex flex-col gap-4 bg-muted/10 overflow-y-auto"
-      >
-        <div className="pt-3 space-y-1.5">
-          <p className="text-xs font-bold tracking-wider text-muted-foreground uppercase mb-2">Quick Actions</p>
-          {[
-            [PlusCircle, "New Run",  resetRun],
-            [FolderOpen, "Load Run", openLoadRunModal],
-            [Pencil,     "Edit Run", openEditRunModal],
-            [Download,   "Export Run", openExportRunModal],
-          ].map(([Icon, label, action]) => (
-            <button key={label} onClick={action} className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/60 transition-colors border border-transparent hover:border-border">
-              <Icon size={13} className="text-primary" /> {label}
-            </button>
-          ))}
-        </div>
-
-        {(runName || experimentType) && (
-          <div className="border-t border-border pt-3 space-y-1.5">
-            <p className="text-xs font-bold tracking-wider text-muted-foreground uppercase mb-2">Run Information</p>
-            {runName && (
-              <div className="flex items-center gap-1.5 text-xs">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Name:</span>
-                <span className="font-mono font-semibold text-foreground truncate">{runName}</span>
-              </div>
-            )}
-            {experimentType && (
-              <div className="flex items-center gap-1.5 text-xs">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Type:</span>
-                <span className="font-mono text-foreground truncate">{experimentType}</span>
-              </div>
-            )}
-            {primer && (
-              <div className="flex items-center gap-1.5 text-xs">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Primer:</span>
-                <span className="font-mono text-foreground truncate">
-                  {(experimentType?.startsWith("SC2") ? SC2_PRIMERS : experimentType?.startsWith("RSV") ? RSV_PRIMERS : [])
-                    .find(p => p.value === primer)?.label || primer}
-                </span>
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="border-t border-border pt-3 space-y-1">
-          <p className="text-xs font-bold tracking-wider text-muted-foreground uppercase mb-2">Jump To</p>
-          {ASSEMBLY_STEPS.map(({ id, title, icon: Icon }) => (
-            <Fragment key={id}>
-              <button
-                onClick={() => {
-                  setOpenStep(prev => { const next = new Set(prev); next.add(id); return next; });
-                  setTimeout(() => document.getElementById(`step-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
-                }}
-                className={cn(
-                  "w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-colors border text-left",
-                  openStep.has(id)
-                    ? "text-primary border-primary/20 bg-primary/5"
-                    : "text-foreground border-transparent hover:bg-muted/60 hover:border-border"
-                )}
-              >
-                <Icon size={13} className="text-primary shrink-0" />
-                <span className="truncate">{title}</span>
-              </button>
-              {id === "results" && assembled && !hasNoResults && resultSections.length > 0 && (
-                <div className="ml-4 pl-2 border-l border-border space-y-0.5">
-                  {resultSections.map(({ id: sectionId, label }) => (
-                    <button
-                      key={sectionId}
-                      onClick={() => {
-                        setOpenStep(prev => { const next = new Set(prev); next.add("results"); return next; });
-                        setTimeout(() => document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
-                      }}
-                      className="w-full flex items-center px-3 py-1 rounded-md text-xs text-muted-foreground hover:text-primary hover:bg-muted/60 transition-colors text-left"
-                    >
-                      <span className="truncate">{label}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </Fragment>
-          ))}
-        </div>
-
-        <div className="mt-auto border-t border-border pt-3">
-          <p className="text-center text-xs text-muted-foreground"><a href="https://cdcgov.github.io/MIRA/" target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline">cdcgov.github.io/MIRA/</a></p>
-        </div>
-      </aside>
+      </div>
 
       {/* ── Export Run modal ─────────────────── */}
       {exportRunModal && (
@@ -3984,10 +4144,6 @@ function AssemblyTab() {
 }
 
 /* ── SeqSender Tab ──────────────────────────────── */
-const SEQSENDER_STEPS = [
-  { id: "setup",  title: "STEP 1: SEQSENDER SETUP",    subtitle: "Select database target, organism, input files, and submit",  icon: Database },
-  { id: "status", title: "STEP 2: SUBMISSION STATUS",  subtitle: "Track per-database submission progress",                     icon: ClipboardList },
-];
 const ORGANISMS = ["FLU", "COV", "RSV", "POX", "ARBO", "OTHER"];
 const DB_LIST = [
   { key: "biosample", label: "BioSample",  desc: "NCBI BioSample — biological source metadata" },
@@ -3996,9 +4152,8 @@ const DB_LIST = [
   { key: "gisaid",    label: "GISAID",     desc: "GISAID — submissions of Influenza, SARS-CoV-2, & other pathogens genomic data" },
 ];
 
-// ── SeqSender Tab Component ────────────────────────
-function SeqSenderTab() {
-  const [openStep, setOpenStep]           = useState(() => new Set(SEQSENDER_STEPS.map((s) => s.id)));
+// ── SeqSender panel — rendered as Step 5 inside the Mira accordion ──
+function SeqSenderPanel() {
   const [dbs, setDbs]                     = useState({ biosample: true, sra: true, genbank: true, gisaid: true });
   const [organism, setOrganism]           = useState("");
   const [subName, setSubName]             = useState("");
@@ -4010,45 +4165,11 @@ function SeqSenderTab() {
   const [table2asn, setTable2asn]         = useState(false);
   const [testMode, setTestMode]           = useState(false);
   const [submitted, setSubmitted]         = useState(false);
-  const [rightWidth, setRightWidth]       = useState(260);
-  const dragging = useRef(false);
 
-  // Toggle the open/closed state of a step in the accordion
-  const toggle = (id) => setOpenStep((prev) => {
-    const next = new Set(prev);
-    next.has(id) ? next.delete(id) : next.add(id);
-    return next;
-  });
   const toggleDb = (k) => setDbs((p) => ({ ...p, [k]: !p[k] }));
 
-  // Handle resizing of the right panel
-  const onMouseDown = useCallback(() => {
-    dragging.current = true;
-    const onMove = (e) => {
-      if (!dragging.current) return;
-      setRightWidth(Math.max(200, Math.min(420, document.body.clientWidth - e.clientX)));
-    };
-    const onUp = () => { dragging.current = false; window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  }, []);
-
   return (
-    <div className="flex h-full overflow-hidden">
-
-      {/* ── Left: accordion steps ─────────────────── */}
-      <div className="flex-1 overflow-auto p-4 space-y-2">
-        {SEQSENDER_STEPS.map(({ id, title, subtitle, icon }) => (
-          <div key={id} className="rounded-xl border border-border overflow-hidden">
-            <button onClick={() => toggle(id)} className="w-full px-4 py-3 bg-muted/20 hover:bg-muted/40 transition-colors">
-              <StepHeader icon={icon} title={title} subtitle={subtitle} open={openStep.has(id)} />
-            </button>
-
-            {openStep.has(id) && (
-              <>
-                {/* Step 1: Setup */}
-                {id === "setup" && (
-                  <StepPanel>
+    <>
                     <div className="flex items-center gap-2 pt-1">
                       <span className="text-xs font-bold tracking-wider text-muted-foreground uppercase">Database Targets</span>
                       <div className="flex-1 h-px bg-border" />
@@ -4171,12 +4292,11 @@ function SeqSenderTab() {
                     <button onClick={() => setSubmitted(true)} className="flex items-center gap-2 px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
                       <Rocket size={14} /> Submit to {Object.entries(dbs).filter(([,v])=>v).map(([k])=>k).join(", ") || "selected databases"}
                     </button>
-                  </StepPanel>
-                )}
 
-                {/* Step 2: Status */}
-                {id === "status" && (
-                  <StepPanel>
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-xs font-bold tracking-wider text-muted-foreground uppercase">Submission Status</span>
+                      <div className="flex-1 h-px bg-border" />
+                    </div>
                     <div className="flex items-center gap-2 w-fit max-w-full text-xs text-warning bg-warning/10 rounded-lg px-3 py-2">
                       <AlertCircle size={13} /> Submission status and accession numbers will appear here once the submission is submitted and proccessed.
                     </div>
@@ -4215,39 +4335,11 @@ function SeqSenderTab() {
                         <RefreshCw size={14} /> Refresh Status
                       </button>
                     )}
-                  </StepPanel>
-                )}
 
-              </>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {/* ── Resizable divider ────────────────────── */}
-      <div onMouseDown={onMouseDown} className="w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/40 transition-colors" />
-
-      {/* ── Right: sidebar ───────────────────────── */}
-      <aside style={{ width: rightWidth }} className="shrink-0 border-l border-border p-4 flex flex-col gap-4 bg-muted/10 overflow-y-auto">
-
-        <div className="pt-3 space-y-1.5">
-          <p className="text-xs font-bold tracking-wider text-muted-foreground uppercase mb-2">Quick Actions</p>
-          {[
-            [PlusCircle, "New Submission"],
-            [FolderOpen, "Load Submission"],
-            [Download,   "Download Config"],
-          ].map(([Icon, label]) => (
-            <button key={label} className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/60 transition-colors border border-transparent hover:border-border">
-              <Icon size={13} className="text-primary" /> {label}
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-auto border-t border-border pt-3">
-          <p className="text-center text-xs text-muted-foreground"><a href="https://cdcgov.github.io/seqsender/" target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline">cdcgov.github.io/seqsender/</a></p>
-        </div>
-      </aside>
-    </div>
+                    <div className="border-t border-border pt-3">
+                      <p className="text-center text-xs text-muted-foreground"><a href="https://cdcgov.github.io/seqsender/" target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline">cdcgov.github.io/seqsender/</a></p>
+                    </div>
+    </>
   );
 }
 
@@ -4398,11 +4490,9 @@ function ResourcesTab() {
 }
 
 /* ── Placeholder tab content ─────────────────────── */
-function TabContent({ tab }) {
-  if (tab.id === "home")       return <HomeTab />;
-  if (tab.id === "assembly")   return <AssemblyTab />;
-  if (tab.id === "seqsender")  return <SeqSenderTab />;
-  if (tab.id === "resources")  return <ResourcesTab />;
+function TabContent({ tab, navigateTo, loadRunSignal, onLoadRun, setHeaderHidden }) {
+  if (tab.id === "home")       return <HomeTab onNewRun={() => navigateTo("assembly")} onLoadRun={onLoadRun} />;
+  if (tab.id === "assembly")   return <AssemblyTab loadRunSignal={loadRunSignal} setHeaderHidden={setHeaderHidden} />;
   return (
     <div className="p-6">
       <div className="rounded-xl border border-border bg-card p-8 text-center text-muted-foreground">
@@ -4426,6 +4516,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState(getInitialTab);
   const [versionInfo, setVersionInfo] = useState(null);
   const [backendUp, setBackendUp] = useState(true); // assume healthy until the first check completes
+  const [resourcesOpen, setResourcesOpen] = useState(false); // Resources overlay visibility
+  const [loadRunSignal, setLoadRunSignal] = useState(0); // bumped to signal AssemblyTab to open its Load Run modal
+  const [headerHidden, setHeaderHidden] = useState(false); // whether the top header is collapsed (auto-hide on scroll)
 
   // Check MIRA-NF version on app startup so we can alert users if it's out-of-date,
   // and detect whether the backend API is reachable at all. Re-checked on demand
@@ -4452,6 +4545,13 @@ export default function App() {
     if (tabId === activeTab) return;
     setActiveTab(tabId);
     updateUrl(tabId);
+    setHeaderHidden(false);
+  };
+
+  // Navigate to the Mira tab and open its Load Run modal (triggered from the Home dashboard).
+  const openLoadRunFromHome = () => {
+    navigateTo("assembly");
+    setLoadRunSignal((n) => n + 1);
   };
 
   // Sync active tab when browser back/forward is used
@@ -4470,7 +4570,7 @@ export default function App() {
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-background text-foreground">
 
       {/* ── Header ───────────────────────────────── */}
-      <header className="h-24 shrink-0 w-full bg-primary border-b border-border flex items-center px-4 gap-3">
+      <header className={cn("shrink-0 w-full bg-primary border-b border-border flex items-center px-4 gap-3 overflow-hidden transition-[height] duration-300", headerHidden ? "h-0 border-b-0" : "h-24")}>
         {/* Brand */}
         <button
           onClick={() => navigateTo("home")}
@@ -4486,24 +4586,42 @@ export default function App() {
           </div>
           <div className="flex flex-col leading-tight">
             <div className="flex items-baseline gap-2">
-              <span className="text-2xl tracking-widest text-white font-bold">Mira</span>
+              <span className="text-3xl tracking-widest text-white font-bold">Mira</span>
               <span className="text-xs text-white/50 font-mono">{versionInfo?.current_mira_version ?? "v3.0.0"}</span>
             </div>
-            <span className="text-xs text-white/80 hidden sm:inline tracking-wider normalcase">
-              Influenza, SARS-CoV-2, and RSV Genome Assembly &amp; Curation
-            </span>
+
           </div>
         </button>
 
         {/* Right controls */}
         <div className="ml-auto flex items-center gap-1">
 
+          {/* Home */}
+          <button
+            onClick={() => navigateTo("home")}
+            title="Home"
+            className="p-2 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+          >
+            <Home size={22} />
+          </button>
+
+          {/* Resources */}
+          <button
+            onClick={() => setResourcesOpen(true)}
+            title="Resources"
+            className="p-2 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+          >
+            <BookOpen size={22} />
+          </button>
+
+
+
           {/* Notifications */}
           <Dropdown
             panelClassName="w-80"
             trigger={
               <button onClick={checkBackend} className="relative p-2 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition-colors">
-                <Bell size={16} />
+                <Bell size={22} />
                 {versionInfo?.status === "out-of-date" && (
                   <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500" />
                 )}
@@ -4569,6 +4687,26 @@ export default function App() {
         </div>
       </header>
 
+      {/* ── Resources modal ──────────────────────── */}
+      {resourcesOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-background border border-border rounded-xl shadow-xl w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+              <div className="flex items-center gap-2">
+                <BookOpen size={16} className="text-primary" />
+                <h3 className="text-sm font-bold text-foreground">Resources</h3>
+              </div>
+              <button onClick={() => setResourcesOpen(false)} className="text-muted-foreground hover:text-foreground transition-colors">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <ResourcesTab />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Main area ────────────────────────────── */}
       <div className="flex-1 flex flex-col overflow-hidden">
 
@@ -4580,33 +4718,11 @@ export default function App() {
           </div>
         )}
 
-        {/* ── Tab bar ──────────────────────────── */}
-        <div className="flex border-b border-border bg-background px-3 pt-2 gap-1 shadow-sm shrink-0">
-          {TABS.filter((t) => t.id !== "home").map((tab) => {
-            const Icon = tab.icon;
-            const active = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => navigateTo(tab.id)}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-t-md border-b-2 transition-colors",
-                  active
-                    ? "border-primary text-primary"
-                    : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40"
-                )}
-              >
-                <Icon size={14} />
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
         {/* ── Tab content ──────────────────────── */}
-        <main className="flex-1 overflow-hidden">
+        <main className="flex-1 overflow-hidden px-6">
           {TABS.map((tab) => (
             <div key={tab.id} className={cn("h-full", activeTab !== tab.id && "hidden")}>
-              <TabContent tab={tab} />
+              <TabContent tab={tab} navigateTo={navigateTo} loadRunSignal={loadRunSignal} onLoadRun={openLoadRunFromHome} setHeaderHidden={setHeaderHidden} />
             </div>
           ))}
         </main>
