@@ -922,7 +922,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   const [nextclade, setNextclade]                   = useState(true);
   const [exportFmt, setExportFmt]                   = useState("fasta");
   const [assembled, setAssembled]                   = useState(false);
-  const [rightWidth, setRightWidth]                 = useState(260);
+  const [rightWidth, setRightWidth]                 = useState(440);
   const [sampleSearch, setSampleSearch]             = useState("");
   const [sortConfig, setSortConfig]                 = useState({ key: "sample_id", dir: "asc" });
   const [submitting, setSubmitting]                 = useState(false);
@@ -1572,12 +1572,20 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   // Handle mouse down event for resizing the right panel
   const onMouseDown = useCallback(() => {
     dragging.current = true;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
     const onMove = (e) => {
       if (!dragging.current) return;
       const newW = document.body.clientWidth - e.clientX;
-      setRightWidth(Math.max(200, Math.min(420, newW)));
+      setRightWidth(Math.max(280, Math.min(window.innerWidth * 0.75, newW)));
     };
-    const onUp = () => { dragging.current = false; window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    const onUp = () => {
+      dragging.current = false;
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   }, []);
@@ -2146,8 +2154,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       setPipelinePolling(true);
       setShowDAG(true);
 
-      // Close the modal
-      setLoadRunModal(false);
+      // Keep the Past Runs panel open — it only closes via the pill toggle or its X.
 
     } catch (err) {
       setLoadRunError(err.message);
@@ -2547,8 +2554,13 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
           return <Fragment key={id}>{stepButton}</Fragment>;
         })}
         <button
-          onClick={openLoadRunModal}
-          className="shrink-0 ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-colors border border-border text-foreground hover:bg-muted/60 hover:border-primary/30 hover:text-primary"
+          onClick={() => loadRunModal ? setLoadRunModal(false) : openLoadRunModal()}
+          className={cn(
+            "shrink-0 ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-colors border",
+            loadRunModal
+              ? "border-primary/30 text-primary bg-primary/5 hover:bg-primary/10"
+              : "border-border text-foreground hover:bg-muted/60 hover:border-primary/30 hover:text-primary"
+          )}
         >
           <FolderOpen size={13} className="shrink-0" />
           <span className="whitespace-nowrap">Past Runs</span>
@@ -3438,7 +3450,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                         );
                       }
                       return (
-                        <div id="result-section-barcode" className="rounded-xl border border-border overflow-hidden">
+                        <div id="result-section-barcode" className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                             <p className="text-xs font-bold text-foreground uppercase tracking-wider">Barcode Assignment</p>
                           </div>
@@ -3482,7 +3494,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                       const qcYLabels = resultQcDecisions.data?.[0]?.y ?? [];
                       const qcHeight = Math.max(60, qcYLabels.length * HEATMAP_ROW_PX + 120);
                       return (
-                        <div id="result-section-qc" className="rounded-xl border border-border overflow-hidden">
+                        <div id="result-section-qc" className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                             <p className="text-xs font-bold text-foreground uppercase tracking-wider">Automatic Quality Control Decisions</p>
                           </div>
@@ -3552,7 +3564,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                         heatmapYLabels.length * HEATMAP_ROW_PX + 120
                       );
                       return (
-                        <div id="result-section-heatmap" className="rounded-xl border border-border overflow-hidden">
+                        <div id="result-section-heatmap" className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                             <p className="text-xs font-bold text-foreground uppercase tracking-wider">Median Coverage Heatmap</p>
                           </div>
@@ -3820,6 +3832,126 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
         ))}
       </div>
 
+      {/* ── Past Runs slide-in panel (splits the main content, width-adjustable) ── */}
+      {loadRunModal && (
+        <>
+          {/* draggable divider */}
+          <div
+            onMouseDown={onMouseDown}
+            title="Drag to resize"
+            className="w-1.5 shrink-0 cursor-col-resize bg-border hover:bg-primary/50 transition-colors"
+          />
+          <aside style={{ width: rightWidth }} className="shrink-0 flex flex-col overflow-hidden border-l border-border bg-background">
+            {/* header */}
+            <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-border bg-muted/20">
+              <div className="flex items-center gap-2">
+                <FolderOpen size={15} className="text-primary" />
+                <h3 className="text-sm font-bold text-foreground">Load Existing Run</h3>
+              </div>
+              <button onClick={() => setLoadRunModal(false)} className="text-muted-foreground hover:text-foreground transition-colors">
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* body */}
+            <div className="flex-1 overflow-auto p-4 flex flex-col gap-3">
+              {loadRunLoading && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground py-4 justify-center">
+                  <RefreshCw size={13} className="animate-spin" /> Loading runs…
+                </div>
+              )}
+
+              {loadRunError && (
+                <div className="rounded-lg border bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-800 px-3 py-2 space-y-1 text-xs">
+                  <p className="font-semibold text-destructive mb-1">Load Error:</p>
+                  <div className="flex items-start gap-2">
+                    <AlertCircle size={12} className="shrink-0 mt-0.5 text-destructive" />
+                    <span className="text-destructive">{loadRunError}</span>
+                  </div>
+                </div>
+              )}
+
+              {!loadRunLoading && !loadRunError && (
+                availableRuns.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-4">There are no runs found in storage.</p>
+                ) : (() => {
+                  const q = runSearch.trim().toLowerCase();
+                  const filtered = (q
+                    ? availableRuns.filter(r =>
+                        [r.run_name, r.experiment_type, r.assembly_status, r.finished_at, r.created_at]
+                          .some(v => (v ?? "").toLowerCase().includes(q))
+                      )
+                    : availableRuns
+                  ).sort((a, b) => runSortDir === "asc"
+                    ? (a.run_name ?? "").localeCompare(b.run_name ?? "")
+                    : (b.run_name ?? "").localeCompare(a.run_name ?? ""));
+                  return (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <FileSearch size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                          <input
+                            value={runSearch}
+                            onChange={(e) => { setRunSearch(e.target.value); setLoadRunSelectedRow(null); }}
+                            placeholder="Search runs…"
+                            className="w-full h-8 pl-8 pr-3 rounded-lg border border-border bg-background text-xs font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          title={`Sort ${runSortDir === "asc" ? "Z→A" : "A→Z"}`}
+                          onClick={() => setRunSortDir(d => d === "asc" ? "desc" : "asc")}
+                          className="h-8 w-8 shrink-0 flex items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-primary hover:border-primary transition-colors"
+                        >
+                          {runSortDir === "asc" ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
+                        </button>
+                      </div>
+                      {filtered.length === 0 ? (
+                        <p className="text-xs text-muted-foreground text-center py-3">No runs match your search.</p>
+                      ) : (
+                        <div className="rounded-xl border border-border overflow-hidden">
+                          <table className="w-full text-xs">
+                            <thead className="bg-muted sticky top-0 z-10">
+                              <tr>
+                                <th className="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Name</th>
+                                <th className="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Type</th>
+                                <th className="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Timestamp</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border">
+                              {filtered.map(run => (
+                                <tr
+                                  key={run.assembly_id}
+                                  onClick={() => { setLoadRunSelectedRow(run); handleLoadRun(run); }}
+                                  className={cn(
+                                    "cursor-pointer transition-colors",
+                                    loadRunSelectedRow?.assembly_id === run.assembly_id
+                                      ? "bg-primary/10"
+                                      : "hover:bg-muted/40"
+                                  )}
+                                >
+                                  <td className="px-4 py-2 font-mono font-semibold text-foreground truncate max-w-[240px]">{run.run_name}</td>
+                                  <td className="px-4 py-2 font-mono text-foreground whitespace-nowrap">{run.experiment_type}</td>
+                                  <td className="px-4 py-2 font-mono text-muted-foreground whitespace-nowrap">{(() => {
+                                    // Prefer Nextflow's reported finish time; trim seconds to minute precision
+                                    const ts = run.finished_at || run.created_at;
+                                    return ts ? ts.replace(/(\d{1,2}:\d{2}):\d{2}/, "$1") : "—";
+                                  })()}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()
+              )}
+            </div>
+          </aside>
+        </>
+      )}
+
       </div>
 
       {/* ── Export Run modal ─────────────────── */}
@@ -3959,130 +4091,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
         </div>
       )}
 
-      {/* ── Load Run modal ────────────────────── */}
-      {loadRunModal && (
-        <div onClick={() => setLoadRunModal(false)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div onClick={(e) => e.stopPropagation()} className="bg-background border border-border rounded-xl p-6 max-w-2xl w-full mx-4 shadow-xl flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-foreground">Load Existing Runs</h3>
-              <button onClick={() => setLoadRunModal(false)} className="text-muted-foreground hover:text-foreground transition-colors">
-                <X size={14} />
-              </button>
-            </div>
-
-            {loadRunLoading && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground py-4 justify-center">
-                <RefreshCw size={13} className="animate-spin" /> Loading runs…
-              </div>
-            )}
-
-            {loadRunError && (
-              <div className="rounded-lg border bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-800 px-3 py-2 space-y-1 text-xs">
-                <p className="font-semibold text-destructive mb-1">Load Error:</p>
-                <div className="flex items-start gap-2">
-                  <AlertCircle size={12} className="shrink-0 mt-0.5 text-destructive" />
-                  <span className="text-destructive">{loadRunError}</span>
-                </div>
-              </div>
-            )}
-
-            {!loadRunLoading && !loadRunError && (
-              availableRuns.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-4">There are no runs found in storage.</p>
-              ) : (() => {
-                const q = runSearch.trim().toLowerCase();
-                const filtered = (q
-                  ? availableRuns.filter(r =>
-                      [r.run_name, r.experiment_type, r.assembly_status, r.finished_at, r.created_at]
-                        .some(v => (v ?? "").toLowerCase().includes(q))
-                    )
-                  : availableRuns
-                ).sort((a, b) => runSortDir === "asc"
-                  ? (a.run_name ?? "").localeCompare(b.run_name ?? "")
-                  : (b.run_name ?? "").localeCompare(a.run_name ?? ""));
-                return (
-                  <>
-                    <div className="flex items-center gap-2">
-                    <div className="relative flex-1">
-                      <FileSearch size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-                      <input
-                        value={runSearch}
-                        onChange={(e) => { setRunSearch(e.target.value); setLoadRunSelectedRow(null); }}
-                        placeholder="Search runs…"
-                        className="w-full h-8 pl-8 pr-3 rounded-lg border border-border bg-background text-xs font-mono focus:outline-none focus:ring-1 focus:ring-ring"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      title={`Sort ${runSortDir === "asc" ? "Z→A" : "A→Z"}`}
-                      onClick={() => setRunSortDir(d => d === "asc" ? "desc" : "asc")}
-                      className="h-8 w-8 shrink-0 flex items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-primary hover:border-primary transition-colors"
-                    >
-                      {runSortDir === "asc" ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
-                    </button>
-                    </div>
-                    {filtered.length === 0 ? (
-                      <p className="text-xs text-muted-foreground text-center py-3">No runs match your search.</p>
-                    ) : (
-                      <div className={cn("rounded-xl border border-border overflow-hidden", availableRuns.length > 10 && "max-h-96 overflow-y-auto")}>
-                        <table className="w-full text-xs">
-                          <thead className="bg-muted sticky top-0 z-10">
-                            <tr>
-                              <th className="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Name</th>
-                              <th className="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Type</th>
-                              <th className="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Timestamp</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-border">
-                            {filtered.map(run => (
-                              <tr
-                                key={run.assembly_id}
-                                onClick={() => setLoadRunSelectedRow(run)}
-                                onDoubleClick={() => { setLoadRunSelectedRow(run); handleLoadRun(run); }}
-                                className={cn(
-                                  "cursor-pointer transition-colors",
-                                  loadRunSelectedRow?.assembly_id === run.assembly_id
-                                    ? "bg-primary/10"
-                                    : "hover:bg-muted/40"
-                                )}
-                              >
-                                <td className="px-4 py-2 font-mono font-semibold text-foreground truncate max-w-[240px]">{run.run_name}</td>
-                                <td className="px-4 py-2 font-mono text-foreground whitespace-nowrap">{run.experiment_type}</td>
-                                <td className="px-4 py-2 font-mono text-muted-foreground whitespace-nowrap">{(() => {
-                                  // Prefer Nextflow's reported finish time; trim seconds to minute precision
-                                  const ts = run.finished_at || run.created_at;
-                                  return ts ? ts.replace(/(\d{1,2}:\d{2}):\d{2}/, "$1") : "—";
-                                })()}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </>
-                );
-              })()
-            )}
-
-            <div className="flex gap-2 justify-end pt-1">
-              <button
-                onClick={() => setLoadRunModal(false)}
-                className="px-4 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-muted/60 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleLoadRun()}
-                disabled={!loadRunSelectedRow || loadRunLoading}
-                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {loadRunLoading ? <RefreshCw size={11} className="animate-spin" /> : <FolderOpen size={11} />}
-                Load Selected Run
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ── Load Run panel is rendered inline in the main row above (slide-in, resizable) ── */}
 
       {/* ── Edit Run modal ────────────────────── */}
       {editRunModal && (
