@@ -6,7 +6,7 @@ set -e
 # Command-line argument usage
 print_usage() {
     cat <<USAGE
-Usage: $(basename "$0") [-h] [--help] --deploy Docker --data_dir <DATA_ROOT> --mira_image <MIRA_IMAGE> [--react_port <REACT_PORT>]
+Usage: $(basename "$0") [-h] [--help] --deploy Docker --data_dir <DATA_ROOT> --mira_image <MIRA_IMAGE> [--react_port <REACT_PORT>] [--api_port <API_PORT>]
 
 Arguments:
   Required:
@@ -17,6 +17,8 @@ Arguments:
   Optional:
   --react_port <REACT_PORT>         Host port to expose MIRA REACT on (Default: 5175). 
                                     If the specified port is in use, an available port will be selected automatically.
+  --api_port <API_PORT>             Host port to expose MIRA API on (Default: None). 
+                                    If a port is specified and is in use, an available port will be selected automatically.
   -h, --help                        Show help message and exit.
 USAGE
 }
@@ -31,6 +33,7 @@ DEPLOY="Docker"
 DATA_ROOT=""
 MIRA_IMAGE=""
 REACT_PORT="5175"
+API_PORT=""
 
 # Parse named arguments
 while [[ $# -gt 0 ]]; do
@@ -54,7 +57,11 @@ while [[ $# -gt 0 ]]; do
         --react_port)
             REACT_PORT="$2"
             shift 2
-            ;;     
+            ;;
+        --api_port)
+            API_PORT="$2"
+            shift 2
+            ;;
         *)
             echo "Error: Unknown argument '$1'." >&2
             usage
@@ -91,6 +98,14 @@ echo "Checking REACT port..."
 if ! [[ "${REACT_PORT}" =~ ^[0-9]+$ ]] || (( REACT_PORT < 1 || REACT_PORT > 65535 )); then
   echo "Error: --react_port must be an integer between 1 and 65535, got '${REACT_PORT}'." >&2
   exit 1
+fi
+
+# Check API port if provided
+if [[ -n "${API_PORT}" ]]; then
+    if ! [[ "${API_PORT}" =~ ^[0-9]+$ ]] || (( API_PORT < 1 || API_PORT > 65535 )); then
+        echo "Error: --api_port must be an integer between 1 and 65535, got '${API_PORT}'." >&2
+        exit 1
+    fi
 fi
 
 # Cache sudo credentials once up front, and keep them alive in the background so the several
@@ -192,8 +207,48 @@ find_available_port () {
 # Check if the REACT port is available, otherwise find an available port
 REACT_PORT=$(find_available_port "${REACT_PORT}")
 
+# If API_PORT is provided, check if it's available, otherwise find an available port
+if [[ -n "${API_PORT}" ]]; then
+    API_PORT=$(find_available_port "${API_PORT}")
+fi
+
 echo "Configure docker-compose.yml file to initialize the containers..."
-cat > "${DATA_ROOT}/docker-compose.yml" <<EOF
+
+# If API_PORT is provided, include it in the docker-compose.yml; 
+# Otherwise, only expose REACT_PORT
+if [[ -n "${API_PORT}" ]]; then
+  cat > "${DATA_ROOT}/docker-compose.yml" <<EOF
+x-mira-image:
+  &mira-image
+  ${MIRA_IMAGE}
+
+x-data-storage-path:
+  &data-storage-path
+  ${DATA_ROOT}
+
+services:
+  mira:
+    container_name: mira
+    image: *mira-image
+    networks:
+      - mira
+    privileged: true
+    ports:
+      - ${REACT_PORT}:5175
+      - ${API_PORT}:8080
+    restart: always
+    volumes:
+      - type: bind
+        source: *data-storage-path
+        target: /data
+    working_dir: /data
+
+networks:
+  mira:
+    name: mira
+EOF
+else
+  cat > "${DATA_ROOT}/docker-compose.yml" <<EOF
 x-mira-image:
   &mira-image
   ${MIRA_IMAGE}
@@ -222,6 +277,7 @@ networks:
   mira:
     name: mira
 EOF
+fi
 
 # Start Docker containers
 echo "Start up the containers. If prompted, enter the admin password to give permissions..."
@@ -231,4 +287,7 @@ sudo docker compose -f "${DATA_ROOT}/docker-compose.yml" up -d
 echo ""
 echo "MIRA setup is complete!"
 echo "MIRA REACT will be deployed at http://localhost:${REACT_PORT}"
+if [[ -n "${API_PORT}" ]]; then
+  echo "MIRA API will be deployed at http://localhost:${API_PORT}, with interactive docs at http://localhost:${API_PORT}/docs/"
+fi
 echo ""
