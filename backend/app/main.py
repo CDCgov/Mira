@@ -39,9 +39,8 @@ from .schema_validator import (
     _DEFAULT_MIRA_STORAGE_PATH,
     _MIRA_NF_VERSION_URL,
     _MIRA_VERSION_URL,
-    _REACT_BASE_URL,
-    _REACT_INTERNAL_BASE_URL,
-    _HOST_MIRA_NF_IMAGE,
+    _MIRA_NF_IMAGE,
+    _REACT_PORT,
     validate_tbl,
     experiment_types,
     assembly_pa_schema,
@@ -92,6 +91,10 @@ from .sqlite_handler import (
 
 # Import shared logger (INFO/DEBUG -> stdout, WARNING/ERROR/CRITICAL -> stderr)
 from .logging_config import logger
+
+# Define React base URL and internal base URL for the app
+_REACT_BASE_URL = f"http://localhost:{_REACT_PORT}"
+_REACT_INTERNAL_BASE_URL = f"http://127.0.0.1:{_REACT_PORT}"
 
 # Define FastAPI app
 app = FastAPI(title = "MIRA Backend")
@@ -274,7 +277,7 @@ def health():
 @app.get("/version", response_model=Dict[str, str], summary="Get MIRA version", tags=["MIRA Utils"])
 async def check_mira_version():
     # Get current version from Docker image tag without the v
-    current_mira_nf_version = re.findall(r"[^:]+$", _HOST_MIRA_NF_IMAGE)[0].lstrip("v")
+    current_mira_nf_version = re.findall(r"[^:]+$", _MIRA_NF_IMAGE)[0].lstrip("v")
     # Get available version on Github — network errors (e.g. GitHub unreachable) shouldn't crash this endpoint
     try:
         github_mira_nf_version = requests.get(_MIRA_NF_VERSION_URL, timeout=5)
@@ -295,7 +298,7 @@ async def check_mira_version():
 
     # Read in the DESCRIPTION file from the MIRA repo to get the current version of MIRA
     # (kept inside backend/ so it is included in the Docker build context / dev bind mount)
-    current_mira_version_file = f"{os.path.dirname(os.path.realpath(__file__))}/../DESCRIPTION"
+    current_mira_version_file = os.path.realpath(f"{os.path.dirname(os.path.realpath(__file__))}/../../DESCRIPTION")
     current_mira_version = "unknown"
     with open(current_mira_version_file, "r") as f:
         current_mira_version = re.search(r"Version:\s*(\S+)", f.read()).group(1)

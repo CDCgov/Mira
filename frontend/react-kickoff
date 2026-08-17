@@ -9,13 +9,11 @@ FRONTEND_DIR="$( realpath $(dirname "${BASH_SOURCE[0]}") )"
 # Command-line argument usage
 print_usage() {
     cat <<USAGE
-Usage: $(basename "$0") [h] [--help] --host_url <HOST_URL> --host <HOST> --react_port <REACT_PORT> --api_port <API_PORT>
+Usage: $(basename "$0") [-h] [--help] --react_port <REACT_PORT> --api_port <API_PORT>
 
 Arguments:
-  --host_url <HOST_URL>       Hostname used to build the API base URL written to .env. (default: localhost)
-  --host <HOST>               Address the Vite dev server binds to. (default: 0.0.0.0)
-  --react_port <REACT_PORT>   Port the React dev server runs on. (default: 5175)
-  --api_port <API_PORT>       Port used to build the API base URL written to .env. (default: 8080)
+  --react_port <REACT_PORT>   Port to serve the React app on. (Default: 5175)
+  --api_port <API_PORT>       Port to serve the API app on. (Default: 8080)
   -h, --help                  Show this help message and exit.
 USAGE
 }
@@ -25,9 +23,7 @@ usage() {
     exit 1
 }
 
-# Initialize local server variables
-HOST_URL="localhost"
-HOST="0.0.0.0"
+# Initialize variables
 REACT_PORT="5175"
 API_PORT="8080"
 
@@ -37,14 +33,6 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             print_usage
             exit 0
-            ;;
-        --host_url)
-            HOST_URL="$2"
-            shift 2
-            ;;
-        --host)
-            HOST="$2"
-            shift 2
             ;;
         --react_port)
             REACT_PORT="$2"
@@ -62,10 +50,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Make sure required arguments are provided
-if [[ -z "${HOST_URL}" || -z "${HOST}" || -z "${REACT_PORT}" || -z "${API_PORT}" ]]; then
+if [[ -z "${REACT_PORT}" || -z "${API_PORT}" ]]; then
     MISSING_ARGS=()
-    [[ -z "${HOST_URL}" ]] && MISSING_ARGS+=("--host_url")
-    [[ -z "${HOST}" ]] && MISSING_ARGS+=("--host")
     [[ -z "${REACT_PORT}" ]] && MISSING_ARGS+=("--react_port")
     [[ -z "${API_PORT}" ]] && MISSING_ARGS+=("--api_port")
     echo ""
@@ -88,13 +74,32 @@ check_available_port () {
 # Check if the requested ports are available
 check_available_port "REACT" "${REACT_PORT}"
 
-# Generate .env to be used by the app
-ENV_FILE="${FRONTEND_DIR}/.env"
-echo ""
-echo "Writing VITE_API_BASE_URL=http://${HOST_URL}:${API_PORT} to ${ENV_FILE}"
-cat > "${ENV_FILE}" <<EOF
-VITE_API_BASE_URL="http://${HOST_URL}:${API_PORT}"
+# Update API port in vite.config.js
+VITE_CONFIG_FILE="${FRONTEND_DIR}/vite.config.js"
+if [[ -f "${VITE_CONFIG_FILE}" ]]; then
+    echo ""
+    echo "Updating API Port in ${VITE_CONFIG_FILE} to Port ${API_PORT}"
+    sed -i "s/127.0.0.1:[0-9]\+/127.0.0.1:${API_PORT}/" "${VITE_CONFIG_FILE}"
+else
+    cat > "${VITE_CONFIG_FILE}" <<EOF
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:${API_PORT}',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
+      },
+    },
+  },
+})
 EOF
+fi
 
 # Navigate to frontend directory
 cd "${FRONTEND_DIR}"
@@ -102,9 +107,9 @@ cd "${FRONTEND_DIR}"
 # Start the React app in development mode
 echo ""
 echo "---------------------------------------------------------------------"
-echo "- MIRA REACT will be deployed at http://${HOST_URL}:${REACT_PORT}"
+echo "- MIRA REACT will be deployed at http://localhost:${REACT_PORT}"
 echo "---------------------------------------------------------------------"
 echo ""
 
 # Install dependencies listed in package-lock.json and clean npm cache
-npm install && npm run dev -- --host "${HOST}" --port "${REACT_PORT}"
+npm install && npm run dev -- --host "0.0.0.0" --port "${REACT_PORT}"

@@ -19,9 +19,10 @@ import subprocess
 
 # Import schema validator 
 from .schema_validator import (
+    _DEFAULT_DATA_STORAGE_PATH,
     _DEFAULT_MIRA_STORAGE_PATH,
-    _HOST_MIRA_NF_IMAGE,
-    _HOST_MIRA_STORAGE_PATH,
+    _MIRA_NF_IMAGE,
+    _DEPLOY_TYPE,
     assembly_pa_schema,
     assembly_db_schema,
     ont_samplesheet_pa_schema,
@@ -52,20 +53,26 @@ from .logging_config import logger
 
 # Function to remove previous pipeline outputs for a given run directory
 def _remove_previous_pipeline_outputs(run_dir: str) -> None:
-    storage_root = os.path.realpath(_DEFAULT_MIRA_STORAGE_PATH)
+
+    # Get the absolute path of the data storage directory
+    data_root = os.path.realpath(_DEFAULT_DATA_STORAGE_PATH)
+
+    # Remove artifacts from the current run directory.
     output_paths = [
         os.path.join(run_dir, "outputs"),
         *glob.glob(os.path.join(run_dir, ".nextflow.log*")),
     ]
+
+    # Define placeholder to store paths that could not be removed due to permission issues
     permission_denied_paths = []
 
-    # Check each output path to ensure it is within the MIRA storage directory and attempt to remove it
+    # Check each output path to ensure it is within the data directory before attempting to remove it
     for output_path in output_paths:
         if not os.path.lexists(output_path):
             continue
         resolved_path = os.path.realpath(output_path)
-        if os.path.commonpath([storage_root, resolved_path]) != storage_root:
-            raise ValueError(f"Refusing to remove pipeline output outside MIRA storage: {output_path}")
+        if os.path.commonpath([data_root, resolved_path]) != data_root:
+            raise ValueError(f"Refusing to remove outputs outside of data storage: {output_path}")
         try:
             if os.path.isdir(output_path) and not os.path.islink(output_path):
                 shutil.rmtree(output_path)
@@ -78,30 +85,37 @@ def _remove_previous_pipeline_outputs(run_dir: str) -> None:
     if not permission_denied_paths:
         return
 
-    # Prepare the list of container paths for the permission denied outputs
-    container_paths = []
-    for output_path in permission_denied_paths:
-        container_paths.append(f"/data/{os.path.relpath(output_path, storage_root)}")
+    # If the deployment type is Local, remove the outputs folder via a Docker container
+    if _DEPLOY_TYPE == "Local":
 
-    try:
-        subprocess.run(
-            [
-                "docker", "run", "--rm",
-                "-v", f"{_HOST_MIRA_STORAGE_PATH}:/data",
-                _HOST_MIRA_NF_IMAGE,
-                "rm", "-rf", "--", *container_paths,
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as err:
-        detail = err.stderr.strip() or err.stdout.strip() or str(err)
-        raise PermissionError(f"Unable to clear previous pipeline outputs: {detail}") from err
+        # Prepare the list of container paths for the permission denied outputs
+        container_paths = []
+        for output_path in permission_denied_paths:
+            container_paths.append(f"/data/{os.path.relpath(output_path, data_root)}")
 
-    remaining_paths = [path for path in permission_denied_paths if os.path.lexists(path)]
-    if remaining_paths:
-        raise PermissionError(f"Unable to clear previous pipeline outputs: {', '.join(remaining_paths)}")
+        # Run the Docker container to remove the outputs folder with elevated permissions
+        try:
+            subprocess.run(
+                [
+                    "docker", "run", "--rm",
+                    "-v", f"{_DEFAULT_DATA_STORAGE_PATH}:/data",
+                    _MIRA_NF_IMAGE,
+                    "rm", "-rf", "--", *container_paths,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as err:
+            detail = err.stderr.strip() or err.stdout.strip() or str(err)
+            raise PermissionError(f"Unable to clear previous pipeline outputs: {detail}") from err
+
+        # After attempting to remove the outputs folder via Docker, check if any paths still exist
+        remaining_paths = [path for path in permission_denied_paths if os.path.lexists(path)]
+        if remaining_paths:
+            raise PermissionError(f"Unable to clear previous pipeline outputs: {', '.join(remaining_paths)}")
+    else:
+        raise PermissionError(f"Unable to clear previous pipeline outputs: {', '.join(permission_denied_paths)}")
 
 ####################################################
 #
@@ -1241,8 +1255,8 @@ def run_mira_docker(
         output_dir = os.path.join(run_dir, "outputs")
         os.makedirs(output_dir, exist_ok=True)
 
-        # Remove previous pipeline outputs, including files owned by the container user
-        _remove_previous_pipeline_outputs(run_dir = run_dir)
+        # Remove previous pipeline outputs from the current run directory
+        _remove_previous_pipeline_outputs(run_dir=run_dir)
 
         # Create the samplesheet CSV file based on instrument type
         samplesheet_path = os.path.join(run_dir, "samplesheet.csv")
@@ -1251,12 +1265,7 @@ def run_mira_docker(
         elif "ILLUMINA" in instrument.upper():
             keep_samplesheet_rows.select(["sample_id", "sample_type"]).unique().write_csv(samplesheet_path)
 
-        # Build container-side paths (_DEFAULT_MIRA_STORAGE_PATH → /data in container)
-        container_run_dir    = f"/data/{pathogen}/{instrument}/{run_name}"
-        container_samplesheet = f"{container_run_dir}/samplesheet.csv"
-        container_output_dir   = f"{container_run_dir}/outputs"
-
-        # Build docker command
+        # Reset permissions on the run directory after the pipeline finishes
         permission_cleanup = (
             'status=$?; '
             'chown -R "$HOST_UID:$HOST_GID" "$CONTAINER_RUN_DIR" || true; '
@@ -1264,38 +1273,37 @@ def run_mira_docker(
             'find "$CONTAINER_RUN_DIR" -type d -exec chmod g+s {} + || true; '
             'exit "$status"'
         )
+
+        # Set up Nextflow command and parameters 
         cmd = [
-            "docker", "run", "--privileged",
-            "-v", f"{_HOST_MIRA_STORAGE_PATH}:/data",
-            "-w", container_run_dir,
-            "-e", f"HOST_UID={os.getuid()}",
-            "-e", f"HOST_GID={os.getgid()}",
-            "-e", f"CONTAINER_RUN_DIR={container_run_dir}",
-        ]
-
-        # Cap the container to a minimum of 4 CPUs when more than 4 cores are
-        # available on the host; otherwise fall back to Docker's default (no limit).
-        # available_cpus = os.cpu_count() or 0
-        # if available_cpus > 4:
-        #     cmd.extend(["--cpus", "4"])
-
-        cmd.extend([
-            _HOST_MIRA_NF_IMAGE,
-            "bash", "-c", f'trap "{permission_cleanup}" EXIT; "$@"', "--",
             "nextflow", "run", "/MIRA-NF/main.nf",
             "-profile", "mira_nf_container",
             "--check_version", "false",
-            "--input",   container_samplesheet,
-            "--runpath", container_run_dir,
-            "--outdir",  container_output_dir,
+            "--input",   samplesheet_path,
+            "--runpath", run_dir,
+            "--outdir",  output_dir,
             "--e",       experiment_type,
-        ])
+        ]
+
+        # If running locally, the pipeline will be run through a Docker container; 
+        # Otherwise, the pipeline will be run within a container environment
+        if _DEPLOY_TYPE == "Local":
+            cmd.extend([
+                "docker", "run", "--privileged",
+                "-v", f"{_DEFAULT_DATA_STORAGE_PATH}:/data",
+                "-w", run_dir,
+                "-e", f"HOST_UID={os.getuid()}",
+                "-e", f"HOST_GID={os.getgid()}",
+                "-e", f"CONTAINER_RUN_DIR={run_dir}",
+                _MIRA_NF_IMAGE,
+                "bash", "-c", f'trap "{permission_cleanup}" EXIT; "$@"', "--",
+            ])
 
         # Add primer, subsample_reads, parquet_files, and nextclade options to the command if specified
         if primer:
             cmd.extend(["--p", primer])
         if custom_primers:
-            container_custom_primer_file = f"{container_run_dir}/{CUSTOM_PRIMER_CONFIG_FILENAME}"
+            container_custom_primer_file = f"{run_dir}/{CUSTOM_PRIMER_CONFIG_FILENAME}"
             cmd.extend(["--custom_primers", container_custom_primer_file])
             if primer_kmer_len:
                 cmd.extend(["--primer_kmer_len", str(primer_kmer_len)])
@@ -1304,10 +1312,10 @@ def run_mira_docker(
         if subsample_reads and int(subsample_reads) >= 0:
             cmd.extend(["--subsample_reads", str(int(subsample_reads))])
         if custom_irma_config:
-            container_custom_irma_config_file = f"{container_run_dir}/{CUSTOM_IRMA_CONFIG_FILENAME}"
+            container_custom_irma_config_file = f"{run_dir}/{CUSTOM_IRMA_CONFIG_FILENAME}"
             cmd.extend(["--custom_irma_config", container_custom_irma_config_file])
         if custom_qc_settings:
-            container_custom_qc_settings_file = f"{container_run_dir}/{CUSTOM_QC_SETTINGS_FILENAME}"
+            container_custom_qc_settings_file = f"{run_dir}/{CUSTOM_QC_SETTINGS_FILENAME}"
             cmd.extend(["--custom_qc_settings", container_custom_qc_settings_file])
         if parquet_files:
             cmd.extend(["--parquet_files", "true"])
@@ -1315,37 +1323,59 @@ def run_mira_docker(
             cmd.extend(["--nextclade", "true"])
 
         # Log the command for reference
-        logger.info(
-            f"Launching MIRA-NF pipeline for run '{run_name}' with command:\n" +
-            f"docker run --privileged\n" +
-            f" -v {_HOST_MIRA_STORAGE_PATH}:/data\n" +
-            f" -w {container_run_dir}\n" +
-            f" -e HOST_UID={os.getuid()}\n" +
-            f" -e HOST_GID={os.getgid()}\n" +
-            f" -e CONTAINER_RUN_DIR={container_run_dir}\n" +
-            f" {_HOST_MIRA_NF_IMAGE}\n" +
-            f" bash -c 'trap \"{permission_cleanup}\" EXIT; \"$@\"' --\n" +
-            f" nextflow run /MIRA-NF/main.nf\n" +
-            f" -profile mira_nf_container\n" +
-            f" --check_version false\n" +
-            f" --input {container_samplesheet}\n" +
-            f" --runpath {container_run_dir}\n" +
-            f" --outdir {container_output_dir}\n" +
-            f" --e {experiment_type}\n" +
-            (f" --p {primer}\n" if primer else "") +
-            (f" --custom_primers {container_run_dir}/{CUSTOM_PRIMER_CONFIG_FILENAME}\n" if custom_primers else "") +
-            (f" --primer_kmer_len {primer_kmer_len}\n" if custom_primers and primer_kmer_len else "") +
-            (f" --primer_restrict_window {primer_restrict_window}\n" if custom_primers and primer_restrict_window else "") +
-            (f" --custom_irma_config {container_run_dir}/{CUSTOM_IRMA_CONFIG_FILENAME}\n" if custom_irma_config else "") +
-            (f" --custom_qc_settings {container_run_dir}/{CUSTOM_QC_SETTINGS_FILENAME}\n" if custom_qc_settings else "") +
-            (f" --subsample_reads {int(subsample_reads)}\n" if subsample_reads and int(subsample_reads) >= 0 else "") +
-            (f" --parquet_files true\n" if parquet_files else "") +
-            (f" --nextclade true\n" if nextclade else ""),
-        )
+        if _DEPLOY_TYPE == "Local":
+            logger.info(
+                f"Launching MIRA-NF pipeline for run '{run_name}' with command:\n" +
+                f"docker run --privileged\n" +
+                f" -v {_DEFAULT_DATA_STORAGE_PATH}:/data\n" +
+                f" -w {run_dir}\n" +
+                f" -e HOST_UID={os.getuid()}\n" +
+                f" -e HOST_GID={os.getgid()}\n" +
+                f" -e CONTAINER_RUN_DIR={run_dir}\n" +
+                f" {_MIRA_NF_IMAGE}\n" +
+                f" bash -c 'trap \"{permission_cleanup}\" EXIT; \"$@\"' --\n" +
+                f" nextflow run /MIRA-NF/main.nf\n" +
+                f" -profile mira_nf_container\n" +
+                f" --check_version false\n" +
+                f" --input {samplesheet_path}\n" +
+                f" --runpath {run_dir}\n" +
+                f" --outdir {output_dir}\n" +
+                f" --e {experiment_type}\n" +
+                (f" --p {primer}\n" if primer else "") +
+                (f" --custom_primers {run_dir}/{CUSTOM_PRIMER_CONFIG_FILENAME}\n" if custom_primers else "") +
+                (f" --primer_kmer_len {primer_kmer_len}\n" if custom_primers and primer_kmer_len else "") +
+                (f" --primer_restrict_window {primer_restrict_window}\n" if custom_primers and primer_restrict_window else "") +
+                (f" --custom_irma_config {run_dir}/{CUSTOM_IRMA_CONFIG_FILENAME}\n" if custom_irma_config else "") +
+                (f" --custom_qc_settings {run_dir}/{CUSTOM_QC_SETTINGS_FILENAME}\n" if custom_qc_settings else "") +
+                (f" --subsample_reads {int(subsample_reads)}\n" if subsample_reads and int(subsample_reads) >= 0 else "") +
+                (f" --parquet_files true\n" if parquet_files else "") +
+                (f" --nextclade true\n" if nextclade else ""),
+            )
+        else:
+            logger.info(
+                f"Launching MIRA-NF pipeline for run '{run_name}' with command:\n" +
+                f"nextflow run /MIRA-NF/main.nf\n" +
+                f" -profile mira_nf_container\n" +
+                f" --check_version false\n" +
+                f" --input {samplesheet_path}\n" +
+                f" --runpath {run_dir}\n" +
+                f" --outdir {output_dir}\n" +
+                f" --e {experiment_type}\n" +
+                (f" --p {primer}\n" if primer else "") +
+                (f" --custom_primers {run_dir}/{CUSTOM_PRIMER_CONFIG_FILENAME}\n" if custom_primers else "") +
+                (f" --primer_kmer_len {primer_kmer_len}\n" if custom_primers and primer_kmer_len else "") +
+                (f" --primer_restrict_window {primer_restrict_window}\n" if custom_primers and primer_restrict_window else "") +
+                (f" --custom_irma_config {run_dir}/{CUSTOM_IRMA_CONFIG_FILENAME}\n" if custom_irma_config else "") +
+                (f" --custom_qc_settings {run_dir}/{CUSTOM_QC_SETTINGS_FILENAME}\n" if custom_qc_settings else "") +
+                (f" --subsample_reads {int(subsample_reads)}\n" if subsample_reads and int(subsample_reads) >= 0 else "") +
+                (f" --parquet_files true\n" if parquet_files else "") +
+                (f" --nextclade true\n" if nextclade else ""),
+            )            
 
         # Fire and forget — launch in background, do not block
         proc = subprocess.Popen(
             cmd,
+            cwd=run_dir,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,

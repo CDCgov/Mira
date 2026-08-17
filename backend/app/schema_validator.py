@@ -1,5 +1,5 @@
 ###########################    Description    ##################################
-# Pandera + Polars schema validation
+# Global variables + Pandera + Polars schema validation
 ################################################################################
 
 # Import packages for dataframe validation
@@ -11,9 +11,9 @@ import pandera.errors as pe
 from typing import Dict, List, Optional, Any
 
 # Import general python packages
+import re
 import os
 import yaml
-import sqlite3
 
 # Define app version
 _MIRA_NF_VERSION_URL = "https://raw.githubusercontent.com/CDCgov/Mira-nf/master/DESCRIPTION"
@@ -63,19 +63,12 @@ def get_mira_nf_image() -> str:
     return mira_nf_image
 
 # Get REACT base URL from config.yml or environment variable
-def get_react_base_url() -> str:
+def get_react_port() -> str:
     config = _read_config_yml()
-    react_base_url = config.get("REACT_BASE_URL", None)
-    if not react_base_url:
-        raise ValueError("REACT_BASE_URL must be set in config.yml.")
-    return react_base_url
-
-def get_react_internal_base_url() -> str:
-    config = _read_config_yml()
-    react_internal_base_url = config.get("REACT_INTERNAL_BASE_URL", None)
-    if not react_internal_base_url:
-        raise ValueError("REACT_INTERNAL_BASE_URL must be set in config.yml.")
-    return react_internal_base_url
+    react_port = config.get("REACT_PORT", None)
+    if not react_port:
+        raise ValueError("REACT_PORT must be set in config.yml.")
+    return react_port
 
 # Define data storage path for MIRA and SeqSender, allowing override via environment variable
 _DEFAULT_DATA_STORAGE_PATH = get_data_storage_path()
@@ -93,29 +86,20 @@ _ensure_storage_directory(_DEFAULT_MIRA_STORAGE_PATH)
 _DEFAULT_SEQSENDER_STORAGE_PATH = os.path.join(_DEFAULT_DATA_STORAGE_PATH, "SeqSender")
 _ensure_storage_directory(_DEFAULT_SEQSENDER_STORAGE_PATH)
 
-# Define local host storage path for MIRA to run in Docker
-deploy_type = get_deploy_type()
-if deploy_type == "Docker":
-    _HOST_DATA_STORAGE_PATH = os.getenv("HOST_DATA_STORAGE_PATH", None)
-    if not _HOST_DATA_STORAGE_PATH:
-        raise ValueError("HOST_DATA_STORAGE_PATH must be set in docker-compose.yml as an environment variable.")
-    _HOST_MIRA_STORAGE_PATH = os.path.join(_HOST_DATA_STORAGE_PATH, "MIRA")
-elif deploy_type == "Local":
-    _HOST_MIRA_STORAGE_PATH = _DEFAULT_MIRA_STORAGE_PATH
+# Get deployment type from config.yml
+_DEPLOY_TYPE = get_deploy_type()
 
 # DEFINE MIRA-NF DOCKER IMAGE FOR THE APP
-_HOST_MIRA_NF_IMAGE = get_mira_nf_image()
+_MIRA_NF_IMAGE = get_mira_nf_image()
 
 # Define React base URL for the app
-_REACT_BASE_URL = get_react_base_url()
-_REACT_INTERNAL_BASE_URL = get_react_internal_base_url()
+_REACT_PORT = get_react_port()
 
-# print(f"Deploy Type: {deploy_type}")
-# print(f"Using MIRA-NF Docker Image: {_HOST_MIRA_NF_IMAGE}")
-# print(f"Using Data Storage Path: {_DEFAULT_DATA_STORAGE_PATH}")
-# print(f"Using MIRA Storage Path: {_DEFAULT_MIRA_STORAGE_PATH}")
-# print(f"Using Docker MIRA Storage Path: {_HOST_MIRA_STORAGE_PATH}")
-# print(f"Using React Base URL: {_REACT_BASE_URL}")
+# print(f"Deploy Type: {_DEPLOY_TYPE}")
+# print(f"MIRA-NF Image: {_MIRA_NF_IMAGE}")
+# print(f"Data Storage Path: {_DEFAULT_DATA_STORAGE_PATH}")
+# print(f"MIRA Storage Path: {_DEFAULT_MIRA_STORAGE_PATH}")
+# print(f"React Port: {_REACT_PORT}")
 
 # ---------------------------------------------------------------------------
 # Helpers

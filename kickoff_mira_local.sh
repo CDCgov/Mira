@@ -9,19 +9,19 @@ SCRIPT_DIR="$( realpath $(dirname "${BASH_SOURCE[0]}") )"
 # Command-line argument usage
 print_usage() {
     cat <<USAGE
-Usage: $(basename "$0") [-h] [--help] --deploy Local --data_dir <DATA_ROOT> --mira_nf_image <MIRA_NF_IMAGE> [--host_url <HOST_URL>] [--host <HOST>] [--api_port <API_PORT>] [--react_port <REACT_PORT>]
+Usage: $(basename "$0") [-h] [--help] --deploy Local --data_dir <DATA_ROOT> --mira_nf_image <MIRA_NF_IMAGE> [--react_port <REACT_PORT>] [--api_port <API_PORT>]
 
 Arguments:
   Required:
-  --deploy <DEPLOY>                 Deployment mode, must be 'Local' or 'Docker'. (Default: Local)
-  --data_dir <DATA_ROOT>            Path to the host directory used for MIRA data storage. Must already exist.
-  --mira_nf_image <MIRA_NF_IMAGE>   Docker image (name:tag) for the MIRA Nextflow pipeline.
+  --deploy <DEPLOY>                 Deployment mode, must be 'Local' for this script. (Default: Local)
+  --data_dir <DATA_ROOT>            Path to host directory to store outputs and logs from MIRA applications.
+  --mira_nf_image <MIRA_NF_IMAGE>   Docker image (name:tag) to run the MIRA Nextflow pipeline.
 
   Optional:
-  --host_url <HOST_URL>             Hostname used to build the URLs printed after startup. (Default: localhost)
-  --host <HOST>                     Address the backend/frontend servers bind to. (Default: 0.0.0.0)
-  --api_port <API_PORT>             Port to run the MIRA backend API on. (Default: 8080)
-  --react_port <REACT_PORT>         Port to run the MIRA React frontend on. (Default: 5175)
+  --react_port <REACT_PORT>         Host port to expose MIRA REACT on (Default: 5175). 
+                                    If the specified port is in use, an available port will be selected automatically.
+  --api_port <API_PORT>             Host port to expose MIRA API on (Default: 8080). 
+                                    If the specified port is in use, an available port will be selected automatically.
   -h, --help                        Show this help message and exit.
 USAGE
 }
@@ -31,16 +31,12 @@ usage() {
     exit 1
 }
 
-# Initialize deployment variables
+# Initialize variables
 DEPLOY="Local"
 DATA_ROOT=""
 MIRA_NF_IMAGE=""
-
-# Initialize app variables
-HOST_URL="localhost"
-HOST="0.0.0.0"
-API_PORT="8080"
 REACT_PORT="5175"
+API_PORT="8080"
 
 # Parse named arguments
 while [[ $# -gt 0 ]]; do
@@ -61,20 +57,12 @@ while [[ $# -gt 0 ]]; do
             MIRA_NF_IMAGE="$2"
             shift 2
             ;;
-        --host_url)
-            HOST_URL="$2"
-            shift 2
-            ;;
-        --host)
-            HOST="$2"
-            shift 2
-            ;;
-        --api_port)
-            API_PORT="$2"
-            shift 2
-            ;;
         --react_port)
             REACT_PORT="$2"
+            shift 2
+            ;;    
+        --api_port)
+            API_PORT="$2"
             shift 2
             ;;
         *)
@@ -102,6 +90,25 @@ if [[ "${DEPLOY}" != "Local" ]]; then
 fi
 echo "Deployment mode: ${DEPLOY}"
 
+echo "Checking data storage..."
+if [[ ! -d "${DATA_ROOT}" ]]; then
+    echo "Error: The data directory '${DATA_ROOT}' does not exist. Please create it before proceeding." >&2
+    exit 1
+fi
+echo "Data storage directory: ${DATA_ROOT}"
+
+echo "Checking MIRA REACT port..."
+if ! [[ "${REACT_PORT}" =~ ^[0-9]+$ ]] || (( REACT_PORT < 1 || REACT_PORT > 65535 )); then
+  echo "Error: --react_port must be an integer between 1 and 65535, got '${REACT_PORT}'." >&2
+  exit 1
+fi
+
+echo "Checking MIRA API port..."
+if ! [[ "${API_PORT}" =~ ^[0-9]+$ ]] || (( API_PORT < 1 || API_PORT > 65535 )); then
+  echo "Error: --api_port must be an integer between 1 and 65535, got '${API_PORT}'." >&2
+  exit 1
+fi
+
 # Cache sudo credentials once up front, and keep them alive in the background so the several
 # sudo calls below (data storage ownership, Docker install, image pull) don't each re-prompt
 echo "Requesting permission to download software and install dependencies. If prompted, please enter the admin password to proceed..."
@@ -116,20 +123,14 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "Checking data storage..."
-if [[ ! -d "${DATA_ROOT}" ]]; then
-    echo "Error: The data directory '${DATA_ROOT}' does not exist. Please create it before proceeding." >&2
-    exit 1
-fi
-echo "Data storage directory: ${DATA_ROOT}"
-
 # Only fix ownership (requires sudo) if something under DATA_ROOT isn't already ours
 echo "Checking data storage ownership and permissions..."
 if find "${DATA_ROOT}" -not -user "$(whoami)" -print -quit | grep -q .; then
     echo "Fixing ownership of ${DATA_ROOT}. If prompted, please enter the admin password to proceed..."
     sudo chown -R "$(id -u):$(id -g)" "${DATA_ROOT}"
 fi
-chmod -R 775 "${DATA_ROOT}"
+find "${DATA_ROOT}" -type d -exec chmod 2775 {} +
+find "${DATA_ROOT}" -type f -exec chmod 664 {} +
 
 # Check if micromamba is installed, and if not install it
 echo "Checking for Micromamba..."
@@ -163,7 +164,8 @@ if ! command -v docker &> /dev/null; then
             curl -fsSL https://get.docker.com | sudo sh
             sudo systemctl enable --now docker
             sudo usermod -aG docker "${USER}"
-            echo "Docker was installed. Log out and back in (or run 'newgrp docker') for group changes to take effect."
+            echo "Docker was installed. Log out and back in (or run 'newgrp docker') for group changes to take effect. Afterwards, re-run this script to continue the MIRA setup."
+            exit 1
             ;;
         Darwin)
             if ! command -v brew &> /dev/null; then
@@ -189,19 +191,17 @@ if ! command -v docker &> /dev/null; then
             ;;
     esac
 fi
-echo "Docker: $(docker --version)"
 
-# Check if Docker Compose (the 'docker compose' plugin, bundled with modern Docker installs) is available
-echo "Checking for Docker Compose..."
-if ! docker compose version &> /dev/null; then
-    echo "Error: Docker Compose plugin is not available. Please update Docker/Docker Desktop to a version that includes 'docker compose'." >&2
+# Check if Docker is running and accessible
+if ! sudo docker info >/dev/null 2>&1; then
+    echo "Error: Docker is installed but the Docker daemon is not running or accessible." >&2
     exit 1
 fi
-echo "Docker Compose: $(docker compose version --short)"
+echo "Docker: $(sudo docker --version)"
 
 # Check if the MIRA Nextflow image is available locally, and if not pull it
 echo "Checking MIRA Nextflow image. If prompted, please enter the admin password to proceed..."
-if ! sudo docker inspect "${MIRA_NF_IMAGE}" &> /dev/null; then
+if ! sudo docker image inspect "${MIRA_NF_IMAGE}" &> /dev/null; then
     if ! sudo docker pull "${MIRA_NF_IMAGE}" &> /dev/null; then
         echo "Error: Failed to pull MIRA Nextflow image '${MIRA_NF_IMAGE}'." >&2
         exit 1
@@ -258,25 +258,19 @@ fi
 find_available_port () {
   local label=$1
   local port=$2
-  # Make sure the port is an interger
-  if ! [[ "${port}" =~ ^[0-9]+$ ]]; then
-    echo "Error: ${label} port '${port}' is not a valid integer." >&2
-    exit 1
-  fi
-  local check_port=$(echo -n $(lsof -i:${port}) | wc -m)
-  while [ ${check_port} -gt 0 ]
-  do
-    port=$(printf "%04d" $(( RANDOM % 5999 + 4001 )))
-    check_port=$(echo -n $(lsof -i:${port}) | wc -m)
+  while lsof -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1; do
+    new_port=$((RANDOM % 5999 + 4001))
+    echo "${label} port ${port} is in use. Trying port ${new_port}..."
+    port=${new_port}
   done
   echo ${port}
 }
 
-# Check if the requested ports are available
-API_PORT=$(find_available_port "API" "${API_PORT}")
+# Check if the REACT port is available, otherwise find an available port
 REACT_PORT=$(find_available_port "REACT" "${REACT_PORT}")
+API_PORT=$(find_available_port "API" "${API_PORT}")
 
-# Reset frontend build artifacts left root-owned by a previous Docker-based run, so npm can rebuild them cleanly
+# Reset frontend build artifacts so npm can rebuild them cleanly
 echo "Checking for root-owned files under frontend/node_modules and frontend/dist..."
 for FRONTEND_PATH in "${SCRIPT_DIR}/frontend/node_modules" "${SCRIPT_DIR}/frontend/dist"; do
     if [[ -e "${FRONTEND_PATH}" ]] && find "${FRONTEND_PATH}" -not -user "$(whoami)" -print -quit | grep -q .; then
@@ -285,7 +279,7 @@ for FRONTEND_PATH in "${SCRIPT_DIR}/frontend/node_modules" "${SCRIPT_DIR}/fronte
     fi
 done
 
-# Run the backend and frontend setup scripts fully detached (survive this script/terminal exiting)
+# Run the backend and frontend in detached mode
 LOG_DIR="${DATA_ROOT}/logs"
 mkdir -p "${LOG_DIR}"
 API_LOG="${LOG_DIR}/api-kickoff.log"
@@ -295,22 +289,25 @@ PID_FILE="${LOG_DIR}/pid.log"
 # setsid makes each wrapper the leader of its own process group, so its PID doubles as a
 # group ID we can later kill with `kill -- -PID` to take down uvicorn/npm/vite descendants too
 # macOS doesn't have setsid, so we use a perl fallback to emulate it if needed
+# Backgrounds exactly once and echoes the real setsid/perl PID; log file must be passed in (not
+# applied by the caller) since a caller-side redirect would also swallow the echoed PID
 detach() {
+    local log_file=$1
+    shift
     if command -v setsid &> /dev/null; then
-        setsid "$@" &
+        setsid "$@" > "${log_file}" 2>&1 < /dev/null &
     else
-        nohup perl -e 'use POSIX "setsid"; setsid(); exec @ARGV' -- "$@"
+        nohup perl -e 'use POSIX "setsid"; setsid(); exec @ARGV' -- "$@" > "${log_file}" 2>&1 < /dev/null &
     fi
+    echo $!
 }
 
-detach bash "${SCRIPT_DIR}/backend/api-kickoff" --deploy "${DEPLOY}" --data_dir "${DATA_ROOT}" --mira_nf_image "${MIRA_NF_IMAGE}" --host_url "${HOST_URL}" --host "${HOST}" --api_port "${API_PORT}" --react_port "${REACT_PORT}" > "${API_LOG}" 2>&1 &
-API_PID=$!
-disown "${API_PID}"
+API_PID=$(detach "${API_LOG}" bash "${SCRIPT_DIR}/backend/api-kickoff" --deploy "${DEPLOY}" --data_dir "${DATA_ROOT}" --mira_nf_image "${MIRA_NF_IMAGE}" --api_port "${API_PORT}" --react_port "${REACT_PORT}")
+disown "${API_PID}" 2>/dev/null || true
 echo "${API_PID}" >> "${PID_FILE}"
 
-detach bash "${SCRIPT_DIR}/frontend/react-kickoff" --host_url "${HOST_URL}" --host "${HOST}" --react_port "${REACT_PORT}" --api_port "${API_PORT}" > "${REACT_LOG}" 2>&1 &
-REACT_PID=$!
-disown "${REACT_PID}"
+REACT_PID=$(detach "${REACT_LOG}" bash "${SCRIPT_DIR}/frontend/react-kickoff" --react_port "${REACT_PORT}" --api_port "${API_PORT}")
+disown "${REACT_PID}" 2>/dev/null || true
 echo "${REACT_PID}" >> "${PID_FILE}"
 
 echo ""
@@ -319,6 +316,6 @@ echo "REACT LOG: ${REACT_LOG}"
 echo "PID LOG: ${PID_FILE}"
 echo ""
 echo "MIRA setup is complete!"
-echo "MIRA API will be deployed at http://${HOST_URL}:${API_PORT}, with interactive docs at http://${HOST_URL}:${API_PORT}/docs/"
-echo "MIRA REACT will be deployed at http://${HOST_URL}:${REACT_PORT}"
+echo "MIRA API will be deployed at http://localhost:${API_PORT}, with interactive docs at http://localhost:${API_PORT}/docs/"
+echo "MIRA REACT will be deployed at http://localhost:${REACT_PORT}"
 echo ""

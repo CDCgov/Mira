@@ -100,10 +100,11 @@ async function collectFilesFromDataTransfer(dataTransfer) {
   return out;
 }
 
-/* ── API endpoints ───────────────────────────────── */
-// Backend base URL — override via VITE_API_BASE_URL (.env or docker-compose environment) to match the deployed backend port
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+/* ── API BASE URL ───────────────────────────────── */
+// Proxy API requests through the frontend dev server (see vite.config.js).
+const API_BASE = "/api";
 
+// API endpoints for the MIRA backend
 const API = {
   checkVersion:     `${API_BASE}/version`,
   listRuns:         `${API_BASE}/list/runs`,
@@ -114,18 +115,18 @@ const API = {
   deleteRun:        `${API_BASE}/delete/run`,
   copyRun:          `${API_BASE}/copy/run`,
   uploadFastqs:     `${API_BASE}/upload/fastqs`,
-  uploadCustomPrimerConfig: `${API_BASE}/upload/custom_primer_config`,
-  uploadCustomIrmaConfig:   `${API_BASE}/upload/custom_irma_config`,
-  uploadCustomQcSettings:   `${API_BASE}/upload/custom_qc_settings`,
-  downloadCustomIrmaConfig: `${API_BASE}/download/custom_irma_config`,
-  downloadCustomPrimerConfig: `${API_BASE}/download/custom_primer_config`,
-  downloadCustomQcSettings: `${API_BASE}/download/custom_qc_settings`,
-  validateRun:              `${API_BASE}/validate/run`,
-  validateCustomConfigs:    `${API_BASE}/validate/custom_configs`,
-  runMIRA:                  `${API_BASE}/run/MIRA`,
-  miraDAG:                  `${API_BASE}/MIRA/DAG`,
-  miraStatus:               `${API_BASE}/MIRA/status`,
-  miraCancel:               `${API_BASE}/cancel/MIRA`,
+  uploadCustomPrimerConfig:     `${API_BASE}/upload/custom_primer_config`,
+  uploadCustomIrmaConfig:       `${API_BASE}/upload/custom_irma_config`,
+  uploadCustomQcSettings:       `${API_BASE}/upload/custom_qc_settings`,
+  downloadCustomIrmaConfig:     `${API_BASE}/download/custom_irma_config`,
+  downloadCustomPrimerConfig:   `${API_BASE}/download/custom_primer_config`,
+  downloadCustomQcSettings:     `${API_BASE}/download/custom_qc_settings`,
+  validateRun:                  `${API_BASE}/validate/run`,
+  validateCustomConfigs:        `${API_BASE}/validate/custom_configs`,
+  runMIRA:                      `${API_BASE}/run/MIRA`,
+  miraDAG:                      `${API_BASE}/MIRA/DAG`,
+  miraStatus:                   `${API_BASE}/MIRA/status`,
+  miraCancel:                   `${API_BASE}/cancel/MIRA`,
   retrieveBarcodeAssignment:    `${API_BASE}/retrieve/barcode_assignment`,
   retrieveQcStatement:          `${API_BASE}/retrieve/qc_statement`,
   retrieveQcDecisions:          `${API_BASE}/retrieve/quality_control_decisions`,
@@ -2117,7 +2118,7 @@ function AssemblyTab() {
               className="w-full px-4 py-3 bg-muted/20 hover:bg-muted/40 transition-colors"
             >
               <StepHeader
-                icon={id === "progress" && pipelinePolling == true && assembled == false && cancelRun == false
+                icon={id === "progress" && isNewRun === true && pipelinePolling === true && assembled === false && cancelRun === false
                   ? ({ size }) => <RefreshCw size={size} className="animate-spin" />
                   : icon
                 }

@@ -14,3 +14,4 @@ frontend/dist
 .git
 .gitignore
 *.log
+docker-compose*.yml
