@@ -104,6 +104,10 @@ class RunResponse(BaseModel):
 class RunStatusRequest(RunRequest):
     pid: int = Field(..., description="Process ID of the running MIRA assembly pipeline.")
 
+# ------  TASK LOG REQUEST (REQUIRED: RUN NAME, EXPERIMENT TYPE, HASH) ----------
+class TaskLogRequest(RunRequest):
+    hash: str = Field(..., description="Execution-trace hash of the task whose error log to retrieve (e.g. '9f/df6545').")
+
 # ------  DOWNLOAD FASTA REQUEST (REQUIRED: RUN NAME, EXPERIMENT TYPE, KEY) ----------
 class DownloadFastaRequest(RunRequest):
     key: str = Field(..., description="Key for the Nextclade FASTA file to download. If not provided, the first available key will be used.")

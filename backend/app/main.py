@@ -28,6 +28,7 @@ from .schema import (
     RunRequest,
     RunResponse,
     RunStatusRequest,
+    TaskLogRequest,
     AssemblyRequest,
     DownloadFastaRequest,
     DeleteSampleRequest,
@@ -62,6 +63,7 @@ from .mira_handler import (
     copy_mira_run,
     run_mira_docker,
     create_mira_dag,
+    retrieve_task_log,
     check_mira_status,
     cancel_mira_run,
     retrieve_barcode_assignment,
@@ -824,6 +826,26 @@ async def get_mira_dag(req: RunRequest = Depends()):
             create_mira_dag,
             run_name        = req.run_name,
             experiment_type = req.experiment_type,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+@app.get("/MIRA/task_log", response_model=Dict[str, Any], summary="Get error log for a failed MIRA task", tags=["MIRA Workflows"])
+async def get_mira_task_log(req: TaskLogRequest = Depends()):
+    """
+    Locate the Nextflow work directory for a single failed task (by its trace hash)
+    and return its error log: relative path, filename, exit code, and error lines
+    with line numbers.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_task_log,
+            run_name        = req.run_name,
+            experiment_type = req.experiment_type,
+            task_hash       = req.hash,
         )
         return result
     except ValueError as err:

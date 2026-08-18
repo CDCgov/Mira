@@ -147,6 +147,7 @@ const API = {
   validateCustomConfigs:        `${API_BASE}/validate/custom_configs`,
   runMIRA:                      `${API_BASE}/run/MIRA`,
   miraDAG:                      `${API_BASE}/MIRA/DAG`,
+  miraTaskLog:                  `${API_BASE}/MIRA/task_log`,
   miraStatus:                   `${API_BASE}/MIRA/status`,
   miraCancel:                   `${API_BASE}/cancel/MIRA`,
   retrieveBarcodeAssignment:    `${API_BASE}/retrieve/barcode_assignment`,
@@ -573,7 +574,7 @@ function ResultSectionsMenu({ sections, onJump, children }) {
 /* ── Shared Plotly modebar config ───────────────── */
 // Per-row pixel height shared by the QC Decisions and Median Coverage heatmaps so
 // their rows render at the same height.
-const HEATMAP_ROW_PX = 4.125;
+const HEATMAP_ROW_PX = 14;
 
 const PLOT_CONFIG = {
   responsive: true,
@@ -604,10 +605,38 @@ const PLOT_CONFIG = {
 const N_BINS = 8;
 const PUBUGN_8 = ['#fff7fb','#ece2f0','#d0d1e6','#a6bddb','#67a9cf','#3690c0','#02818a','#016450'];
 
-function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colorize = false }) {
+// Columns shown by default in the Mira Summary table (all others start hidden).
+const MIRA_SUMMARY_DEFAULT_COLS = [
+  "sample_id",
+  "total_reads",
+  "pass_qc",
+  "reads_mapped",
+  "reference",
+  "percent_reference_coverage",
+  "median_coverage",
+  "count_minor_snv_at_or_over_5_pct",
+  "di_5prime;di_3prime",
+  "pass_fail_reason",
+  "subtype",
+  "nextclade_alias",
+];
+
+function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colorize = false, compact = false, defaultVisibleCols = null }) {
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
   const [searchQuery, setSearchQuery] = useState("");
+  const [colWidths, setColWidths] = useState({});          // { colName: px } — manually resized columns
+  const [hiddenCols, setHiddenCols] = useState(() => {
+    // When a default visible-column set is supplied, hide every other (existing) column up front.
+    if (!defaultVisibleCols) return new Set();
+    const allCols = Array.isArray(rawData)
+      ? (rawData[0] ? Object.keys(rawData[0]) : [])
+      : (rawData?.columns ?? []);
+    return new Set(allCols.filter(c => !defaultVisibleCols.includes(c)));
+  });
+  const [colFilters, setColFilters] = useState({});        // { colName: filterText } — per-column filters
+  const [colMenuOpen, setColMenuOpen] = useState(false);   // column visibility menu
+  const [showFilters, setShowFilters] = useState(false);   // per-column filter row visibility
 
   // Normalise: accept a list of row-dicts OR a pandas split-format {columns, data}
   const data = Array.isArray(rawData)
@@ -617,6 +646,7 @@ function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colo
       : [];
 
   const cols = data.length > 0 && data[0] ? Object.keys(data[0]) : [];
+  const visibleCols = cols.filter(c => !hiddenCols.has(c));
 
   // Precompute numeric column min/max for heatmap coloring (fill_irma_summary_tbl logic)
   const colRanges = useMemo(() => {
@@ -662,10 +692,53 @@ function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colo
     setPage(0);
   };
 
-  // 1. filter
+  // Per-column text filter
+  const setColFilter = (col, value) => {
+    setColFilters(prev => ({ ...prev, [col]: value }));
+    setPage(0);
+  };
+
+  // Toggle a column's visibility
+  const toggleColVisible = (col) => setHiddenCols(prev => {
+    const next = new Set(prev);
+    next.has(col) ? next.delete(col) : next.add(col);
+    return next;
+  });
+
+  // Drag-to-resize a column: capture the starting width and follow the pointer.
+  const startResize = (col, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const th = e.currentTarget.closest("th");
+    const startX = e.clientX;
+    const startW = colWidths[col] ?? (th ? th.offsetWidth : 120);
+    const onMove = (me) => {
+      const w = Math.max(50, startW + (me.clientX - startX));
+      setColWidths(prev => ({ ...prev, [col]: w }));
+    };
+    const onUp = () => {
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  // 1. filter — global search + per-column filters (all AND-combined)
   const q = searchQuery.trim().toLowerCase();
-  const filtered = q
-    ? data.filter(row => cols.some(c => (row[c] == null ? "" : String(row[c])).toLowerCase().includes(q)))
+  const activeColFilters = Object.entries(colFilters).filter(([, v]) => (v ?? "").trim() !== "");
+  const filtered = (q || activeColFilters.length > 0)
+    ? data.filter(row => {
+        if (q && !cols.some(c => (row[c] == null ? "" : String(row[c])).toLowerCase().includes(q))) return false;
+        for (const [c, fv] of activeColFilters) {
+          if (!(row[c] == null ? "" : String(row[c])).toLowerCase().includes(fv.trim().toLowerCase())) return false;
+        }
+        return true;
+      })
     : data;
 
   // 2. sort
@@ -704,7 +777,7 @@ function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colo
   };
 
   return (
-    <div className="rounded-xl border border-border overflow-hidden">
+    <div className={cn("rounded-xl border border-border overflow-hidden", compact && "w-[90vw] max-w-full")}>
       {/* header bar */}
       <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
         <div className="flex items-center gap-2">
@@ -714,6 +787,47 @@ function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colo
           <button onClick={downloadExcel} className="flex items-center gap-1 px-2 py-0.5 rounded text-xs border border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors">
             <Download size={11} /> Excel
           </button>
+          <button
+            onClick={() => setShowFilters(v => !v)}
+            className={cn(
+              "flex items-center gap-1 px-2 py-0.5 rounded text-xs border transition-colors",
+              showFilters || activeColFilters.length > 0
+                ? "border-primary text-primary bg-primary/5"
+                : "border-border text-muted-foreground hover:border-primary hover:text-primary"
+            )}
+          >
+            <FileSearch size={11} /> Filters{activeColFilters.length > 0 ? ` (${activeColFilters.length})` : ""}
+          </button>
+          <div className="relative">
+            <button
+              onClick={() => setColMenuOpen(v => !v)}
+              className={cn(
+                "flex items-center gap-1 px-2 py-0.5 rounded text-xs border transition-colors",
+                hiddenCols.size > 0
+                  ? "border-primary text-primary bg-primary/5"
+                  : "border-border text-muted-foreground hover:border-primary hover:text-primary"
+              )}
+            >
+              <FileStack size={11} /> Columns{hiddenCols.size > 0 ? ` (${cols.length - hiddenCols.size}/${cols.length})` : ""}
+            </button>
+            {colMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setColMenuOpen(false)} />
+                <div className="absolute left-0 top-full mt-1 z-50 w-52 max-h-72 overflow-y-auto rounded-lg border border-border bg-popover shadow-xl p-1">
+                  <div className="flex items-center justify-between px-2 py-1 border-b border-border mb-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Toggle Columns</span>
+                    <button onClick={() => setHiddenCols(new Set())} className="text-[10px] text-primary hover:underline">Reset</button>
+                  </div>
+                  {cols.map(c => (
+                    <label key={c} className="flex items-center gap-2 px-2 py-1 rounded text-xs cursor-pointer hover:bg-muted/60 transition-colors">
+                      <input type="checkbox" checked={!hiddenCols.has(c)} onChange={() => toggleColVisible(c)} className="accent-primary shrink-0" />
+                      <span className="font-mono truncate">{c}</span>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
           <p className="text-xs font-bold text-foreground uppercase tracking-wider">{title}</p>
         </div>
         <span className="text-xs text-muted-foreground">{data.length.toLocaleString()} total rows</span>
@@ -737,59 +851,63 @@ function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colo
         </div>
       </div>
 
-      {/* colorize bin legend */}
-      {colorize && (
-        <div className="flex items-center justify-center gap-2 px-3 py-2 border-b border-border bg-muted/10">
-          <span className="text-xs text-muted-foreground shrink-0">Percentile:</span>
-          <div className="flex overflow-hidden rounded border border-border shrink-0">
-            {PUBUGN_8.map((color, i) => {
-              const lo = Math.round((i / N_BINS) * 100);
-              const hi = Math.round(((i + 1) / N_BINS) * 100);
-              return (
-                <div key={i} className="flex flex-col items-center">
-                  <span
-                    title={`${lo}–${hi} percentile`}
-                    className="h-4 w-14 block"
-                    style={{ backgroundColor: color }}
-                  />
-                  <span className="text-[10px] leading-none text-muted-foreground mt-0.5">{lo}–{hi}%</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* table */}
       <div className="overflow-auto max-h-[360px]">
-        <table className="w-full text-xs">
+        <table className={cn("w-full text-xs", (compact || Object.keys(colWidths).length > 0) && "table-fixed")}>
+          <colgroup>
+            {visibleCols.map(c => (
+              <col key={c} style={colWidths[c] ? { width: colWidths[c] } : undefined} />
+            ))}
+          </colgroup>
           <thead className="bg-muted sticky top-0 z-10">
             <tr>
-              {cols.map(c => (
-                <th key={c} onClick={() => handleSort(c)} className="px-3 py-2 text-left font-semibold text-muted-foreground font-mono whitespace-nowrap cursor-pointer select-none hover:text-foreground transition-colors">
-                  <span className="flex items-center gap-1">
-                    {c}
+              {visibleCols.map(c => (
+                <th key={c} className={cn("relative px-3 py-2 text-left font-semibold text-muted-foreground font-mono select-none", (compact || colWidths[c]) ? "" : "whitespace-nowrap")}>
+                  <span onClick={() => handleSort(c)} className="flex items-center gap-1 cursor-pointer hover:text-foreground transition-colors">
+                    <span className={(compact || colWidths[c]) ? "truncate" : undefined}>{c}</span>
                     {sortCol === c
                       ? sortDir === "asc" ? <ArrowUp size={9} className="text-primary shrink-0" /> : <ArrowDown size={9} className="text-primary shrink-0" />
                       : <ArrowUpDown size={9} className="opacity-30 shrink-0" />}
                   </span>
+                  {/* resize grip */}
+                  <span
+                    onMouseDown={(e) => startResize(c, e)}
+                    onClick={(e) => e.stopPropagation()}
+                    title="Drag to resize column"
+                    className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-primary/40"
+                  />
                 </th>
               ))}
             </tr>
+            {showFilters && (
+              <tr className="bg-background">
+                {visibleCols.map(c => (
+                  <th key={c} className="px-1.5 py-1 border-t border-border">
+                    <input
+                      value={colFilters[c] ?? ""}
+                      onChange={(e) => setColFilter(c, e.target.value)}
+                      placeholder="Filter…"
+                      className="w-full h-6 px-1.5 rounded border border-border bg-background text-[11px] font-normal font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+                    />
+                  </th>
+                ))}
+              </tr>
+            )}
           </thead>
           <tbody>
             {pageRows.length === 0 ? (
               <tr className="border-t border-border">
-                <td colSpan={cols.length} className="px-3 py-4 text-center text-muted-foreground">
+                <td colSpan={visibleCols.length} className="px-3 py-4 text-center text-muted-foreground">
                   No rows match your search.
                 </td>
               </tr>
             ) : pageRows.map((row, i) => (
               <tr key={pageStart + i} className="border-t border-border hover:bg-muted/10">
-                {cols.map(c => {
+                {visibleCols.map(c => {
                   const cellStyle = getCellStyle(c, row[c]);
                   return (
-                    <td key={c} className={cn("px-3 py-1.5 font-mono whitespace-nowrap", !cellStyle.backgroundColor && "text-foreground")} style={cellStyle}>
+                    <td key={c} title={row[c] == null ? undefined : String(row[c])} className={cn("px-3 py-1.5 font-mono", (compact || colWidths[c]) ? "truncate" : "whitespace-nowrap", !cellStyle.backgroundColor && "text-foreground")} style={cellStyle}>
                       {row[c] == null ? <span className="text-muted-foreground/50">—</span> : String(row[c])}
                     </td>
                   );
@@ -964,6 +1082,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
 
   const [isNewRun, setIsNewRun]                       = useState(true);   // true = new run, false = loaded existing run
   const [confirmRemoveIdx, setConfirmRemoveIdx]       = useState(null); // index of sample row pending removal confirmation
+  const [taskLog, setTaskLog]                         = useState(null); // { loading, error, data, process, sample } for the failed-task log popup
   const [ontConfirmFiles, setOntConfirmFiles]         = useState(null); // [{ file, name }] awaiting confirmation when no flowcell-ID files were found
   const [ontConfirmSelected, setOntConfirmSelected]   = useState(() => new Set()); // sanitized filenames checked in the confirm dialog
   const [uploadOntFastq, setUploadOntFastq]           = useState([]);      // list of sanitized ONT fastq filenames uploaded this session
@@ -1286,6 +1405,23 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   const confirmRemoveSample = () => {
     if (confirmRemoveIdx !== null) performRemoveSample(confirmRemoveIdx);
     setConfirmRemoveIdx(null);
+  };
+
+  // Fetch and show the error log for a failed task-sample (clicked X in the Task Progress grid).
+  const openTaskLog = async (task, process, sample) => {
+    if (!task?.hash || !selectedRun?.run_name || !selectedRun?.experiment_type) {
+      setTaskLog({ loading: false, error: "No log is available for this task (its work directory may have been cleaned up).", data: null, process, sample });
+      return;
+    }
+    setTaskLog({ loading: true, error: null, data: null, process, sample });
+    try {
+      const res = await fetch(`${API.miraTaskLog}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&hash=${encodeURIComponent(task.hash)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to load task log");
+      setTaskLog({ loading: false, error: null, data, process, sample });
+    } catch (err) {
+      setTaskLog({ loading: false, error: err.message, data: null, process, sample });
+    }
   };
 
   // Export the sample sheet in CSV or Excel format
@@ -1708,6 +1844,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     setConfirmRemoveIdx(null);
     setOntConfirmFiles(null);
     setOntConfirmSelected(new Set());
+    setTaskLog(null);
     setShowDAG(false);
     setFastqDragOver(false);
     setUploadOntError(null);
@@ -2497,8 +2634,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   const resultSections = [
     { id: "result-section-barcode",  label: "Barcode Assignment", show: resultBarcodeAssignments !== null },
     { id: "result-section-qc",       label: "QC Decisions",       show: resultQcDecisions !== null },
-    { id: "result-section-heatmap",  label: "Median Coverage Heatmap",   show: resultCoverageHeatmap !== null },
     { id: "result-section-summary",  label: "Mira Summary",       show: resultMiraSummary !== null },
+    { id: "result-section-heatmap",  label: "Median Coverage Heatmap",   show: resultCoverageHeatmap !== null },
     { id: "result-section-coverage", label: "Sample Sankey & Coverage Plots",    show: resultSampleCoverageList !== null },
     { id: "result-section-variants", label: "AA Variants",        show: resultVariants !== null },
     { id: "result-section-snvs",     label: "Minor Variants",         show: resultMinorSnvs !== null },
@@ -3301,9 +3438,16 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                           const knownSet = new Set(samples);
 
                           const rank = { failed: 3, running: 2, success: 1 };
-                          const bucketOf = (t) => (t.status === "FAILED" || t.process_name === "PASSFAILED")
+                          // A task-sample is FAILED only when it has a non-zero exit code; a "0"
+                          // exit (or COMPLETED status) is success; anything still in-flight is running.
+                          const exitOf = (t) => (t.exit_code ?? "").toString().trim();
+                          const isFailedExit = (t) => {
+                            const e = exitOf(t);
+                            return e !== "" && e !== "-" && !isNaN(Number(e)) && Number(e) !== 0;
+                          };
+                          const bucketOf = (t) => isFailedExit(t)
                             ? "failed"
-                            : t.status === "COMPLETED" ? "success" : "running";
+                            : (t.status === "COMPLETED" || exitOf(t) === "0") ? "success" : "running";
                           const bump = (map, key, bucket) => {
                             const prev = map.get(key);
                             if (!prev || rank[bucket] > rank[prev]) map.set(key, bucket);
@@ -3312,26 +3456,15 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                           // real sample, e.g. NEXTFLOWSAMPLESHEET (1)) get one status applied to every column.
                           const cellMap = new Map();
                           const rowLevelMap = new Map();
+                          const failedTaskMap = new Map(); // key -> the failed task (for its log/hash on click)
                           tasks.forEach(t => {
                             const p = t.process_name || "unknown";
                             const bucket = bucketOf(t);
-                            if (t.sample && knownSet.has(t.sample)) {
-                              bump(cellMap, `${p}||${t.sample}`, bucket);
-                            } else {
-                              bump(rowLevelMap, p, bucket);
-                            }
-                          });
-                          // PASSFAILED only runs for samples that FAIL QC, so passing samples leave the
-                          // row empty. Once the run is done, mark it per sample: red X for a QC failure,
-                          // green check for samples that finished without any failure.
-                          const runDone = ["COMPLETED", "FAILED", "CANCELED"].includes(pipelineDAG?.workflows?.status);
-                          const passFailedSamples = new Set();
-                          const anyFailedSamples = new Set();
-                          tasks.forEach(t => {
-                            if (t.sample && knownSet.has(t.sample)) {
-                              if (t.process_name === "PASSFAILED") passFailedSamples.add(t.sample);
-                              if (bucketOf(t) === "failed") anyFailedSamples.add(t.sample);
-                            }
+                            const perSample = t.sample && knownSet.has(t.sample);
+                            const key = perSample ? `${p}||${t.sample}` : `__row__${p}`;
+                            if (perSample) bump(cellMap, `${p}||${t.sample}`, bucket);
+                            else bump(rowLevelMap, p, bucket);
+                            if (bucket === "failed") failedTaskMap.set(key, t);
                           });
                           return (
                             <div className="rounded-xl border border-border overflow-hidden">
@@ -3353,16 +3486,22 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                                       <tr key={p} className="border-b border-border/50">
                                         <td className="sticky left-0 z-10 bg-background px-3 py-1.5 font-mono text-foreground border-r border-border whitespace-nowrap">{p}</td>
                                         {samples.map(s => {
-                                          let bucket = cellMap.get(`${p}||${s}`) ?? rowLevelMap.get(p);
-                                          if (p === "PASSFAILED") {
-                                            bucket = passFailedSamples.has(s)
-                                              ? "failed"
-                                              : (runDone && !anyFailedSamples.has(s) ? "success" : undefined);
-                                          }
+                                          const bucket = cellMap.get(`${p}||${s}`) ?? rowLevelMap.get(p);
+                                          const failedTask = bucket === "failed"
+                                            ? (failedTaskMap.get(`${p}||${s}`) ?? failedTaskMap.get(`__row__${p}`))
+                                            : null;
                                           return (
                                             <td key={s} className="px-3 py-1.5 text-center align-middle">
                                               {bucket === "success" && <Check size={13} className="inline text-emerald-500" />}
-                                              {bucket === "failed" && <X size={13} className="inline text-red-500" />}
+                                              {bucket === "failed" && (
+                                                <button
+                                                  onClick={() => openTaskLog(failedTask, p, s)}
+                                                  title="View error log"
+                                                  className="inline-flex items-center justify-center text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 rounded transition-colors"
+                                                >
+                                                  <X size={13} />
+                                                </button>
+                                              )}
                                               {bucket === "running" && <RefreshCw size={13} className="inline text-sky-500 animate-spin" />}
                                             </td>
                                           );
@@ -3489,10 +3628,14 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                           </div>
                         );
                       }
-                      // Size the plot height to the number of rows so each row matches the
-                      // per-row height of the Median Coverage Heatmap below (HEATMAP_ROW_PX).
-                      const qcYLabels = resultQcDecisions.data?.[0]?.y ?? [];
-                      const qcHeight = Math.max(60, qcYLabels.length * HEATMAP_ROW_PX + 120);
+                      // The heatmap trace stores x/y as parallel per-cell arrays, so size by the
+                      // number of UNIQUE rows/columns rather than the raw array length.
+                      const qcRawX = resultQcDecisions.data?.[0]?.x ?? [];
+                      const qcRawY = resultQcDecisions.data?.[0]?.y ?? [];
+                      const qcCols = [...new Set(qcRawX)];
+                      const qcRows = [...new Set(qcRawY)];
+                      const qcManyCols = qcCols.length > 12;
+                      const qcHeight = Math.max(120, qcRows.length * HEATMAP_ROW_PX + 120);
                       return (
                         <div id="result-section-qc" className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
@@ -3520,86 +3663,41 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                               </div>
                             );
                           })()}
-                          <div className="p-2 overflow-x-auto">
-                            <div style={{ minWidth: resultQcDecisions.layout?.width ? `${resultQcDecisions.layout.width}px` : "100%" }}>
+                          <div className="p-2">
+                            <div style={{ width: "100%" }}>
                               <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
                                 <Plot
                                   data={resultQcDecisions.data ?? []}
                                   layout={{
                                     ...(resultQcDecisions.layout ?? {}),
                                     autosize: true,
+                                    width: undefined,
+                                    height: undefined,
                                     margin: { l: 60, r: 20, t: 40, b: 20 },
                                     paper_bgcolor: "transparent",
                                     plot_bgcolor: "transparent",
                                     font: { size: 11 },
-                                    xaxis: { ...(resultQcDecisions.layout?.xaxis ?? {}), side: "top" },
+                                    xaxis: {
+                                      ...(resultQcDecisions.layout?.xaxis ?? {}),
+                                      type: "category",
+                                      side: "top",
+                                      automargin: true,
+                                      tickmode: "linear",
+                                      dtick: 1,
+                                      tickangle: qcManyCols ? -60 : 0,
+                                      tickfont: { size: qcManyCols ? 8 : 10 },
+                                    },
+                                    yaxis: {
+                                      ...(resultQcDecisions.layout?.yaxis ?? {}),
+                                      type: "category",
+                                      automargin: true,
+                                      tickmode: "linear",
+                                      dtick: 1,
+                                      tickfont: { size: qcManyCols ? 10 : 10 },
+                                    },
                                   }}
                                   config={PLOT_CONFIG}
                                   style={{ width: "100%", height: qcHeight }}
-                                  useResizeHandler
-                                />
-                              </Suspense>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })()}
-
-                    {/* ── 5b. Coverage Heatmap ── */}
-                    {assembled && resultCoverageHeatmap !== null && (() => {
-                      if ((resultCoverageHeatmap.data ?? []).length === 0) {
-                        return (
-                          <div id="result-section-heatmap">
-                            <EmptyResultTable title="Median Coverage Heatmap" />
-                          </div>
-                        );
-                      }
-                      // Fit the entire heatmap within the container view — size only the
-                      // height to the number of rows so every y label renders, and let the
-                      // width fill the available container so no horizontal scrolling is needed.
-                      const heatmapXLabels = resultCoverageHeatmap.data?.[0]?.x ?? [];
-                      const heatmapYLabels = resultCoverageHeatmap.data?.[0]?.y ?? [];
-                      const heatmapMinHeight = Math.max(
-                        260,
-                        heatmapYLabels.length * HEATMAP_ROW_PX + 120
-                      );
-                      return (
-                        <div id="result-section-heatmap" className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
-                          <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
-                            <p className="text-xs font-bold text-foreground uppercase tracking-wider">Median Coverage Heatmap</p>
-                          </div>
-                          <div className="p-2">
-                            <div style={{ width: "100%" }}>
-                              <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
-                                <Plot
-                                  data={resultCoverageHeatmap.data ?? []}
-                                  layout={{
-                                    ...(resultCoverageHeatmap.layout ?? {}),
-                                    autosize: true,
-                                    width: undefined,
-                                    margin: { l: 100, r: 20, t: 90, b: 20 },
-                                    paper_bgcolor: "transparent",
-                                    plot_bgcolor: "transparent",
-                                    font: { size: 11 },
-                                    xaxis: {
-                                      ...(resultCoverageHeatmap.layout?.xaxis ?? {}),
-                                      side: "top",
-                                      tickangle: 360,
-                                      automargin: true,
-                                      ...(heatmapXLabels.length > 0
-                                        ? { tickmode: "array", tickvals: heatmapXLabels, ticktext: heatmapXLabels }
-                                        : {}),
-                                    },
-                                    yaxis: {
-                                      ...(resultCoverageHeatmap.layout?.yaxis ?? {}),
-                                      automargin: true,
-                                      ...(heatmapYLabels.length > 0
-                                        ? { tickmode: "array", tickvals: heatmapYLabels, ticktext: heatmapYLabels }
-                                        : {}),
-                                    },
-                                  }}
-                                  config={PLOT_CONFIG}
-                                  style={{ width: "100%", height: heatmapMinHeight }}
                                   useResizeHandler
                                 />
                               </Suspense>
@@ -3615,10 +3713,88 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                         {resultMiraSummary.length === 0 ? (
                           <EmptyResultTable title="Mira Summary Table" />
                         ) : (
-                          <ResultTable title="Mira Summary Table" data={resultMiraSummary} page={miraSummaryPage} setPage={setMiraSummaryPage} colorize />
+                          <ResultTable title="Mira Summary Table" data={resultMiraSummary} page={miraSummaryPage} setPage={setMiraSummaryPage} colorize compact defaultVisibleCols={MIRA_SUMMARY_DEFAULT_COLS} />
                         )}
                       </div>
                     )}
+
+                    {/* ── 5b. Coverage Heatmap (after Mira Summary) ── */}
+                    {assembled && resultCoverageHeatmap !== null && (() => {
+                      if ((resultCoverageHeatmap.data ?? []).length === 0) {
+                        return (
+                          <div id="result-section-heatmap">
+                            <EmptyResultTable title="Median Coverage Heatmap" />
+                          </div>
+                        );
+                      }
+                      // The heatmap trace stores x/y as parallel per-cell arrays (one entry per
+                      // cell), so size by the number of UNIQUE rows/columns — not the array length.
+                      const rawHeatmapX = resultCoverageHeatmap.data?.[0]?.x ?? [];
+                      const rawHeatmapY = resultCoverageHeatmap.data?.[0]?.y ?? [];
+                      const heatmapCols = [...new Set(rawHeatmapX)];
+                      const heatmapRows = [...new Set(rawHeatmapY)];
+                      const heatmapManyCols = heatmapCols.length > 12;
+                      const heatmapMinHeight = Math.max(
+                        120,
+                        heatmapRows.length * HEATMAP_ROW_PX + 120
+                      );
+                      return (
+                        <div id="result-section-heatmap" className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
+                          <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
+                            <p className="text-xs font-bold text-foreground uppercase tracking-wider">Median Coverage Heatmap</p>
+                          </div>
+                          <div className="p-2">
+                            <div style={{ width: "100%" }}>
+                              <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
+                                <Plot
+                                  data={resultCoverageHeatmap.data ?? []}
+                                  layout={{
+                                    ...(resultCoverageHeatmap.layout ?? {}),
+                                    autosize: true,
+                                    width: undefined,
+                                    height: undefined,
+                                    margin: { l: 100, r: 20, t: 90, b: 20 },
+                                    paper_bgcolor: "transparent",
+                                    plot_bgcolor: "transparent",
+                                    font: { size: 11 },
+                                    xaxis: {
+                                      ...(resultCoverageHeatmap.layout?.xaxis ?? {}),
+                                      type: "category",
+                                      side: "top",
+                                      automargin: true,
+                                      tickmode: "linear",
+                                      dtick: 1,
+                                      tickangle: heatmapManyCols ? -60 : 0,
+                                      tickfont: { size: heatmapManyCols ? 8 : 10 },
+                                    },
+                                    yaxis: {
+                                      ...(resultCoverageHeatmap.layout?.yaxis ?? {}),
+                                      type: "category",
+                                      automargin: true,
+                                      tickmode: "linear",
+                                      dtick: 1,
+                                      tickfont: { size: heatmapManyCols ? 10 : 10 },
+                                    },
+                                  }}
+                                  config={PLOT_CONFIG}
+                                  style={{ width: "100%", height: heatmapMinHeight }}
+                                  useResizeHandler
+                                  onClick={(e) => {
+                                    // Clicking a cell selects that sample (x value) in the
+                                    // Per-Sample Coverage and Sankey Plots section below.
+                                    const sample = e?.points?.[0]?.x;
+                                    if (sample != null) {
+                                      fetchSankeyForSample(String(sample));
+                                      setTimeout(() => document.getElementById("result-section-coverage")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+                                    }
+                                  }}
+                                />
+                              </Suspense>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* ── 5c. Sample Coverage Plot ── */}
                     {assembled && resultSampleCoverageList !== null && (() => {
@@ -3630,7 +3806,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                       const figure = resultSampleCoverageSankey?.[currentSample] ?? null;
                       const covFigure = resultSampleCoveragePlot?.[currentSample] ?? null;
                       return (
-                        <div id="result-section-coverage" className="rounded-xl border border-border overflow-hidden">
+                        <div id="result-section-coverage" className="min-w-[80vw] rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                             <p className="text-xs font-bold text-foreground uppercase tracking-wider">Per-Sample Coverage and Sankey Plots</p>
                             <select
@@ -4355,6 +4531,111 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
           </div>
         );
       })()}
+
+      {/* ── Failed task error-log modal ────────────── */}
+      {taskLog !== null && (
+        <div onClick={() => setTaskLog(null)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div onClick={(e) => e.stopPropagation()} className="bg-background border border-border rounded-xl p-0 max-w-3xl w-full mx-4 shadow-xl flex flex-col gap-0 max-h-[85vh]">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/20 shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <AlertCircle size={15} className="text-destructive shrink-0" />
+                <h3 className="text-sm font-bold text-foreground truncate">
+                  Task Error — <span className="font-mono">{taskLog.process}</span>
+                  {taskLog.sample ? <span className="font-mono text-muted-foreground"> ({taskLog.sample})</span> : null}
+                </h3>
+              </div>
+              <button onClick={() => setTaskLog(null)} className="text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                <X size={15} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto p-4 flex flex-col gap-3">
+              {taskLog.loading && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground py-4 justify-center">
+                  <RefreshCw size={13} className="animate-spin" /> Loading log…
+                </div>
+              )}
+
+              {taskLog.error && (
+                <div className="rounded-lg border bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-800 px-3 py-2 flex items-start gap-2 text-xs">
+                  <AlertCircle size={12} className="shrink-0 mt-0.5 text-destructive" />
+                  <span className="text-destructive">{taskLog.error}</span>
+                </div>
+              )}
+
+              {taskLog.data && (
+                <>
+                  {/* file metadata */}
+                  <div className="rounded-lg border border-border bg-muted/10 px-3 py-2 space-y-1 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">File</span>
+                      <span className="font-mono font-semibold text-foreground">{taskLog.data.log_file}</span>
+                      {taskLog.data.exit_code != null && (
+                        <span className="ml-auto px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 font-mono shrink-0">exit {taskLog.data.exit_code}</span>
+                      )}
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0 mt-0.5">Path</span>
+                      <span className="font-mono text-muted-foreground break-all">{taskLog.data.log_path}</span>
+                    </div>
+                  </div>
+
+                  {/* related error lines */}
+                  {taskLog.data.error_lines?.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Related Errors</p>
+                      <div className="rounded-lg border border-red-200 dark:border-red-800 overflow-hidden">
+                        <table className="w-full text-xs font-mono">
+                          <tbody>
+                            {taskLog.data.error_lines.map((ln, i) => (
+                              <tr key={i} className="border-b border-red-100 dark:border-red-900/40 last:border-b-0 bg-red-50/50 dark:bg-red-950/10">
+                                <td className="px-2 py-1 text-right text-red-400 select-none align-top w-12 shrink-0">{ln.line_number}</td>
+                                <td className="px-2 py-1 text-red-700 dark:text-red-300 whitespace-pre-wrap break-all">{ln.text}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* full log */}
+                  {taskLog.data.lines?.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Log ({taskLog.data.log_file})</p>
+                      <div className="rounded-lg border border-border overflow-auto max-h-72 bg-muted/10">
+                        <table className="w-full text-xs font-mono">
+                          <tbody>
+                            {taskLog.data.lines.map((ln, i) => (
+                              <tr key={i} className="hover:bg-muted/30">
+                                <td className="px-2 py-0.5 text-right text-muted-foreground/60 select-none align-top w-12 shrink-0">{ln.line_number}</td>
+                                <td className="px-2 py-0.5 text-foreground whitespace-pre-wrap break-all">{ln.text}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {(!taskLog.data.lines?.length && !taskLog.data.error_lines?.length) && (
+                    <p className="text-xs text-muted-foreground text-center py-3">The log file is empty or could not be read.</p>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="flex justify-end px-4 py-3 border-t border-border bg-muted/10 shrink-0">
+              <button
+                onClick={() => setTaskLog(null)}
+                className="px-4 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-muted/60 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Confirm Remove Sample modal ────────────── */}
       {confirmRemoveIdx !== null && (() => {

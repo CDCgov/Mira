@@ -1740,6 +1740,7 @@ def create_mira_dag(
                 process_name = process_path.split(":")[-1]
                 tasks.append({
                     "task_id":      int(parts[col.get("task_id", 0)] or 0),
+                    "hash":         parts[col.get("hash", 1)].strip() if "hash" in col else "",
                     "process_name": process_name,
                     "sample":       sample,
                     "status":       parts[col.get("status", 4)].strip(),
@@ -1766,6 +1767,7 @@ def create_mira_dag(
             seen_running.add(key)
             tasks.append({
                 "task_id":      -1,
+                "hash":         "",
                 "process_name": proc,
                 "sample":       smp,
                 "status":       "RUNNING",
@@ -1805,6 +1807,87 @@ def create_mira_dag(
         "process_names": all_process_names,
         "sample_ids": sorted(known_sample_ids),
         "message":   message
+    }
+
+# Define function to retrieve the error log for a single failed task
+def retrieve_task_log(
+    run_name: str,
+    experiment_type: str,
+    task_hash: str,
+) -> Dict[str, Any]:
+    """
+    Locate the Nextflow work directory for a single task (identified by its
+    execution-trace hash, e.g. "9f/df6545") and return its error log with the
+    relative path, filename, exit code, and the error lines with line numbers.
+    """
+    if not task_hash or "/" not in task_hash:
+        raise ValueError("A valid task hash (e.g. '9f/df6545') is required.")
+
+    pathogen   = experiment_type.split("-")[0]
+    instrument = experiment_type.split("-")[-1]
+    run_dir = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name)
+    work_dir = os.path.join(run_dir, "work")
+
+    # The trace hash is truncated ("<a>/<short>"); the real directory name starts with it.
+    prefix, rest = task_hash.split("/", 1)
+    parent = os.path.join(work_dir, prefix)
+    task_dir: Optional[str] = None
+    if os.path.isdir(parent):
+        for name in os.listdir(parent):
+            if name.startswith(rest):
+                task_dir = os.path.join(parent, name)
+                break
+
+    if task_dir is None or not os.path.isdir(task_dir):
+        raise ValueError(f"Could not find the work directory for task '{task_hash}'. It may have been cleaned up.")
+
+    # Read the exit code if present
+    exit_code: Optional[str] = None
+    exitcode_path = os.path.join(task_dir, ".exitcode")
+    if os.path.exists(exitcode_path):
+        try:
+            with open(exitcode_path, errors="replace") as fh:
+                exit_code = fh.read().strip()
+        except Exception:
+            exit_code = None
+
+    # Prefer .command.err; fall back to .command.log. Return the file's lines with
+    # 1-based line numbers, and flag the ones that look like errors.
+    error_re = re.compile(r"error|exception|traceback|fail|not found|no such file|command not found|killed", re.IGNORECASE)
+    chosen_file: Optional[str] = None
+    for candidate in (".command.err", ".command.log", ".command.out"):
+        candidate_path = os.path.join(task_dir, candidate)
+        if os.path.exists(candidate_path) and os.path.getsize(candidate_path) > 0:
+            chosen_file = candidate
+            break
+
+    lines: List[Dict[str, Any]] = []
+    error_lines: List[Dict[str, Any]] = []
+    if chosen_file is not None:
+        log_full_path = os.path.join(task_dir, chosen_file)
+        with open(log_full_path, errors="replace") as fh:
+            for i, raw in enumerate(fh, start=1):
+                text = raw.rstrip("\n")
+                entry = {"line_number": i, "text": text}
+                lines.append(entry)
+                if error_re.search(text):
+                    error_lines.append(entry)
+        # Keep the payload reasonable: cap the returned lines.
+        if len(lines) > 500:
+            lines = lines[-500:]
+    else:
+        chosen_file = ".command.err"
+
+    rel_log_path = os.path.relpath(os.path.join(task_dir, chosen_file), run_dir)
+
+    return {
+        "task_hash":   task_hash,
+        "log_file":    chosen_file,
+        "log_path":    rel_log_path,
+        "work_dir":    os.path.relpath(task_dir, run_dir),
+        "exit_code":   exit_code,
+        "error_lines": error_lines,
+        "lines":       lines,
     }
 
 # Define function to extract per-sample pass/fail status from the Nextflow execution log
