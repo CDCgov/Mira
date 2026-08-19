@@ -1,5 +1,5 @@
 DEPLOY: Docker
 DATA_ROOT: /data
-MIRA_NF_IMAGE: cdcgov/mira-nf:v2.2.0
+MIRA_NF_IMAGE: cdcgov/mira-nf:v2.2.1
 API_PORT: 8080
 REACT_PORT: 5175

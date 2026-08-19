@@ -2,7 +2,7 @@ name: Build MIRA Image and Push to GHCR
 
 on:
   push:
-    branches: ["main"]
+    branches: ["mira-dev"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -61,9 +61,9 @@ jobs:
         run: |
           {
             echo "tags<<EOF"
-            echo "${{ env.REGISTRY }}/${{ needs.prepare.outputs.repo_lc }}:latest"
+            echo "${{ env.REGISTRY }}/${{ needs.prepare.outputs.repo_lc }}-dev:latest"
             if [ -n "${{ needs.prepare.outputs.version }}" ]; then
-              echo "${{ env.REGISTRY }}/${{ needs.prepare.outputs.repo_lc }}:${{ needs.prepare.outputs.version }}"
+              echo "${{ env.REGISTRY }}/${{ needs.prepare.outputs.repo_lc }}-dev:${{ needs.prepare.outputs.version }}"
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
