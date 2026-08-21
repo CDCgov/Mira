@@ -3964,7 +3964,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                       ))}
                       {/* Nextclade FASTA files (one per subtype/segment) */}
                       {resultNextcladeFasta && typeof resultNextcladeFasta === "object" && Object.keys(resultNextcladeFasta).map(key => {
-                        const nextcladeFastaUrl = `${API.downloadNextcladeFasta}?run_name=${encodeURIComponent(selectedRun?.run_name ?? "")}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type ?? "")}&key=${encodeURIComponent(key)}`;
+                        // Absolute URL so Nextclade Web (a different origin) can fetch input-fasta.
+                        const nextcladeFastaUrl = `${window.location.origin}${API.downloadNextcladeFasta}?run_name=${encodeURIComponent(selectedRun?.run_name ?? "")}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type ?? "")}&key=${encodeURIComponent(key)}`;
                         const nextcladeViewUrl = `${NEXTCLADE_BASE}?dataset-name=${encodeURIComponent(key)}&input-fasta=${encodeURIComponent(nextcladeFastaUrl)}`;
                         return (
                           <div key={key} className="flex items-start justify-between gap-3 p-3 rounded-xl border border-border bg-muted/10">

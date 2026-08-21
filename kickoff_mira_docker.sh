@@ -21,6 +21,8 @@ Arguments:
                                     If a port is specified and is in use, an available port will be selected automatically.
   --codebase <MIRA_CODEBASE>        Path to a local MIRA codebase to bind-mount over /MIRA in the
                                     container for development (live edits). Omit for a normal run.
+  --sudo                            Run docker/install commands with sudo. Off by default
+                                    (Docker Desktop on macOS does not need it).
   -h, --help                        Show help message and exit.
 USAGE
 }
@@ -37,6 +39,7 @@ MIRA_IMAGE=""
 REACT_PORT="5175"
 API_PORT=""
 MIRA_CODEBASE=""
+USE_SUDO=false
 
 # Parse named arguments
 while [[ $# -gt 0 ]]; do
@@ -68,6 +71,10 @@ while [[ $# -gt 0 ]]; do
         --codebase)
             MIRA_CODEBASE="$2"
             shift 2
+            ;;
+        --sudo)
+            USE_SUDO=true
+            shift
             ;;
         *)
             echo "Error: Unknown argument '$1'." >&2
@@ -126,20 +133,27 @@ if [[ -n "${MIRA_CODEBASE}" ]]; then
         exit 1
     fi
     MIRA_CODEBASE=$(cd "${MIRA_CODEBASE}" && pwd)   # normalize to an absolute path for the bind mount
-    echo "Development codebase mount: ${MIRA_CODEBASE} -> /MIRA (live edits)"
+    echo "Development codebase mount: ${MIRA_CODEBASE}/{backend,frontend} -> /MIRA/{backend,frontend} (live edits)"
 fi
 
-# Cache sudo credentials once up front, and keep them alive in the background so the several
-# sudo calls below (data storage ownership, Docker install, image pull) don't each re-prompt
-echo "Requesting permission to download software and install dependencies. If prompted, please enter the admin password to proceed..."
-sudo -v
-( while true; do sudo -n true; sleep 60; kill -0 "$$" &> /dev/null || exit; done ) &
-SUDO_KEEPALIVE_PID=$!
-disown "${SUDO_KEEPALIVE_PID}"
+# Prefix for privileged commands. Empty by default; set to "sudo" only with --sudo.
+SUDO=""
+[[ "${USE_SUDO}" == true ]] && SUDO="sudo"
+
+# When using sudo, cache credentials once up front and keep them alive so the several sudo
+# calls below (data storage ownership, Docker install, image pull) don't each re-prompt.
+SUDO_KEEPALIVE_PID=""
+if [[ -n "${SUDO}" ]]; then
+    echo "Requesting permission to download software and install dependencies. If prompted, please enter the admin password to proceed..."
+    sudo -v
+    ( while true; do sudo -n true; sleep 60; kill -0 "$$" &> /dev/null || exit; done ) &
+    SUDO_KEEPALIVE_PID=$!
+    disown "${SUDO_KEEPALIVE_PID}"
+fi
 
 # Make sure the sudo keep-alive loop is stopped no matter how this script exits
 cleanup() {
-    kill "${SUDO_KEEPALIVE_PID}" &> /dev/null || true
+    [[ -n "${SUDO_KEEPALIVE_PID}" ]] && kill "${SUDO_KEEPALIVE_PID}" &> /dev/null || true
 }
 trap cleanup EXIT INT TERM
 
@@ -147,7 +161,7 @@ trap cleanup EXIT INT TERM
 echo "Checking data storage ownership and permissions..."
 if find "${DATA_ROOT}" -not -user "$(whoami)" -print -quit | grep -q .; then
     echo "Fixing ownership of ${DATA_ROOT}. If prompted, please enter the admin password to proceed..."
-    sudo chown -R "$(id -u):$(id -g)" "${DATA_ROOT}"
+    ${SUDO} chown -R "$(id -u):$(id -g)" "${DATA_ROOT}"
 fi
 find "${DATA_ROOT}" -type d -exec chmod 2775 {} +
 find "${DATA_ROOT}" -type f -exec chmod 664 {} +
@@ -158,9 +172,9 @@ if ! command -v docker &> /dev/null; then
     echo "Docker is not installed. Installing Docker. If prompted, please enter the admin password to proceed..."
     case "$(uname -s)" in
         Linux)
-            curl -fsSL https://get.docker.com | sudo sh
-            sudo systemctl enable --now docker
-            sudo usermod -aG docker "${USER}"
+            curl -fsSL https://get.docker.com | ${SUDO} sh
+            ${SUDO} systemctl enable --now docker
+            ${SUDO} usermod -aG docker "${USER}"
             echo "Docker was installed. Log out and back in (or run 'newgrp docker') for group changes to take effect. Afterwards, re-run this script to continue the MIRA setup."
             exit 1
             ;;
@@ -190,24 +204,24 @@ if ! command -v docker &> /dev/null; then
 fi
 
 # Check if Docker is running and accessible
-if ! sudo docker info >/dev/null 2>&1; then
+if ! ${SUDO} docker info >/dev/null 2>&1; then
     echo "Error: Docker is installed but the Docker daemon is not running or accessible." >&2
     exit 1
 fi
-echo "Docker: $(sudo docker --version)"
+echo "Docker: $(${SUDO} docker --version)"
 
 # Check if Docker Compose (the 'docker compose' plugin, bundled with modern Docker installs) is available
 echo "Checking for Docker Compose..."
-if ! sudo docker compose version &> /dev/null; then
+if ! ${SUDO} docker compose version &> /dev/null; then
     echo "Error: Docker Compose plugin is not available. Please update Docker/Docker Desktop to a version that includes 'docker compose'." >&2
     exit 1
 fi
-echo "Docker Compose: $(sudo docker compose version --short)"
+echo "Docker Compose: $(${SUDO} docker compose version --short)"
 
 # Check if the MIRA image is available locally, and if not pull it
 echo "Checking MIRA image. If prompted, please enter the admin password to proceed..."
-if ! sudo docker image inspect "${MIRA_IMAGE}" &> /dev/null; then
-    if ! sudo docker pull "${MIRA_IMAGE}" &> /dev/null; then
+if ! ${SUDO} docker image inspect "${MIRA_IMAGE}" &> /dev/null; then
+    if ! ${SUDO} docker pull "${MIRA_IMAGE}" &> /dev/null; then
         echo "Error: Failed to pull MIRA image '${MIRA_IMAGE}'." >&2
         exit 1
     fi
@@ -219,7 +233,7 @@ find_available_port () {
   local port=$1
   while lsof -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1; do
     new_port=$((RANDOM % 5999 + 4001))
-    echo "Port ${port} is in use. Trying port ${new_port}..."
+    echo "Port ${port} is in use. Trying port ${new_port}..." >&2
     port=${new_port}
   done
   echo ${port}
@@ -235,13 +249,14 @@ fi
 
 echo "Configure docker-compose.yml file to initialize the containers..."
 
-# Build the optional development mount: bind the local codebase over /MIRA for live edits,
-# keep the image's frontend node_modules via an anonymous volume (host deps may be a different
-# arch/absent), and force watch polling so uvicorn/vite reload across the bind mount.
+# Build the optional development mount. The image declares /MIRA/frontend and /MIRA/backend
+# as VOLUMEs, so binding the /MIRA parent alone is shadowed by anonymous volumes; bind the two
+# source dirs explicitly to override them. An anonymous volume keeps the image's frontend
+# node_modules (host deps may be a different arch/absent), and polling makes reload work.
 CODEBASE_VOLUME_BLOCK=""
 DEV_ENV_BLOCK=""
 if [[ -n "${MIRA_CODEBASE}" ]]; then
-  CODEBASE_VOLUME_BLOCK=$'      - type: bind\n        source: '"${MIRA_CODEBASE}"$'\n        target: /MIRA\n      - type: volume\n        target: /MIRA/frontend/node_modules'
+  CODEBASE_VOLUME_BLOCK=$'      - type: bind\n        source: '"${MIRA_CODEBASE}"$'/backend\n        target: /MIRA/backend\n      - type: bind\n        source: '"${MIRA_CODEBASE}"$'/frontend\n        target: /MIRA/frontend\n      - type: volume\n        target: /MIRA/frontend/node_modules'
   DEV_ENV_BLOCK=$'    environment:\n      CHOKIDAR_USEPOLLING: "true"\n      WATCHFILES_FORCE_POLLING: "true"'
 fi
 
@@ -316,7 +331,7 @@ fi
 
 # Start Docker containers
 echo "Start up the containers. If prompted, enter the admin password to give permissions..."
-sudo docker compose -f "${DATA_ROOT}/docker-compose.yml" up -d
+${SUDO} docker compose -f "${DATA_ROOT}/docker-compose.yml" up -d
 
 # Done
 echo ""

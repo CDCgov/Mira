@@ -78,8 +78,9 @@ ENV FRONTEND_DIR=${MIRA_DIR}/frontend
 ENV BACKEND_DIR=${MIRA_DIR}/backend
 ENV DATA_DIR=/data
 
-# Set up volume directories
-VOLUME ${FRONTEND_DIR} ${BACKEND_DIR} ${DATA_DIR}
+# Set up the data volume. Do NOT declare the code dirs as VOLUMEs: that spawns anonymous
+# volumes that shadow a bind-mounted /MIRA and hide live code edits during development.
+VOLUME ${DATA_DIR}
 
 ############# MIRA DESCRIPTION ##################
 
