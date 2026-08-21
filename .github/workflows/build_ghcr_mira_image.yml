@@ -2,7 +2,8 @@ name: Build MIRA Image and Push to GHCR
 
 on:
   push:
-    branches: ["mira-dev"]
+    tags:
+      - "v*"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -13,32 +14,37 @@ env:
 
 jobs:
   prepare:
-    name: Check commit message and extract version
+    name: Verify tag on mira-dev and extract version
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
-      match: ${{ steps.check_msg.outputs.match }}
-      version: ${{ steps.check_msg.outputs.version }}
-      repo_lc: ${{ steps.check_msg.outputs.repo_lc }}
+      on_branch: ${{ steps.check.outputs.on_branch }}
+      version: ${{ steps.check.outputs.version }}
+      repo_lc: ${{ steps.check.outputs.repo_lc }}
     steps:
-      - name: Check commit message and extract version
-        id: check_msg
-        env:
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag is on mira-dev and extract metadata
+        id: check
         run: |
-          MSG=$(echo "$COMMIT_MSG" | tr '[:upper:]' '[:lower:]')
-          if echo "$MSG" | grep -qE "build and push docker image|push and build docker image"; then
-            echo "match=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "match=false" >> "$GITHUB_OUTPUT"
-          fi
-          VERSION=$(grep -oP 'v[0-9]+\.[0-9]+\.[0-9]+' <<< "$COMMIT_MSG" | head -n1 || true)
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           echo "repo_lc=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          # Only build when the tagged commit is part of the mira-dev branch history.
+          git fetch --no-tags origin mira-dev:refs/remotes/origin/mira-dev
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/mira-dev; then
+            echo "on_branch=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "on_branch=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Tag ${GITHUB_REF_NAME} is not on mira-dev; skipping image build."
+          fi
 
   build-mira:
     name: Build and Push MIRA Image (${{ matrix.variant }})
     needs: prepare
-    if: needs.prepare.outputs.match == 'true'
+    if: needs.prepare.outputs.on_branch == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
