@@ -102,6 +102,12 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          # org.opencontainers.image.source links the GHCR package back to this repository.
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.description=MIRA image (${{ matrix.variant }} variant)
           build-args: |
             POLARS_PACKAGE=${{ matrix.polars_package }}
           provenance: false

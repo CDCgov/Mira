@@ -19,6 +19,8 @@ Arguments:
                                     If the specified port is in use, an available port will be selected automatically.
   --api_port <API_PORT>             Host port to expose MIRA API on (Default: None). 
                                     If a port is specified and is in use, an available port will be selected automatically.
+  --codebase <MIRA_CODEBASE>        Path to a local MIRA codebase to bind-mount over /MIRA in the
+                                    container for development (live edits). Omit for a normal run.
   -h, --help                        Show help message and exit.
 USAGE
 }
@@ -34,6 +36,7 @@ DATA_ROOT=""
 MIRA_IMAGE=""
 REACT_PORT="5175"
 API_PORT=""
+MIRA_CODEBASE=""
 
 # Parse named arguments
 while [[ $# -gt 0 ]]; do
@@ -60,6 +63,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --api_port)
             API_PORT="$2"
+            shift 2
+            ;;
+        --codebase)
+            MIRA_CODEBASE="$2"
             shift 2
             ;;
         *)
@@ -106,6 +113,20 @@ if [[ -n "${API_PORT}" ]]; then
         echo "Error: --api_port must be an integer between 1 and 65535, got '${API_PORT}'." >&2
         exit 1
     fi
+fi
+
+# Check the development codebase mount if provided
+if [[ -n "${MIRA_CODEBASE}" ]]; then
+    if [[ ! -d "${MIRA_CODEBASE}" ]]; then
+        echo "Error: --codebase directory '${MIRA_CODEBASE}' does not exist." >&2
+        exit 1
+    fi
+    if [[ ! -d "${MIRA_CODEBASE}/backend" || ! -d "${MIRA_CODEBASE}/frontend" ]]; then
+        echo "Error: --codebase '${MIRA_CODEBASE}' does not look like a MIRA repo (missing backend/ or frontend/)." >&2
+        exit 1
+    fi
+    MIRA_CODEBASE=$(cd "${MIRA_CODEBASE}" && pwd)   # normalize to an absolute path for the bind mount
+    echo "Development codebase mount: ${MIRA_CODEBASE} -> /MIRA (live edits)"
 fi
 
 # Cache sudo credentials once up front, and keep them alive in the background so the several
@@ -214,6 +235,16 @@ fi
 
 echo "Configure docker-compose.yml file to initialize the containers..."
 
+# Build the optional development mount: bind the local codebase over /MIRA for live edits,
+# keep the image's frontend node_modules via an anonymous volume (host deps may be a different
+# arch/absent), and force watch polling so uvicorn/vite reload across the bind mount.
+CODEBASE_VOLUME_BLOCK=""
+DEV_ENV_BLOCK=""
+if [[ -n "${MIRA_CODEBASE}" ]]; then
+  CODEBASE_VOLUME_BLOCK=$'      - type: bind\n        source: '"${MIRA_CODEBASE}"$'\n        target: /MIRA\n      - type: volume\n        target: /MIRA/frontend/node_modules'
+  DEV_ENV_BLOCK=$'    environment:\n      CHOKIDAR_USEPOLLING: "true"\n      WATCHFILES_FORCE_POLLING: "true"'
+fi
+
 # If API_PORT is provided, include it in the docker-compose.yml; 
 # Otherwise, only expose REACT_PORT
 if [[ -n "${API_PORT}" ]]; then
@@ -241,7 +272,9 @@ services:
       - type: bind
         source: *data-storage-path
         target: /data
+${CODEBASE_VOLUME_BLOCK}
     working_dir: /data
+${DEV_ENV_BLOCK}
 
 networks:
   mira:
@@ -271,7 +304,9 @@ services:
       - type: bind
         source: *data-storage-path
         target: /data
+${CODEBASE_VOLUME_BLOCK}
     working_dir: /data
+${DEV_ENV_BLOCK}
 
 networks:
   mira:
