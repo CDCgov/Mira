@@ -97,6 +97,18 @@ COPY environment.yml ${BACKEND_DIR}/environment.yml
 RUN micromamba install --yes --name base -f ${BACKEND_DIR}/environment.yml \
   && micromamba clean --all --yes
 
+# Stock polars ships AVX-optimized wheels that SIGSEGV under x86-64 emulation (e.g. the
+# amd64 image run via Rosetta on Apple Silicon) during pandera validation. Set
+# POLARS_PACKAGE to the AVX-free build (e.g. "polars-lts-cpu==1.33.1") to swap it in;
+# empty (the default) keeps the stock wheel so native x86-64 builds are unaffected.
+# polars-lts-cpu ships the same "polars" module, so the stock wheel is removed first to
+# avoid a mixed install.
+ARG POLARS_PACKAGE=
+RUN if [ -n "$POLARS_PACKAGE" ]; then \
+      "${MAMBA_ROOT_PREFIX}/bin/pip" uninstall -y polars polars-lts-cpu >/dev/null 2>&1 || true; \
+      "${MAMBA_ROOT_PREFIX}/bin/pip" install --no-cache-dir "$POLARS_PACKAGE"; \
+    fi
+
 # Activate conda environment on PATH
 ENV PATH="$PATH:${MAMBA_ROOT_PREFIX}/bin"
 

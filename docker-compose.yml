@@ -18,6 +18,9 @@ services:
         MICROMAMBA_IMAGE: mambaorg/micromamba:2.8.0
         MIRA_NF_IMAGE: *mira-nf-image
         NODE_VERSION: 24
+        # Set POLARS_PACKAGE=polars-lts-cpu==1.33.1 when building on Apple Silicon so the
+        # amd64 image runs under Rosetta without a polars AVX crash; empty keeps stock polars.
+        POLARS_PACKAGE: ${POLARS_PACKAGE:-}
     networks:
       - mira
     privileged: true
