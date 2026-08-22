@@ -2756,7 +2756,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       {/* ── Left: accordion steps ─────────────────── */}
       <div className="flex-1 overflow-auto p-4 space-y-2" onScroll={handleContentScroll}>
         {ASSEMBLY_STEPS.map(({ id, title, subtitle, icon }) => (
-          <div key={id} id={`step-${id}`} className="w-fit max-w-full mx-auto rounded-xl border border-border overflow-hidden">
+          <div key={id} id={`step-${id}`} className={cn("w-fit max-w-full rounded-xl border border-border overflow-hidden transition-all duration-300", openStep.has(id) ? "mx-auto" : "mr-auto")}>
             <button
               onClick={() => toggle(id)}
               className="w-full px-4 py-3 bg-muted/20 hover:bg-muted/40 transition-colors"
@@ -3584,10 +3584,10 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
 
                         {/* timing footer */}
                         {pipelineDAG?.workflows && (
-                          <div className="text-xs text-muted-foreground border-t border-border pt-2 flex items-center justify-between flex-wrap gap-y-1">
-                            <div className="flex gap-x-4 flex-wrap gap-y-0.5">
-                              <span>Started: <span className="text-foreground">{pipelineDAG?.workflows?.started_at || "—"}</span></span>
-                              <span>Completed: <span className="text-foreground">{pipelineDAG?.workflows?.completed_at || "—"}</span></span>
+                          <div className="text-xs text-muted-foreground border-t border-border pt-2 grid grid-cols-2 gap-x-4">
+                            <div className="flex flex-col gap-y-1">
+                              <span>Began: <span className="text-foreground">{pipelineDAG?.workflows?.started_at || "—"}</span></span>
+                              <span>Ended: <span className="text-foreground">{pipelineDAG?.workflows?.completed_at || "—"}</span></span>
                               {pipelineDAG?.workflows?.runtime && (
                                 <span>Runtime: <span className="text-foreground font-mono">{pipelineDAG.workflows.runtime}</span></span>
                               )}
@@ -3609,14 +3609,14 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                                 return <span>Duration: <span className="text-foreground font-mono">{parts.join(" ")}</span></span>;
                               })()}
                             </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
+                            <div className="flex flex-col items-start gap-y-1">
+                              <span className="w-fit px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
                                 {pipelineDAG?.workflows?.number_of_samples ?? 0} total samples
                               </span>
-                              <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/10 dark:text-red-400 font-mono">
+                              <span className="w-fit px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/10 dark:text-red-400 font-mono">
                                 {pipelineDAG?.workflows?.number_of_samples_with_failed_tasks ?? 0} samples failed
                               </span>
-                              <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/05 dark:text-emerald-400 font-mono">
+                              <span className="w-fit px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/05 dark:text-emerald-400 font-mono">
                                 {pipelineDAG?.workflows?.number_of_samples_with_successful_tasks ?? 0} samples passed
                               </span>
                             </div>
