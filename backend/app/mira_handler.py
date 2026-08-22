@@ -511,7 +511,7 @@ def retrieve_nextclade_aligned_fasta(run_name: str, experiment_type: str) -> str
         raise ValueError(str(err))
     except Exception as err:
         raise Exception(str(err))
-    
+
 ####################################################
 #
 # MIRA CREATION FUNCTIONS

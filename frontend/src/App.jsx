@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense, Fragment } from "react";
 import { createPortal } from "react-dom";
 const Plot = lazy(() => import("react-plotly.js"));
-import ShaderAura from "./ShaderAura";
 import {
   Dna,
   Home,
@@ -53,6 +52,9 @@ import {
   Square,
   Trash2,
   Pencil,
+  CloudFog,
+  CloudBackup,
+  Cloud,
 } from "lucide-react";
 
 /* ── utility ─────────────────────────────────────── */
@@ -234,9 +236,9 @@ const TABS = [
 
 /* ── Home Tab ────────────────────────────────────── */
 const STATS = [
-  { label: "Sequencing Runs",          value: "1,284",  sub: "Click here to see past runs",  icon: Cpu,        color: "text-teal-600"     },
-  { label: "Sequences to NCBI",        value: "48,312", sub: "GenBank + SRA combined",  icon: Database,   color: "text-purple-500"     },
-  { label: "Sequences to GISAID",      value: "31,047", sub: "EpiFlu + EpiCoV",         icon: Database,   color: "text-purple-500" },
+  { label: "Sequencing Runs",          value: "1,284",  hover: "Click here to see past runs",  icon: Cpu,        color: "text-teal-600"     },
+  { label: "Sequences to NCBI",        value: "48,312", sub: "GenBank + SRA combined",  icon: Cloud,   color: "text-purple-500"     },
+  { label: "Sequences to GISAID",      value: "31,047", sub: "EpiFlu + EpiCoV",         icon: Cloud,   color: "text-purple-500" },
 ];
 
 const FEATURES = [
@@ -395,7 +397,7 @@ function HomeTab({ onNewRun, onLoadRun }) {
       
 
       {/* ── Body grid ────────────────────────────── */}
-      <div className="flex-1 overflow-hidden p-4 grid grid-cols-2 grid-rows-[auto_minmax(0,1fr)] gap-4">
+      <div className="flex-1 overflow-hidden p-8 grid grid-cols-2 grid-rows-[auto_minmax(0,1fr)] gap-4">
 
         {/* ── Stats row — spans both columns ─────── */}
         <div className="col-span-2 grid grid-cols-7 gap-3">
@@ -468,6 +470,11 @@ function HomeTab({ onNewRun, onLoadRun }) {
 }
 
 /* ── Assembly Tab ────────────────────────────────── */
+// Inline width that grows an input/select to fit its text, clamped between a default min and max (in ch).
+const fitWidth = (text, min = 20, max = 44) => ({
+  width: `${Math.min(max, Math.max(min, String(text ?? "").length + 4))}ch`,
+});
+
 const ASSEMBLY_STEPS = [
   { id: "setup",    title: "Step 1: Setup",  subtitle: "Define run, configure sample sheet, and set assembly parameters", icon: Upload },
   { id: "progress", title: "Step 2: Processing",  subtitle: "Monitor assembly progress and stage status",                      icon: RefreshCw },
@@ -621,7 +628,7 @@ const MIRA_SUMMARY_DEFAULT_COLS = [
   "nextclade_alias",
 ];
 
-function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colorize = false, compact = false, defaultVisibleCols = null }) {
+function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colorize = false, compact = false, defaultVisibleCols = null, fitCols = 0 }) {
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
   const [searchQuery, setSearchQuery] = useState("");
@@ -647,6 +654,21 @@ function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colo
 
   const cols = data.length > 0 && data[0] ? Object.keys(data[0]) : [];
   const visibleCols = cols.filter(c => !hiddenCols.has(c));
+
+  // Width (in ch) for the first `fitCols` visible columns, sized to their longest header/cell value.
+  const fitColWidths = useMemo(() => {
+    if (!fitCols) return {};
+    const out = {};
+    visibleCols.slice(0, fitCols).forEach(c => {
+      let maxLen = String(c).length;
+      for (const row of data) {
+        const v = row[c] == null ? "" : String(row[c]);
+        if (v.length > maxLen) maxLen = v.length;
+      }
+      out[c] = `${Math.min(48, maxLen + 2)}ch`;
+    });
+    return out;
+  }, [fitCols, visibleCols, data]);
 
   // Precompute numeric column min/max for heatmap coloring (fill_irma_summary_tbl logic)
   const colRanges = useMemo(() => {
@@ -857,7 +879,7 @@ function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colo
         <table className={cn("w-full text-xs", (compact || Object.keys(colWidths).length > 0) && "table-fixed")}>
           <colgroup>
             {visibleCols.map(c => (
-              <col key={c} style={colWidths[c] ? { width: colWidths[c] } : undefined} />
+              <col key={c} style={colWidths[c] ? { width: colWidths[c] } : (fitColWidths[c] ? { width: fitColWidths[c] } : undefined)} />
             ))}
           </colgroup>
           <thead className="bg-muted sticky top-0 z-10">
@@ -1332,6 +1354,30 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   const SAMPLE_TYPES = ["- Control", "+ Control", "Test"];
   const [ontSampleRows, setOntSampleRows]           = useState([]);
   const [illuminaSampleRows, setIlluminaSampleRows] = useState([]);
+  const [sampleColWidths, setSampleColWidths]       = useState({}); // { colName: px } — manually resized sample-sheet columns
+
+  // Drag-to-resize a sample-sheet column: capture the starting width and follow the pointer.
+  const startSampleColResize = (col, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const th = e.currentTarget.closest("th");
+    const startX = e.clientX;
+    const startW = sampleColWidths[col] ?? (th ? th.offsetWidth : 120);
+    const onMove = (me) => {
+      const w = Math.max(50, startW + (me.clientX - startX));
+      setSampleColWidths(prev => ({ ...prev, [col]: w }));
+    };
+    const onUp = () => {
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
   const toggleSampleStatus = (idx) => {
     if (experimentType.toLowerCase().endsWith("ont")) {
       setOntSampleRows((prev) => prev.map((r, i) => i === idx ? { ...r, status: r.status === "Keep" ? "Exclude" : "Keep" } : r));
@@ -2752,7 +2798,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                             }
                           }}
                           disabled={!isNewRun}
-                          className="w-full max-w-xs h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
+                          style={fitWidth(experimentType || "— Select experiment type —")}
+                          className="h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
                         >
                           <option value="">— Select experiment type —</option>
                           {EXPERIMENT_TYPES.map((p) => <option key={p}>{p}</option>)}
@@ -2763,9 +2810,10 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                         <input
                           value={runName}
                           onChange={(e) => setRunName(e.target.value.replace(/\s+/g, "_"))}
-                          placeholder="e.g. Flu_Illumina_2024-01-01"
+                          placeholder="e.g. YYYYMMDD_experiment-type"
                           disabled={!isNewRun}
-                          className="w-full max-w-xs h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
+                          style={fitWidth(runName || "e.g. YYYYMMDD_experiment-type")}
+                          className="h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
                         />
                       </div>
                     </div>
@@ -2776,7 +2824,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                         <select
                           value={primer}
                           onChange={(e) => setPrimer(e.target.value)}
-                          className="w-full max-w-md h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                          style={fitWidth([...SC2_PRIMERS, ...RSV_PRIMERS].find((p) => p.value === primer)?.label ?? "")}
+                          className="h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                         >
                           {experimentType?.startsWith("SC2") && experimentType?.endsWith("Illumina") && SC2_PRIMERS.map(({ value, label }) => (
                             <option key={value} value={value}>{label}</option>
@@ -2879,8 +2928,16 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                     )}
 
                     <div className="rounded-xl border border-border overflow-hidden">
-                      <div className="overflow-y-auto max-h-[300px]">
-                      <table className="w-full text-xs">
+                      <div className="overflow-auto max-h-[300px]">
+                      <table className={cn("w-full text-xs", Object.keys(sampleColWidths).length > 0 && "table-fixed")}>
+                        <colgroup>
+                          {(experimentType.toLowerCase().endsWith("ont")
+                            ? ["barcode", "sample_id", "sample_type", "single_end", "fastq", "status"]
+                            : ["sample_id", "sample_type", "single_end", "fastq_1", "fastq_2", "status"]
+                          ).map((h) => (
+                            <col key={h} style={sampleColWidths[h] ? { width: sampleColWidths[h] } : undefined} />
+                          ))}
+                        </colgroup>
                         <thead className="bg-muted sticky top-0 z-10">
                           <tr>
                             {(experimentType.toLowerCase().endsWith("ont")
@@ -2889,14 +2946,16 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                             ).map((h) => (
                               <th
                                 key={h}
-                                className="px-3 py-2 text-left font-semibold text-muted-foreground font-mono cursor-pointer select-none hover:text-foreground transition-colors"
-                                onClick={() => setSortConfig(prev => ({
-                                  key: h,
-                                  dir: prev.key === h && prev.dir === "asc" ? "desc" : "asc",
-                                }))}
+                                className="relative px-3 py-2 text-left font-semibold text-muted-foreground font-mono select-none"
                               >
-                                <span className="flex items-center gap-1">
-                                  {h}
+                                <span
+                                  onClick={() => setSortConfig(prev => ({
+                                    key: h,
+                                    dir: prev.key === h && prev.dir === "asc" ? "desc" : "asc",
+                                  }))}
+                                  className="flex items-center gap-1 cursor-pointer hover:text-foreground transition-colors"
+                                >
+                                  <span className={sampleColWidths[h] ? "truncate" : undefined}>{h}</span>
                                   {sortConfig.key === h ? (
                                     sortConfig.dir === "asc"
                                       ? <ArrowUp size={10} className="text-primary shrink-0" />
@@ -2905,6 +2964,13 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                                     <ArrowUpDown size={10} className="opacity-30 shrink-0" />
                                   )}
                                 </span>
+                                {/* resize grip */}
+                                <span
+                                  onMouseDown={(e) => startSampleColResize(h, e)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  title="Drag to resize column"
+                                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-primary/40"
+                                />
                               </th>
                             ))}
                           </tr>
@@ -3206,7 +3272,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                         <select
                           value={irmaModule}
                           onChange={(e) => setIrmaModule(e.target.value)}
-                          className="w-full max-w-md h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                          style={fitWidth(irmaModule || "FLU (default)")}
+                          className="h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                         >
                           <option value="">FLU (default)</option>
                           <option value="secondary">secondary</option>
@@ -3894,7 +3961,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                         {resultVariants.length === 0 ? (
                           <EmptyResultTable title="AA Variants Table" />
                         ) : (
-                          <ResultTable title="AA Variants Table" data={resultVariants} page={variantsPage} setPage={setVariantsPage} />
+                          <ResultTable title="AA Variants Table" data={resultVariants} page={variantsPage} setPage={setVariantsPage} compact fitCols={5} />
                         )}
                       </div>
                     )}
@@ -3980,7 +4047,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                                 rel="noopener noreferrer"
                                 className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-primary text-primary text-xs font-medium hover:bg-primary/10 transition-colors"
                               >
-                                <ExternalLink size={11} /> View NextClade Assignment
+                                <ExternalLink size={11} /> View on NextClade
                               </a>
                               <a
                                 href={nextcladeFastaUrl}
@@ -4424,7 +4491,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                     <input
                       value={editNewName}
                       onChange={(e) => setEditNewName(e.target.value.replace(/\s+/g, "_"))}
-                      placeholder="e.g. Flu_Illumina_2024-01-01"
+                      placeholder="e.g. YYYYMMDD_experiment-type"
                       className="w-full max-w-md h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                     />
                     <div className="flex gap-2 justify-end pt-1">
@@ -5131,11 +5198,10 @@ export default function App() {
           className="flex items-center gap-3 text-white hover:opacity-90 transition-opacity"
         >
           <div className="relative shrink-0">
-            <ShaderAura className="absolute -inset-2 w-[calc(100%+1rem)] h-[calc(100%+1rem)] pointer-events-none" />
             <img
               src="/mira-logo.png"
               alt="MIRA logo"
-              className="relative h-20 w-20 object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.35)]"
+              className="relative h-24 w-24 object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.35)]"
             />
           </div>
           <div className="flex flex-col leading-tight">
