@@ -140,11 +140,7 @@ const API = {
   copyRun:          `${API_BASE}/copy/run`,
   uploadFastqs:     `${API_BASE}/upload/fastqs`,
   uploadCustomPrimerConfig:     `${API_BASE}/upload/custom_primer_config`,
-  uploadCustomIrmaConfig:       `${API_BASE}/upload/custom_irma_config`,
-  uploadCustomQcSettings:       `${API_BASE}/upload/custom_qc_settings`,
-  downloadCustomIrmaConfig:     `${API_BASE}/download/custom_irma_config`,
   downloadCustomPrimerConfig:   `${API_BASE}/download/custom_primer_config`,
-  downloadCustomQcSettings:     `${API_BASE}/download/custom_qc_settings`,
   validateRun:                  `${API_BASE}/validate/run`,
   validateCustomConfigs:        `${API_BASE}/validate/custom_configs`,
   runMIRA:                      `${API_BASE}/run/MIRA`,
@@ -181,8 +177,6 @@ const API = {
 // Standardized on-disk filenames the backend always saves custom config uploads
 // under, regardless of the originally-picked filename (must match schema_validator.py).
 const CUSTOM_PRIMER_CONFIG_FILENAME = "custom_primers.fasta";
-const CUSTOM_IRMA_CONFIG_FILENAME = "custom_irma_config.sh";
-const CUSTOM_QC_SETTINGS_FILENAME = "custom_qc_settings.yaml";
 
 /* ── simple dropdown hook ────────────────────────── */
 function useDropdown() {
@@ -248,31 +242,6 @@ const FEATURES = [
   { icon: Network,      title: "Nextclade Integration", desc: "Build pre-configured Nextclade Web URLs to visualize clade assignments, mutations, and phylogenetic placement." },
 ];
 
-// Illustrative placeholder trends for the Home dashboard charts.
-// Each run holds one value per sample; charts show every sample as a dot
-// with a trend line drawn through the per-run medians.
-const SEGMENTS_PER_SAMPLE_TREND = [
-  { run: "Jan '25", runId: "R2025-01", samples: [8, 7, 8, 6, 8, 7, 5, 8, 7, 8] },
-  { run: "Feb '25", runId: "R2025-02", samples: [8, 8, 7, 8, 6, 8, 8, 7, 8, 8, 7, 8] },
-  { run: "Mar '25", runId: "R2025-03", samples: [7, 8, 6, 8, 7, 8, 8, 5, 7, 8] },
-  { run: "Apr '25", runId: "R2025-04", samples: [8, 8, 8, 7, 8, 8, 6, 8, 7, 8, 8] },
-  { run: "May '25", runId: "R2025-05", samples: [8, 7, 8, 8, 6, 8, 7, 8, 8, 4, 8] },
-  { run: "Jun '25", runId: "R2025-06", samples: [8, 8, 8, 8, 7, 8, 8, 6, 8, 8, 7, 8, 8] },
-  { run: "Jul '25", runId: "R2025-07", samples: [8, 8, 7, 8, 8, 8, 8, 7, 8, 8] },
-  { run: "Aug '25", runId: "R2025-08", samples: [8, 8, 8, 8, 8, 7, 8, 8, 8, 6, 8, 8] },
-];
-
-const TURNAROUND_TREND = [
-  { run: "Jan '25", runId: "R2025-01", samples: [12, 18, 14, 20, 11, 16, 22, 13, 15] },
-  { run: "Feb '25", runId: "R2025-02", samples: [10, 14, 12, 16, 13, 11, 18, 12] },
-  { run: "Mar '25", runId: "R2025-03", samples: [13, 15, 14, 17, 12, 16, 11, 19, 14] },
-  { run: "Apr '25", runId: "R2025-04", samples: [9, 12, 11, 14, 10, 13, 8, 12, 11] },
-  { run: "May '25", runId: "R2025-05", samples: [10, 13, 12, 11, 14, 9, 12, 15, 10] },
-  { run: "Jun '25", runId: "R2025-06", samples: [8, 11, 10, 12, 9, 13, 7, 10] },
-  { run: "Jul '25", runId: "R2025-07", samples: [7, 9, 10, 8, 11, 6, 9, 8, 10] },
-  { run: "Aug '25", runId: "R2025-08", samples: [6, 9, 8, 7, 10, 8, 5, 9, 7, 8] },
-];
-
 // Median of a numeric array.
 function median(values) {
   if (!values.length) return 0;
@@ -282,7 +251,8 @@ function median(values) {
 }
 
 // Dashboard card: a dot per sample plus a trend line through the per-run medians.
-function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, unit, yTitle }) {
+function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, unit, yTitle, loading = false, emptyMessage }) {
+  const hasData = Array.isArray(data) && data.length > 0;
   const xDots = [];
   const yDots = [];
   const dotMeta = [];
@@ -318,6 +288,7 @@ function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, u
         </div>
       </div>
       <div className="flex-1 min-h-0 p-2">
+        {hasData ? (
         <Suspense fallback={<div className="flex items-center justify-center h-full text-xs text-muted-foreground">Loading chart…</div>}>
           <Plot
             data={[
@@ -367,6 +338,13 @@ function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, u
             useResizeHandler
           />
         </Suspense>
+        ) : (
+          <div className="flex h-full items-center justify-center text-center px-6">
+            <p className="text-xs text-muted-foreground">
+              {loading ? "Loading run data…" : (emptyMessage || "No run data yet.")}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -374,22 +352,65 @@ function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, u
 
 function HomeTab({ onNewRun, onLoadRun }) {
   const [runCount, setRunCount] = useState(null);
+  const [segmentsTrend, setSegmentsTrend] = useState(null); // null = loading, [] = no data
 
   useEffect(() => {
     let cancelled = false;
-    fetch(API.listRuns)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (cancelled) return;
+    (async () => {
+      try {
+        const res = await fetch(API.listRuns);
+        const data = res.ok ? await res.json() : null;
         const runs = Array.isArray(data?.run_info) ? data.run_info : [];
-        setRunCount(runs.filter((r) => r.assembly_status === "COMPLETED").length);
-      })
-      .catch(() => { if (!cancelled) setRunCount(0); });
+        const completed = runs.filter((r) => r.assembly_status === "COMPLETED");
+        if (!cancelled) setRunCount(completed.length);
+
+        // Oldest→newest by run date; keep the most recent runs for a readable trend.
+        const runTime = (r) => {
+          const t = Date.parse((r.finished_at || r.created_at || "").replace(" ", "T"));
+          return Number.isNaN(t) ? 0 : t;
+        };
+        // Segment counts are only meaningful for segmented (flu) genomes, so limit the chart to flu runs.
+        const fluCompleted = completed.filter((r) => /^flu/i.test(r.experiment_type || ""));
+        const recent = [...fluCompleted].sort((a, b) => runTime(a) - runTime(b)).slice(-12);
+
+        // For each run, count assembled segments per sample from its MIRA summary
+        // (one summary row per sample-segment), so the trend reflects live run data.
+        const trend = await Promise.all(recent.map(async (run) => {
+          try {
+            const sres = await fetch(`${API.retrieveMiraSummary}?run_name=${encodeURIComponent(run.run_name)}&experiment_type=${encodeURIComponent(run.experiment_type)}`);
+            if (!sres.ok) return null;
+            const summary = await sres.json();
+            const rows = Array.isArray(summary)
+              ? summary
+              : (summary?.columns && summary?.data)
+                ? summary.data.map((r) => Object.fromEntries(summary.columns.map((c, i) => [c, r[i]])))
+                : [];
+            const perSample = {};
+            rows.forEach((row) => {
+              const sid = row.sample_id ?? row.Sample ?? row.sample ?? null;
+              if (sid == null || sid === "") return;
+              perSample[sid] = (perSample[sid] || 0) + 1;
+            });
+            const samples = Object.values(perSample);
+            if (!samples.length) return null;
+            const t = runTime(run);
+            const label = t ? new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : run.run_name;
+            return { run: label, runId: run.run_name, samples };
+          } catch {
+            return null;
+          }
+        }));
+
+        if (!cancelled) setSegmentsTrend(trend.filter(Boolean));
+      } catch {
+        if (!cancelled) { setRunCount(0); setSegmentsTrend([]); }
+      }
+    })();
     return () => { cancelled = true; };
   }, []);
 
-  const medSegments = Math.round(median(SEGMENTS_PER_SAMPLE_TREND.flatMap((d) => d.samples)));
-  const medTurnaround = Math.round(median(TURNAROUND_TREND.flatMap((d) => d.samples)));
+  const segData = segmentsTrend ?? [];
+  const medSegments = segData.length ? Math.round(median(segData.flatMap((d) => d.samples))) : "—";
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -440,25 +461,28 @@ function HomeTab({ onNewRun, onLoadRun }) {
           })}
         </div>
 
-        {/* ── Segments per sample over time ─── */}
+        {/* ── Segments per sample over time (real run data) ─── */}
         <HomeChartCard
           icon={BarChart3}
           title="Segments per Sample"
           statValue={medSegments}
           statLabel="median segments / sample"
-          data={SEGMENTS_PER_SAMPLE_TREND}
+          data={segData}
+          loading={segmentsTrend === null}
+          emptyMessage="No completed runs yet. Segment counts appear here after your first assembly."
           color="#0081A1"
           unit="segments"
           yTitle="Segment Count"
         />
 
-        {/* ── Turnaround time over time ─────── */}
+        {/* ── Turnaround time (pending metadata & SeqSender integration) ─── */}
         <HomeChartCard
           icon={Clock}
           title="Turnaround Time"
-          statValue={`${medTurnaround} days`}
+          statValue="—"
           statLabel="median days: submission − collection"
-          data={TURNAROUND_TREND}
+          data={[]}
+          emptyMessage="Turnaround time will populate once sample metadata and SeqSender submission dates are available."
           color="#722161"
           unit="days"
           yTitle="Days"
@@ -1034,7 +1058,7 @@ function OntFastqCell({ fastqList, uploadedMap }) {
 }
 
 function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
-  const [openStep, setOpenStep]                           = useState(() => new Set(ASSEMBLY_STEPS.map((s) => s.id)));
+  const [openStep, setOpenStep]                           = useState(() => new Set()); // step accordions start collapsed
   const [runName, setRunName]                             = useState("");
   const [experimentType, setExperimentType]               = useState("");
   const [primer, setPrimer]                               = useState("");
@@ -1044,20 +1068,10 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   const [primerRestrictWindow, setPrimerRestrictWindow]   = useState(""); // required alongside customPrimers
   const [subSample, setSubSample]                         = useState("0");
   const [irmaModule, setIrmaModule]                       = useState("");   // "" = FLU (default) | secondary | sensitive | utr
-  const [useCustomIrmaConfig, setUseCustomIrmaConfig]     = useState(false); // whether a custom IRMA config file is used
-  const [customIrmaConfig, setCustomIrmaConfig]           = useState("");    // file path to a custom IRMA config file
-  const [useCustomQcSettings, setUseCustomQcSettings]     = useState(false); // whether custom QC pass/fail settings are used
-  const [customQcSettings, setCustomQcSettings]           = useState("");    // file path to a custom QC settings file
   const [customPrimersFile, setCustomPrimersFile]         = useState(null); // File object selected via Browse, for actual upload
-  const [customIrmaConfigFile, setCustomIrmaConfigFile]   = useState(null); // File object selected via Browse, for actual upload
-  const [customQcSettingsFile, setCustomQcSettingsFile]   = useState(null); // File object selected via Browse, for actual upload
   const [loadedCustomPrimersName, setLoadedCustomPrimersName] = useState(""); // filename already stored server-side for a loaded run
-  const [loadedCustomIrmaConfigName, setLoadedCustomIrmaConfigName] = useState(""); // filename already stored server-side for a loaded run
-  const [loadedCustomQcSettingsName, setLoadedCustomQcSettingsName] = useState(""); // filename already stored server-side for a loaded run
   const [customConfigDownloadError, setCustomConfigDownloadError] = useState(null); // { field, message } for a failed custom config download
   const [primersFileError, setPrimersFileError] = useState(null); // validation error when a non-.fasta file is picked for Custom Primers
-  const [irmaConfigFileError, setIrmaConfigFileError] = useState(null); // validation error when a non-.sh file is picked for Custom IRMA Config
-  const [qcSettingsFileError, setQcSettingsFileError] = useState(null); // validation error when a non-YAML file is picked for Custom QC Settings
   const [createParquet, setCreateParquet]           = useState(false);
   const [nextclade, setNextclade]                   = useState(true);
   const [exportFmt, setExportFmt]                   = useState("fasta");
@@ -1076,7 +1090,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   const [selectedRun, setSelectedRun]               = useState(null); // the run currently loaded/polled on the page
   const [loadRunSelectedRow, setLoadRunSelectedRow] = useState(null); // row highlighted inside the Load Run modal only
   const [runSearch, setRunSearch]                   = useState("");
-  const [runSortDir, setRunSortDir]                 = useState("asc"); // "asc" | "desc" — run_name sort order
+  const [runSortDir, setRunSortDir]                 = useState("desc"); // "asc" | "desc" — run date sort order (desc = most recent first)
   const [uploadedOntFileObjects, setUploadedOntFileObjects]           = useState({}); // ONT filename → File object
   const [uploadedIlluminaFileObjects, setUploadedIlluminaFileObjects] = useState({}); // Illumina filename → File object
 
@@ -1105,6 +1119,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   const [isNewRun, setIsNewRun]                       = useState(true);   // true = new run, false = loaded existing run
   const [confirmRemoveIdx, setConfirmRemoveIdx]       = useState(null); // index of sample row pending removal confirmation
   const [taskLog, setTaskLog]                         = useState(null); // { loading, error, data, process, sample } for the failed-task log popup
+  const [taskHover, setTaskHover]                     = useState(null); // { key, process, sample, x, y, loading, error, data } for the streaming stdout hover box
   const [ontConfirmFiles, setOntConfirmFiles]         = useState(null); // [{ file, name }] awaiting confirmation when no flowcell-ID files were found
   const [ontConfirmSelected, setOntConfirmSelected]   = useState(() => new Set()); // sanitized filenames checked in the confirm dialog
   const [uploadOntFastq, setUploadOntFastq]           = useState([]);      // list of sanitized ONT fastq filenames uploaded this session
@@ -1470,6 +1485,47 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     }
   };
 
+  // ── Task Progress hover box: stream a task's stdout while the cursor is over its cell ──
+  const taskHoverPollRef = useRef(null); // setInterval id for the streaming refresh
+  const taskHoverKeyRef  = useRef(null); // key of the cell currently hovered (guards stale responses)
+
+  // Fetch the stdout for a single task and apply it only if its cell is still hovered.
+  const fetchTaskStdout = useCallback(async (task, process, sample, key) => {
+    try {
+      const res = await fetch(`${API.miraTaskLog}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&hash=${encodeURIComponent(task.hash)}&stream=stdout`);
+      const data = await res.json();
+      if (taskHoverKeyRef.current !== key) return; // moved to another cell — ignore
+      if (!res.ok) throw new Error(data.detail || "Failed to load task output");
+      setTaskHover(prev => (prev && prev.key === key) ? { ...prev, loading: false, error: null, data } : prev);
+    } catch (err) {
+      if (taskHoverKeyRef.current !== key) return;
+      setTaskHover(prev => (prev && prev.key === key) ? { ...prev, loading: false, error: err.message, data: null } : prev);
+    }
+  }, [selectedRun]);
+
+  // Begin streaming stdout for the hovered task cell.
+  const openTaskHover = (e, task, process, sample) => {
+    if (!task?.hash || !selectedRun?.run_name || !selectedRun?.experiment_type) return;
+    const key = `${process}||${sample ?? ""}`;
+    const rect = e.currentTarget.getBoundingClientRect();
+    taskHoverKeyRef.current = key;
+    setTaskHover({ key, process, sample, x: rect.right, y: rect.top, loading: true, error: null, data: null });
+    fetchTaskStdout(task, process, sample, key);
+    if (taskHoverPollRef.current) clearInterval(taskHoverPollRef.current);
+    taskHoverPollRef.current = setInterval(() => fetchTaskStdout(task, process, sample, key), 2000);
+  };
+
+  // Stop streaming and hide the hover box.
+  const closeTaskHover = () => {
+    taskHoverKeyRef.current = null;
+    if (taskHoverPollRef.current) { clearInterval(taskHoverPollRef.current); taskHoverPollRef.current = null; }
+    setTaskHover(null);
+  };
+
+  // Clear the streaming interval if the component unmounts mid-hover.
+  useEffect(() => () => { if (taskHoverPollRef.current) clearInterval(taskHoverPollRef.current); }, []);
+
+
   // Export the sample sheet in CSV or Excel format
   const exportSampleSheet = (format) => {
     const isOnt = experimentType.toLowerCase().endsWith("ont");
@@ -1785,6 +1841,10 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   // Always restore the header when this tab unmounts.
   useEffect(() => () => setHeaderHidden?.(false), [setHeaderHidden]);
 
+  // Auto-expand a step the moment its content first appears (steps start collapsed).
+  useEffect(() => { if (showDAG) setOpenStep(prev => new Set(prev).add("progress")); }, [showDAG]);
+  useEffect(() => { if (assembled) setOpenStep(prev => new Set(prev).add("results")); }, [assembled]);
+
   // 
   const toggle = (id) => setOpenStep((prev) => {
     const next = new Set(prev);
@@ -1836,18 +1896,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     setPrimerRestrictWindow("");
     setSubSample("0");
     setIrmaModule("");
-    setUseCustomIrmaConfig(false);
-    setCustomIrmaConfig("");
-    setIrmaConfigFileError(null);
-    setUseCustomQcSettings(false);
-    setCustomQcSettings("");
-    setQcSettingsFileError(null);
     setCustomPrimersFile(null);
-    setCustomIrmaConfigFile(null);
-    setCustomQcSettingsFile(null);
     setLoadedCustomPrimersName("");
-    setLoadedCustomIrmaConfigName("");
-    setLoadedCustomQcSettingsName("");
     setCustomConfigDownloadError(null);
     setCreateParquet(false);
     setNextclade(true);
@@ -1923,7 +1973,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     setMinorSnvsPage(0);
     setResultMiraSummary(null);
     setMiraSummaryPage(0);
-    setOpenStep(new Set(ASSEMBLY_STEPS.map((s) => s.id)));
+    setOpenStep(new Set());
   }, []);
 
   // ── Load run modal: fetches available runs from the backend and displays them in a table ──
@@ -1962,20 +2012,10 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     setCustomPrimers("");
     setPrimerKmerLen("");
     setPrimerRestrictWindow("");
-    setUseCustomIrmaConfig(false);
-    setCustomIrmaConfig("");
-    setUseCustomQcSettings(false);
-    setCustomQcSettings("");
     setCustomPrimersFile(null);
-    setCustomIrmaConfigFile(null);
-    setCustomQcSettingsFile(null);
     setLoadedCustomPrimersName("");
-    setLoadedCustomIrmaConfigName("");
-    setLoadedCustomQcSettingsName("");
     setCustomConfigDownloadError(null);
     setPrimersFileError(null);
-    setIrmaConfigFileError(null);
-    setQcSettingsFileError(null);
     setCreateParquet(false);
     setNextclade(true);
     // Sample sheet + uploads
@@ -2236,12 +2276,6 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       setPrimerRestrictWindow(info.primer_restrict_window ? String(info.primer_restrict_window) : "");
       setSubSample(String(info.subsample_reads ?? 0));
       setIrmaModule(info.irma_module || "");
-      setCustomIrmaConfig(info.custom_irma_config ? CUSTOM_IRMA_CONFIG_FILENAME : "");
-      setUseCustomIrmaConfig(Boolean(info.custom_irma_config));
-      setLoadedCustomIrmaConfigName(info.custom_irma_config ? CUSTOM_IRMA_CONFIG_FILENAME : "");
-      setCustomQcSettings(info.custom_qc_settings ? CUSTOM_QC_SETTINGS_FILENAME : "");
-      setUseCustomQcSettings(Boolean(info.custom_qc_settings));
-      setLoadedCustomQcSettingsName(info.custom_qc_settings ? CUSTOM_QC_SETTINGS_FILENAME : "");
       setCreateParquet(info.parquet_files ?? false);
       setNextclade(info.nextclade ?? true);
       const isOnt = (info.experiment_type ?? "").toLowerCase().endsWith("ont");
@@ -2284,11 +2318,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       setUploadedOntFileObjects({});
       setUploadedIlluminaFileObjects({});
       setCustomPrimersFile(null);
-      setCustomIrmaConfigFile(null);
-      setCustomQcSettingsFile(null);
       setCustomConfigDownloadError(null);
-      setIrmaConfigFileError(null);
-      setQcSettingsFileError(null);
       setPrimersFileError(null);
 
       // This run is now the page's actively loaded/polled run — set it here rather than
@@ -2402,26 +2432,6 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       }
     }
 
-    // Custom IRMA Config requires a file path when enabled
-    if (isNewRun === true && assembled === false && useCustomIrmaConfig && !customIrmaConfig) {
-      setSubmitError({ title: "Assembly Error", items: ["Please provide a custom IRMA config file or turn off Custom IRMA Config."], missing: null });
-      return;
-    }
-    if (isNewRun === true && assembled === false && useCustomIrmaConfig && customIrmaConfig && !/\.sh$/i.test(customIrmaConfig)) {
-      setSubmitError({ title: "Assembly Error", items: ["Custom IRMA Config file must be a shell script (.sh)."], missing: null });
-      return;
-    }
-
-    // Custom QC Settings requires a file path when enabled, and it must be a YAML file
-    if (isNewRun === true && assembled === false && useCustomQcSettings && !customQcSettings) {
-      setSubmitError({ title: "Assembly Error", items: ["Please provide a custom QC settings file or turn off Custom QC Settings."], missing: null });
-      return;
-    }
-    if (isNewRun === true && assembled === false && useCustomQcSettings && customQcSettings && !/\.(yaml|yml)$/i.test(customQcSettings)) {
-      setSubmitError({ title: "Assembly Error", items: ["Custom QC Settings file must be a YAML file (.yaml or .yml)."], missing: null });
-      return;
-    }
-
     // Make sure at least one sample exists and with "Keep" status in the samplesheet
     const isOnt = experimentType.toLowerCase().endsWith("ont");
     const samplesheet = (isOnt ? ontSampleRows : illuminaSampleRows)
@@ -2485,8 +2495,6 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       primer_kmer_len:        useCustomPrimers && primerKmerLen ? (parseInt(primerKmerLen) || 0) : 0,
       primer_restrict_window: useCustomPrimers && primerRestrictWindow ? (parseInt(primerRestrictWindow) || 0) : 0,
       irma_module:            experimentType === "Flu-Illumina" ? irmaModule : "",
-      custom_irma_config:     useCustomIrmaConfig,
-      custom_qc_settings:     useCustomQcSettings,
       parquet_files:          createParquet,
       nextclade:              nextclade,
       samplesheet:            formattedSamplesheet,
@@ -2550,7 +2558,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
         }
       }
 
-      // ── Step 2.2: Upload custom primer, custom IRMA config, and custom QC settings files if a new file was selected ──
+      // ── Step 2.2: Upload the custom primer file if a new file was selected ──
       if (useCustomPrimers && customPrimersFile) {
         const primerForm = new FormData();
         primerForm.append("run_name", runName);
@@ -2559,24 +2567,6 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
         const primerRes = await fetch(API.uploadCustomPrimerConfig, { method: "POST", body: primerForm });
         const primerData = await primerRes.json().catch(() => ({}));
         if (!primerRes.ok) throw new Error(primerData.detail || "Failed to upload custom primer config file");
-      }
-      if (useCustomIrmaConfig && customIrmaConfigFile) {
-        const irmaForm = new FormData();
-        irmaForm.append("run_name", runName);
-        irmaForm.append("experiment_type", experimentType);
-        irmaForm.append("custom_irma_config_file", customIrmaConfigFile);
-        const irmaRes = await fetch(API.uploadCustomIrmaConfig, { method: "POST", body: irmaForm });
-        const irmaData = await irmaRes.json().catch(() => ({}));
-        if (!irmaRes.ok) throw new Error(irmaData.detail || "Failed to upload custom IRMA config file");
-      }
-      if (useCustomQcSettings && customQcSettingsFile) {
-        const qcForm = new FormData();
-        qcForm.append("run_name", runName);
-        qcForm.append("experiment_type", experimentType);
-        qcForm.append("custom_qc_settings_file", customQcSettingsFile);
-        const qcRes = await fetch(API.uploadCustomQcSettings, { method: "POST", body: qcForm });
-        const qcData = await qcRes.json().catch(() => ({}));
-        if (!qcRes.ok) throw new Error(qcData.detail || "Failed to upload custom QC settings file");
       }
 
       // ── Step 3.1: Validate samplesheet and fastq files exist for each sample ──
@@ -2590,7 +2580,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
         return;
       }
 
-      // ── Step 3.2: Validate custom primers, custom irma config, and custom qc settings files if provided ──
+      // ── Step 3.2: Validate custom primers file if provided ──
       const customValRes = await fetch(`${API.validateCustomConfigs}?run_name=${encodeURIComponent(runName)}&experiment_type=${encodeURIComponent(experimentType)}`);
       const customValData = await customValRes.json();
       if (!customValRes.ok) throw new Error(customValData.detail || "Custom configuration validation failed");
@@ -2661,7 +2651,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       setSubmitting(false);
     }
 
-  }, [runName, experimentType, ontSampleRows, illuminaSampleRows, subSample, primer, customPrimers, useCustomPrimers, primerKmerLen, primerRestrictWindow, irmaModule, useCustomIrmaConfig, customIrmaConfig, useCustomQcSettings, customQcSettings, customPrimersFile, customIrmaConfigFile, customQcSettingsFile, createParquet, nextclade, isNewRun, assembled]);
+  }, [runName, experimentType, ontSampleRows, illuminaSampleRows, subSample, primer, customPrimers, useCustomPrimers, primerKmerLen, primerRestrictWindow, irmaModule, customPrimersFile, createParquet, nextclade, isNewRun, assembled]);
 
   // True once assembly finishes but every result field is still empty (nothing to display).
   const hasNoResults = [
@@ -3444,11 +3434,6 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Type</span>
                               <span className="text-xs font-mono text-foreground">{selectedRun?.experiment_type || "—"}</span>
                             </div>
-                            <div className="w-px h-4 bg-border shrink-0" />
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">PID</span>
-                              <span className="text-xs font-mono text-foreground">{submitProcessId || "—"}</span>
-                            </div>
                           </div>
                           {pipelineDAG?.workflows?.status && (() => {
                             const s = pipelineDAG?.workflows?.status;
@@ -3504,6 +3489,11 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                           samples.sort((a, b) => a.localeCompare(b));
                           const knownSet = new Set(samples);
 
+                          // Rotated -80deg labels: vertical extent ≈ (char width) × length × sin(80°).
+                          // At text-xs mono that's ~7px/char; add padding so the longest name fits comfortably.
+                          const maxSampleLen = samples.reduce((m, s) => Math.max(m, String(s).length), 0);
+                          const headerHeightPx = Math.max(56, Math.round(maxSampleLen * 7) + 40);
+
                           const rank = { failed: 3, running: 2, success: 1 };
                           // A task-sample is FAILED only when it has a non-zero exit code; a "0"
                           // exit (or COMPLETED status) is success; anything still in-flight is running.
@@ -3512,9 +3502,17 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                             const e = exitOf(t);
                             return e !== "" && e !== "-" && !isNaN(Number(e)) && Number(e) !== 0;
                           };
-                          const bucketOf = (t) => isFailedExit(t)
-                            ? "failed"
-                            : (t.status === "COMPLETED" || exitOf(t) === "0") ? "success" : "running";
+                          // PASSFAILED's non-zero exit encodes a sample's QC verdict, not a task failure —
+                          // it succeeds as long as the process ran to completion.
+                          const isVerdictProcess = (t) => /passfailed/i.test(t.process_name || "");
+                          const bucketOf = (t) => {
+                            if (isVerdictProcess(t)) {
+                              return (t.status === "COMPLETED" || exitOf(t) !== "") ? "success" : "running";
+                            }
+                            return isFailedExit(t)
+                              ? "failed"
+                              : (t.status === "COMPLETED" || exitOf(t) === "0") ? "success" : "running";
+                          };
                           const bump = (map, key, bucket) => {
                             const prev = map.get(key);
                             if (!prev || rank[bucket] > rank[prev]) map.set(key, bucket);
@@ -3524,6 +3522,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                           const cellMap = new Map();
                           const rowLevelMap = new Map();
                           const failedTaskMap = new Map(); // key -> the failed task (for its log/hash on click)
+                          const cellTaskMap = new Map(); // key -> { task, bucket } representative task (for the hover stdout box)
                           tasks.forEach(t => {
                             const p = t.process_name || "unknown";
                             const bucket = bucketOf(t);
@@ -3532,19 +3531,27 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                             if (perSample) bump(cellMap, `${p}||${t.sample}`, bucket);
                             else bump(rowLevelMap, p, bucket);
                             if (bucket === "failed") failedTaskMap.set(key, t);
+                            // Track the highest-ranked (and, at equal rank, most recent) task per cell
+                            // so hovering can stream that task's stdout.
+                            const prevT = cellTaskMap.get(key);
+                            if (t.hash && (!prevT || rank[bucket] >= rank[prevT.bucket])) cellTaskMap.set(key, { task: t, bucket });
                           });
                           return (
                             <div className="rounded-xl border border-border overflow-hidden">
                               <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                                 <p className="text-xs font-bold text-foreground uppercase tracking-wider">Task Progress</p>
                               </div>
-                              <div className="max-h-[360px] overflow-auto">
+                              <div className="overflow-x-auto">
                                 <table className="text-xs border-collapse">
                                   <thead>
                                     <tr>
-                                      <th className="sticky left-0 top-0 z-20 bg-muted px-3 py-2 text-left font-semibold text-muted-foreground border-b border-r border-border whitespace-nowrap">Task \ Sample</th>
+                                      <th className="sticky left-0 top-0 z-20 bg-muted px-3 py-2 text-left align-bottom font-semibold text-muted-foreground border-b border-r border-border whitespace-nowrap">Task \ Sample</th>
                                       {samples.map(s => (
-                                        <th key={s} className="sticky top-0 z-10 bg-muted px-3 py-2 text-center font-mono font-semibold text-foreground border-b border-border whitespace-nowrap">{s}</th>
+                                        <th key={s} style={{ height: `${headerHeightPx}px` }} className="sticky top-0 z-10 bg-muted border-b border-border p-0 align-bottom">
+                                          <div className="flex h-full items-end justify-center px-1 pb-8">
+                                            <span className="origin-bottom rotate-[-80deg] whitespace-nowrap font-mono font-semibold text-foreground leading-none">{s}</span>
+                                          </div>
+                                        </th>
                                       ))}
                                     </tr>
                                   </thead>
@@ -3557,8 +3564,15 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                                           const failedTask = bucket === "failed"
                                             ? (failedTaskMap.get(`${p}||${s}`) ?? failedTaskMap.get(`__row__${p}`))
                                             : null;
+                                          const hoverTask = (cellTaskMap.get(`${p}||${s}`) ?? cellTaskMap.get(`__row__${p}`))?.task;
+                                          const canHover = !!hoverTask?.hash;
                                           return (
-                                            <td key={s} className="px-3 py-1.5 text-center align-middle">
+                                            <td
+                                              key={s}
+                                              className={cn("px-3 py-1.5 text-center align-middle", canHover && "cursor-help")}
+                                              onMouseEnter={canHover ? (e) => openTaskHover(e, hoverTask, p, s) : undefined}
+                                              onMouseLeave={canHover ? closeTaskHover : undefined}
+                                            >
                                               {bucket === "success" && <Check size={13} className="inline text-emerald-500" />}
                                               {bucket === "failed" && (
                                                 <button
@@ -4120,15 +4134,24 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                   <p className="text-xs text-muted-foreground text-center py-4">There are no runs found in storage.</p>
                 ) : (() => {
                   const q = runSearch.trim().toLowerCase();
+                  // Sort by run date (finished, else created); undated runs sink to the bottom.
+                  const runTime = (r) => {
+                    const t = Date.parse((r.finished_at || r.created_at || "").replace(" ", "T"));
+                    return Number.isNaN(t) ? null : t;
+                  };
                   const filtered = (q
                     ? availableRuns.filter(r =>
                         [r.run_name, r.experiment_type, r.assembly_status, r.finished_at, r.created_at]
                           .some(v => (v ?? "").toLowerCase().includes(q))
                       )
                     : availableRuns
-                  ).sort((a, b) => runSortDir === "asc"
-                    ? (a.run_name ?? "").localeCompare(b.run_name ?? "")
-                    : (b.run_name ?? "").localeCompare(a.run_name ?? ""));
+                  ).slice().sort((a, b) => {
+                    const ta = runTime(a), tb = runTime(b);
+                    if (ta === null && tb === null) return (a.run_name ?? "").localeCompare(b.run_name ?? "");
+                    if (ta === null) return 1;
+                    if (tb === null) return -1;
+                    return runSortDir === "asc" ? ta - tb : tb - ta;
+                  });
                   return (
                     <>
                       <div className="flex items-center gap-2">
@@ -4143,7 +4166,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                         </div>
                         <button
                           type="button"
-                          title={`Sort ${runSortDir === "asc" ? "Z→A" : "A→Z"}`}
+                          title={`Sort ${runSortDir === "asc" ? "newest first" : "oldest first"}`}
                           onClick={() => setRunSortDir(d => d === "asc" ? "desc" : "asc")}
                           className="h-8 w-8 shrink-0 flex items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-primary hover:border-primary transition-colors"
                         >
@@ -4159,7 +4182,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                               <tr>
                                 <th className="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Name</th>
                                 <th className="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Type</th>
-                                <th className="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Timestamp</th>
+                                <th className="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Ended time</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-border">
@@ -4177,8 +4200,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                                   <td className="px-4 py-2 font-mono font-semibold text-foreground truncate max-w-[240px]">{run.run_name}</td>
                                   <td className="px-4 py-2 font-mono text-foreground whitespace-nowrap">{run.experiment_type}</td>
                                   <td className="px-4 py-2 font-mono text-muted-foreground whitespace-nowrap">{(() => {
-                                    // Prefer Nextflow's reported finish time; trim seconds to minute precision
-                                    const ts = run.finished_at || run.created_at;
+                                    // Nextflow's reported finish time; trim seconds to minute precision
+                                    const ts = run.finished_at;
                                     return ts ? ts.replace(/(\d{1,2}:\d{2}):\d{2}/, "$1") : "—";
                                   })()}</td>
                                 </tr>
@@ -4596,6 +4619,47 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                 </button>
               </div>
             </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Task Progress stdout hover box (streams a task's stdout while hovered) ── */}
+      {taskHover !== null && (() => {
+        const boxW = 440;
+        const boxH = 300;
+        const left = Math.min(Math.max(8, taskHover.x + 12), window.innerWidth - boxW - 8);
+        const top = Math.min(Math.max(8, taskHover.y), window.innerHeight - boxH - 8);
+        const lines = taskHover.data?.lines ?? [];
+        return (
+          <div
+            style={{ left, top, width: boxW, maxHeight: boxH }}
+            className="fixed z-[60] pointer-events-none flex flex-col rounded-xl border border-border bg-background shadow-2xl overflow-hidden"
+          >
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/30 shrink-0">
+              <Terminal size={13} className="text-sky-500 shrink-0" />
+              <span className="text-xs font-bold font-mono text-foreground truncate">{taskHover.process}</span>
+              {taskHover.sample && <span className="text-xs font-mono text-muted-foreground truncate">({taskHover.sample})</span>}
+              {taskHover.loading
+                ? <RefreshCw size={11} className="ml-auto shrink-0 text-muted-foreground animate-spin" />
+                : <span className="ml-auto shrink-0 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-sky-500"><span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />live</span>}
+            </div>
+            <div
+              ref={el => { if (el) el.scrollTop = el.scrollHeight; }}
+              className="flex-1 overflow-auto bg-muted/10 px-3 py-2 font-mono text-[11px] leading-relaxed text-foreground whitespace-pre-wrap break-all"
+            >
+              {taskHover.error && <span className="text-destructive">{taskHover.error}</span>}
+              {!taskHover.error && lines.length === 0 && (
+                <span className="text-muted-foreground">{taskHover.loading ? "Loading stdout…" : "No stdout output yet."}</span>
+              )}
+              {!taskHover.error && lines.map((ln, i) => (
+                <div key={i}>{ln.text || "\u00A0"}</div>
+              ))}
+            </div>
+            {taskHover.data?.log_file && (
+              <div className="px-3 py-1 border-t border-border bg-muted/20 shrink-0 text-[10px] font-mono text-muted-foreground truncate">
+                {taskHover.data.log_file}
+              </div>
+            )}
           </div>
         );
       })()}

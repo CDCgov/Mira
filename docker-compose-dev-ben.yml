@@ -1,85 +1,80 @@
+# Single-container MIRA dev compose that bind-mounts all three local repos
+# (MIRA, Mira-nf, mira-oxide) into the live `mira` container for testing.
+#
+# Layout inside the container:
+#   /MIRA/backend, /MIRA/frontend  -> live MIRA API + React code (this repo)
+#   /MIRA-NF                       -> live Mira-nf Nextflow pipeline code
+#   /MIRA-NF/sandboxes/...mira-oxide/app/mira-oxide -> locally built mira-oxide binary
+#
+# The pipeline runs in-container via `-profile mira_nf_container` (singularity), so the
+# mira-oxide processes execute the baked sandbox binary at
+# /MIRA-NF/sandboxes/cdcgov-mira-oxide-v1.5.10/app/mira-oxide -- we override just that file.
+#
+# Prereqs:
+#   1. `mira:latest` image present (linux/amd64).
+#   2. Local mira-oxide binary built for linux/amd64 at
+#      ../mira-oxide/target/dev-linux/mira-oxide
+#      (docker build --platform linux/amd64 -t mira-oxide:dev-local ../mira-oxide, then
+#       docker cp the /app/mira-oxide binary out).
+#   3. ${HOME}/mira-local-data exists.
+#
+# Bring up:  docker compose -f docker-compose-dev-ben.yml up -d
+# Tear down: docker compose -f docker-compose-dev-ben.yml down
 
-x-mira-nf-image:
-  &mira-nf-image
-  cdcgov/mira-nf:v2.2.0
-
-x-data-storage-path:
-  &data-storage-path
-  /Users/nbx0/mira-local-data
-
-x-mira-backend-codebase:
-  &mira-backend-codebase
-  /Users/nbx0/repos/MIRA/backend
-
-x-mira-frontend-codebase:
-  &mira-frontend-codebase
-  /Users/nbx0/repos/MIRA/frontend
+x-mira-image:
+  &mira-image
+  mira:latest
 
 services:
-  mira-nf:
-    container_name: mira-nf
-    image: *mira-nf-image
+  mira:
+    container_name: mira
+    image: *mira-image
     networks:
-      - mira-react
-    restart: always
-    command: ["tail", "-f", "/dev/null"]  # Keep the container running
-
-  mira-backend:
-    container_name: mira-backend
-    image: mira-backend:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: backend
-      args:
-        UBUNTU_IMAGE: ubuntu:24.04
-        MICROMAMBA_IMAGE: mambaorg/micromamba:2.8.0
-    depends_on:
-      - mira-nf
-    networks:
-      - mira-react
+      - mira
+    privileged: true
     ports:
+      - 5175:5175
       - 8080:8080
     restart: always
     environment:
-      HOST_MIRA_NF_IMAGE: *mira-nf-image
-      HOST_DATA_STORAGE_PATH: *data-storage-path
+      # Force file polling so live edits under the bind mounts trigger reloads
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHFILES_FORCE_POLLING: "true"
     volumes:
+      # Data volume
       - type: bind
-        source: *data-storage-path
+        source: ${HOME}/mira-local-data
         target: /data
-      - type: bind
-        source: *mira-backend-codebase
-        target: /MIRA-backend
-      - /var/run/docker.sock:/var/run/docker.sock # Mount the Docker socket to allow the backend container to run Nextflow pipelines
-    working_dir: /data
-    entrypoint: ["/bin/bash", "-c", "/MIRA-backend/api-kickoff --deploy Docker --data_dir /data --mira_nf_image \"$$HOST_MIRA_NF_IMAGE\" --host_url localhost --host 0.0.0.0 --api_port 8080 --react_port 5175"]
 
-  mira-frontend:
-    container_name: mira-frontend
-    image: mira-frontend:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: frontend
-      args:
-        UBUNTU_IMAGE: ubuntu:24.04
-        NODE_VERSION: 24
-    depends_on:
-      - mira-nf
-      - mira-backend
-    networks:
-      - mira-react
-    ports:
-      - 5175:5175
-    restart: always
-    volumes:
+      # Live MIRA backend + frontend (this repo)
       - type: bind
-        source: *mira-frontend-codebase
-        target: /MIRA-frontend
-    working_dir: /MIRA-frontend
-    entrypoint: ["/bin/sh", "-c", "/MIRA-frontend/react-kickoff --host_url localhost --host 0.0.0.0 --react_port 5175 --api_port 8080"]
+        source: ./backend
+        target: /MIRA/backend
+      - type: bind
+        source: ./frontend
+        target: /MIRA/frontend
+      # Keep the image's frontend node_modules (host copy may be absent/wrong arch)
+      - type: volume
+        target: /MIRA/frontend/node_modules
+
+      # Live Mira-nf pipeline code (sibling repo)
+      - type: bind
+        source: ../Mira-nf
+        target: /MIRA-NF
+      # Preserve the image's baked singularity sandboxes, which are NOT in the repo.
+      # An anonymous volume seeds itself from the image content at this path.
+      - type: volume
+        target: /MIRA-NF/sandboxes
+
+      # Live mira-oxide: override just the compiled binary inside the sandbox with the
+      # locally built linux/amd64 binary. Read-only so the container can't clobber it.
+      - type: bind
+        source: ../mira-oxide/target/dev-linux/mira-oxide
+        target: /MIRA-NF/sandboxes/cdcgov-mira-oxide-v1.5.10/app/mira-oxide
+        read_only: true
+
+    working_dir: /data
 
 networks:
-  mira-react:
-    name: mira-react
+  mira:
+    name: mira

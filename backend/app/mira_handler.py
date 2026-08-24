@@ -1643,7 +1643,7 @@ def create_mira_dag(
         complete_re = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}|\w+-\d+ \d{2}:\d{2}:\d{2}).*WorkflowStats")
         error_re = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}|\w+-\d+ \d{2}:\d{2}:\d{2}).*ERROR")
         starting_re = re.compile(r"Starting process\s*>\s*(\S+)")
-        submitted_re = re.compile(r"Submitted process\s*>\s*(\S+)\s*\(([^)]+)\)")
+        submitted_re = re.compile(r"\[([a-f0-9]{2}/[a-f0-9]+)\]\s*Submitted process\s*>\s*(\S+)\s*\(([^)]+)\)")
         with open(nextflow_log, errors="replace") as fh:
             for line in fh:
                 if workflow["started_at"] is None:
@@ -1660,9 +1660,10 @@ def create_mira_dag(
                         all_process_names.append(process_name)
                 sub = submitted_re.search(line)
                 if sub:
-                    sub_process = sub.group(1).strip().split(":")[-1]
-                    sub_sample = sub.group(2).strip()
-                    submitted_pairs.append((sub_process, sub_sample))
+                    sub_hash = sub.group(1).strip()
+                    sub_process = sub.group(2).strip().split(":")[-1]
+                    sub_sample = sub.group(3).strip()
+                    submitted_pairs.append((sub_process, sub_sample, sub_hash))
 
     elif assembly_status == "CANCELED" and not os.path.exists(nextflow_log):
         message.append(f"MIRA run was canceled or interrupted.")
@@ -1673,12 +1674,12 @@ def create_mira_dag(
     # Nextflow prints its completion summary ("Completed at" / "Duration") to stdout,
     # which run_mira_docker captures to nextflow.stdout.log (overwritten each run, so
     # it always reflects the most recent run).
+    parsed_runtime = None
+    parsed_finished = None
     if os.path.exists(nextflow_stdout):
         ansi_re      = re.compile(r"\x1b\[[0-9;]*m")
         duration_re  = re.compile(r"(?:Execution\s+duration|Duration)\s*:\s*(.+)", re.IGNORECASE)
         completed_re = re.compile(r"Completed\s+at\s*:\s*(.+)", re.IGNORECASE)
-        parsed_runtime = None
-        parsed_finished = None
         with open(nextflow_stdout, errors="replace") as fh:
             for line in fh:
                 clean = ansi_re.sub("", line)
@@ -1688,28 +1689,36 @@ def create_mira_dag(
                 c = completed_re.search(clean)
                 if c:
                     parsed_finished = c.group(1).strip()
-        if parsed_runtime:
-            workflow["runtime"] = parsed_runtime
-        if parsed_finished:
-            workflow["finished_at"] = parsed_finished
-        # Persist any new values to the DB so they survive log cleanup
-        updates = {}
-        if parsed_runtime and parsed_runtime != db_runtime:
-            updates["runtime"] = parsed_runtime
-        if parsed_finished and parsed_finished != db_finished_at:
-            updates["finished_at"] = parsed_finished
-        if updates:
-            try:
-                update_tbl_in_database(
-                    db_tbl_name = ["assembly"],
-                    table = pl.DataFrame({k: [v] for k, v in updates.items()}),
-                    filter_coln_var = ["assembly_id"],
-                    filter_coln_val = {"assembly_id": [assembly_id]},
-                    filter_var_by = ["AND"]
-                )
-            except Exception as err:
-                # Persisting runtime/finish time is best-effort; never fail the DAG response over it
-                logger.warning(f"Failed to persist runtime/finish time for run '{run_name}': {err}")
+
+    # The pipeline routes its "Completed at:" summary to the notification email rather
+    # than stdout, so stdout rarely carries a finish time. Fall back to the completion
+    # timestamp parsed from .nextflow.log's "Workflow completed" (WorkflowStats) line.
+    if not parsed_finished and workflow.get("completed_at"):
+        parsed_finished = workflow["completed_at"]
+
+    if parsed_runtime:
+        workflow["runtime"] = parsed_runtime
+    if parsed_finished:
+        workflow["finished_at"] = parsed_finished
+
+    # Persist any new values to the DB so they survive log cleanup
+    updates = {}
+    if parsed_runtime and parsed_runtime != db_runtime:
+        updates["runtime"] = parsed_runtime
+    if parsed_finished and parsed_finished != db_finished_at:
+        updates["finished_at"] = parsed_finished
+    if updates:
+        try:
+            update_tbl_in_database(
+                db_tbl_name = ["assembly"],
+                table = pl.DataFrame({k: [v] for k, v in updates.items()}),
+                filter_coln_var = ["assembly_id"],
+                filter_coln_val = {"assembly_id": [assembly_id]},
+                filter_var_by = ["AND"]
+            )
+        except Exception as err:
+            # Persisting runtime/finish time is best-effort; never fail the DAG response over it
+            logger.warning(f"Failed to persist runtime/finish time for run '{run_name}': {err}")
 
     # ── 2. Find the latest trace file ──────────────────────────────
     trace_file: Optional[str] = None
@@ -1760,14 +1769,14 @@ def create_mira_dag(
     if assembly_status == "PROCESSING":
         terminal_keys = {(t["process_name"], t["sample"]) for t in tasks}
         seen_running = set()
-        for proc, smp in submitted_pairs:
+        for proc, smp, hsh in submitted_pairs:
             key = (proc, smp)
             if key in terminal_keys or key in seen_running:
                 continue
             seen_running.add(key)
             tasks.append({
                 "task_id":      -1,
-                "hash":         "",
+                "hash":         hsh,
                 "process_name": proc,
                 "sample":       smp,
                 "status":       "RUNNING",
@@ -1814,11 +1823,15 @@ def retrieve_task_log(
     run_name: str,
     experiment_type: str,
     task_hash: str,
+    stream: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Locate the Nextflow work directory for a single task (identified by its
-    execution-trace hash, e.g. "9f/df6545") and return its error log with the
+    execution-trace hash, e.g. "9f/df6545") and return its log with the
     relative path, filename, exit code, and the error lines with line numbers.
+
+    When ``stream`` is "stdout", the process output (.command.out / .command.log)
+    is preferred; otherwise the error log (.command.err) is preferred.
     """
     if not task_hash or "/" not in task_hash:
         raise ValueError("A valid task hash (e.g. '9f/df6545') is required.")
@@ -1855,7 +1868,11 @@ def retrieve_task_log(
     # 1-based line numbers, and flag the ones that look like errors.
     error_re = re.compile(r"error|exception|traceback|fail|not found|no such file|command not found|killed", re.IGNORECASE)
     chosen_file: Optional[str] = None
-    for candidate in (".command.err", ".command.log", ".command.out"):
+    if (stream or "").lower() == "stdout":
+        candidates = (".command.out", ".command.log", ".command.err")
+    else:
+        candidates = (".command.err", ".command.log", ".command.out")
+    for candidate in candidates:
         candidate_path = os.path.join(task_dir, candidate)
         if os.path.exists(candidate_path) and os.path.getsize(candidate_path) > 0:
             chosen_file = candidate
@@ -1876,7 +1893,7 @@ def retrieve_task_log(
         if len(lines) > 500:
             lines = lines[-500:]
     else:
-        chosen_file = ".command.err"
+        chosen_file = candidates[0]
 
     rel_log_path = os.path.relpath(os.path.join(task_dir, chosen_file), run_dir)
 

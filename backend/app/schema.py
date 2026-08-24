@@ -107,6 +107,7 @@ class RunStatusRequest(RunRequest):
 # ------  TASK LOG REQUEST (REQUIRED: RUN NAME, EXPERIMENT TYPE, HASH) ----------
 class TaskLogRequest(RunRequest):
     hash: str = Field(..., description="Execution-trace hash of the task whose error log to retrieve (e.g. '9f/df6545').")
+    stream: Optional[str] = Field(None, description="Which stream to prefer: 'stdout' reads .command.out/.command.log first; otherwise the error log is preferred.")
 
 # ------  DOWNLOAD FASTA REQUEST (REQUIRED: RUN NAME, EXPERIMENT TYPE, KEY) ----------
 class DownloadFastaRequest(RunRequest):
