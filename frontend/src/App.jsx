@@ -3680,14 +3680,13 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                                 <Plot
                                   data={resultBarcodeAssignments.data ?? []}
                                   layout={{
-                                    ...(resultBarcodeAssignments.layout ?? {}),
                                     autosize: true,
-                                    margin: { l: 20, r: 20, t: 40, b: 20 },
                                     paper_bgcolor: "transparent",
                                     plot_bgcolor: "transparent",
                                     font: { size: 11 },
-                                    showlegend: true,
-                                    legend: { orientation: "h", x: 0.5, xanchor: "center", y: -0.1 },
+                                    // Respect the layout mira-oxide emits (margin, annotations, height,
+                                    // axes, legend) so the stacked-bar plot renders as designed.
+                                    ...(resultBarcodeAssignments.layout ?? {}),
                                   }}
                                   config={PLOT_CONFIG}
                                   style={{ width: "100%", minHeight: 300 }}

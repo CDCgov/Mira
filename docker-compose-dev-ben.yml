@@ -4,11 +4,13 @@
 # Layout inside the container:
 #   /MIRA/backend, /MIRA/frontend  -> live MIRA API + React code (this repo)
 #   /MIRA-NF                       -> live Mira-nf Nextflow pipeline code
-#   /MIRA-NF/sandboxes/...mira-oxide/app/mira-oxide -> locally built mira-oxide binary
+#   /opt/mira-oxide-dev/mira-oxide -> locally built mira-oxide binary
 #
-# The pipeline runs in-container via `-profile mira_nf_container` (singularity), so the
-# mira-oxide processes execute the baked sandbox binary at
-# /MIRA-NF/sandboxes/cdcgov-mira-oxide-v1.5.10/app/mira-oxide -- we override just that file.
+# The pipeline runs in-container via `-profile mira_nf_container` (singularity). singularity
+# mounts each sandbox DIRECTORY as the container root and reads the sandbox's underlying
+# (baked v1.5.10) mira-oxide -- a Docker bind-mount layered over that file is bypassed.
+# So instead we expose the local binary at a neutral path and use SINGULARITY_BIND (below)
+# to bind it over /app/mira-oxide for every sandbox exec.
 #
 # Prereqs:
 #   1. `mira:latest` image present (linux/amd64).
@@ -40,6 +42,12 @@ services:
       # Force file polling so live edits under the bind mounts trigger reloads
       CHOKIDAR_USEPOLLING: "true"
       WATCHFILES_FORCE_POLLING: "true"
+      # Make singularity run the locally-built mira-oxide. A Docker bind-mount over the
+      # sandbox binary does NOT work: singularity reads the sandbox dir's underlying
+      # (baked v1.5.10) file and ignores the overlay. SINGULARITY_BIND is applied to every
+      # singularity exec; binding into non-mira-oxide sandboxes is harmless.
+      SINGULARITY_BIND: "/opt/mira-oxide-dev/mira-oxide:/app/mira-oxide"
+      APPTAINER_BIND: "/opt/mira-oxide-dev/mira-oxide:/app/mira-oxide"
     volumes:
       # Data volume
       - type: bind
@@ -66,11 +74,12 @@ services:
       - type: volume
         target: /MIRA-NF/sandboxes
 
-      # Live mira-oxide: override just the compiled binary inside the sandbox with the
-      # locally built linux/amd64 binary. Read-only so the container can't clobber it.
+      # Live mira-oxide: expose the locally built linux/amd64 binary at a neutral path.
+      # singularity binds it over /app/mira-oxide via SINGULARITY_BIND (see environment).
+      # Read-only so the container can't clobber it.
       - type: bind
         source: ../mira-oxide/target/dev-linux/mira-oxide
-        target: /MIRA-NF/sandboxes/cdcgov-mira-oxide-v1.5.10/app/mira-oxide
+        target: /opt/mira-oxide-dev/mira-oxide
         read_only: true
 
     working_dir: /data
