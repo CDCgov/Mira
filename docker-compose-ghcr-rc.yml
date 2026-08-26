@@ -7,6 +7,14 @@ x-mira-image:
   &mira-image
   ghcr.io/cdcgov/mira-dev:v3.0.1
 
+x-mira-backend-codebase:
+  &mira-backend-codebase
+  /home/snu3/Connect/MIRA/backend
+
+x-mira-frontend-codebase:
+  &mira-frontend-codebase
+  /home/snu3/Connect/MIRA/frontend
+
 services:
   mira:
     container_name: mira
@@ -22,6 +30,12 @@ services:
       - type: bind
         source: *data-storage-path
         target: /data
+      - type: bind
+        source: *mira-backend-codebase
+        target: /MIRA/backend
+      - type: bind
+        source: *mira-frontend-codebase
+        target: /MIRA/frontend
     working_dir: /data
 
 networks:

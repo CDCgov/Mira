@@ -495,6 +495,10 @@ function StepPanel({ children }) {
   return <div className="flex flex-col items-center px-4 pb-4 pt-2 space-y-4">{children}</div>;
 }
 
+function ResultSection({ id, children }) {
+  return <div id={id} className="w-full max-w-full min-w-0 overflow-x-auto overscroll-x-contain">{children}</div>;
+}
+
 function FieldLabel({ children }) {
   return <p className="text-xs font-semibold text-foreground mb-1">{children}</p>;
 }
@@ -865,7 +869,12 @@ function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colo
               {visibleCols.map(c => (
                 <th key={c} className={cn("relative px-3 py-2 text-left font-semibold text-muted-foreground font-mono select-none", (compact || colWidths[c]) ? "" : "whitespace-nowrap")}>
                   <span onClick={() => handleSort(c)} className="flex items-center gap-1 cursor-pointer hover:text-foreground transition-colors">
-                    <span className={(compact || colWidths[c]) ? "truncate" : undefined}>{c}</span>
+                    <span
+                      title={(compact || colWidths[c]) ? c : undefined}
+                      className={(compact || colWidths[c]) ? "truncate" : undefined}
+                    >
+                      {c}
+                    </span>
                     {sortCol === c
                       ? sortDir === "asc" ? <ArrowUp size={9} className="text-primary shrink-0" /> : <ArrowDown size={9} className="text-primary shrink-0" />
                       : <ArrowUpDown size={9} className="opacity-30 shrink-0" />}
@@ -3583,13 +3592,14 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                     {assembled && resultBarcodeAssignments !== null && (() => {
                       if ((resultBarcodeAssignments.data ?? []).length === 0) {
                         return (
-                          <div id="result-section-barcode">
+                          <ResultSection id="result-section-barcode">
                             <EmptyResultTable title="Barcode Assignment" />
-                          </div>
+                          </ResultSection>
                         );
                       }
                       return (
-                        <div id="result-section-barcode" className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
+                        <ResultSection id="result-section-barcode">
+                        <div className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                             <p className="text-xs font-bold text-foreground uppercase tracking-wider">Barcode Assignment</p>
                           </div>
@@ -3616,6 +3626,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                             </div>
                           </div>
                         </div>
+                        </ResultSection>
                       );
                     })()}
 
@@ -3623,9 +3634,9 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                     {assembled && resultQcDecisions !== null && (() => {
                       if ((resultQcDecisions.data ?? []).length === 0) {
                         return (
-                          <div id="result-section-qc">
+                          <ResultSection id="result-section-qc">
                             <EmptyResultTable title="Automatic Quality Control Decisions" />
-                          </div>
+                          </ResultSection>
                         );
                       }
                       // The heatmap trace stores x/y as parallel per-cell arrays, so size by the
@@ -3637,7 +3648,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                       const qcManyCols = qcCols.length > 12;
                       const qcHeight = Math.max(120, qcRows.length * HEATMAP_ROW_PX + 120);
                       return (
-                        <div id="result-section-qc" className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
+                        <ResultSection id="result-section-qc">
+                        <div className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                             <p className="text-xs font-bold text-foreground uppercase tracking-wider">Automatic Quality Control Decisions</p>
                           </div>
@@ -3704,27 +3716,28 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                             </div>
                           </div>
                         </div>
+                        </ResultSection>
                       );
                     })()}
 
                     {/* ── 4. MIRA Summary ── */}
                     {assembled && resultMiraSummary !== null && (
-                      <div id="result-section-summary">
+                      <ResultSection id="result-section-summary">
                         {resultMiraSummary.length === 0 ? (
                           <EmptyResultTable title="Mira Summary Table" />
                         ) : (
                           <ResultTable title="Mira Summary Table" data={resultMiraSummary} page={miraSummaryPage} setPage={setMiraSummaryPage} colorize compact defaultVisibleCols={MIRA_SUMMARY_DEFAULT_COLS} />
                         )}
-                      </div>
+                      </ResultSection>
                     )}
 
                     {/* ── 5b. Coverage Heatmap (after Mira Summary) ── */}
                     {assembled && resultCoverageHeatmap !== null && (() => {
                       if ((resultCoverageHeatmap.data ?? []).length === 0) {
                         return (
-                          <div id="result-section-heatmap">
+                          <ResultSection id="result-section-heatmap">
                             <EmptyResultTable title="Median Coverage Heatmap" />
-                          </div>
+                          </ResultSection>
                         );
                       }
                       // The heatmap trace stores x/y as parallel per-cell arrays (one entry per
@@ -3739,7 +3752,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                         heatmapRows.length * HEATMAP_ROW_PX + 120
                       );
                       return (
-                        <div id="result-section-heatmap" className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
+                        <ResultSection id="result-section-heatmap">
+                        <div className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                             <p className="text-xs font-bold text-foreground uppercase tracking-wider">Median Coverage Heatmap</p>
                           </div>
@@ -3793,6 +3807,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                             </div>
                           </div>
                         </div>
+                        </ResultSection>
                       );
                     })()}
 
@@ -3806,7 +3821,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                       const figure = resultSampleCoverageSankey?.[currentSample] ?? null;
                       const covFigure = resultSampleCoveragePlot?.[currentSample] ?? null;
                       return (
-                        <div id="result-section-coverage" className="min-w-[80vw] rounded-xl border border-border overflow-hidden">
+                        <ResultSection id="result-section-coverage">
+                        <div className="min-w-[80vw] rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                             <p className="text-xs font-bold text-foreground uppercase tracking-wider">Per-Sample Coverage and Sankey Plots</p>
                             <select
@@ -3885,40 +3901,41 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                           })()}
 
                         </div>
+                        </ResultSection>
                       );
                     })()}
 
                     {/* ── 6. Reference Variants ── */}
                     {assembled && resultVariants !== null && (
-                      <div id="result-section-variants">
+                      <ResultSection id="result-section-variants">
                         {resultVariants.length === 0 ? (
                           <EmptyResultTable title="AA Variants Table" />
                         ) : (
                           <ResultTable title="AA Variants Table" data={resultVariants} page={variantsPage} setPage={setVariantsPage} />
                         )}
-                      </div>
+                      </ResultSection>
                     )}
 
                     {/* ── 7. Minor SNVs ── */}
                     {assembled && resultMinorSnvs !== null && (
-                      <div id="result-section-snvs">
+                      <ResultSection id="result-section-snvs">
                         {resultMinorSnvs.length === 0 ? (
                           <EmptyResultTable title="Minor Variants Table" message="No Minor Variants found for this run." />
                         ) : (
                           <ResultTable title="Minor Variants Table" data={resultMinorSnvs} page={minorSnvsPage} setPage={setMinorSnvsPage} />
                         )}
-                      </div>
+                      </ResultSection>
                     )}
 
                     {/* ── 8. Reference Indels ── */}
                     {assembled && resultIndels !== null && (
-                      <div id="result-section-indels">
+                      <ResultSection id="result-section-indels">
                         {resultIndels.length === 0 ? (
                           <EmptyResultTable title="Minor Indels Table" message="No Minor Indels found for this run." />
                         ) : (
                           <ResultTable title="Minor Indels Table" data={resultIndels} page={indelsPage} setPage={setIndelsPage} />
                         )}
-                      </div>
+                      </ResultSection>
                     )}
                   </StepPanel>
                 )}
@@ -3964,7 +3981,10 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                       ))}
                       {/* Nextclade FASTA files (one per subtype/segment) */}
                       {resultNextcladeFasta && typeof resultNextcladeFasta === "object" && Object.keys(resultNextcladeFasta).map(key => {
-                        const nextcladeFastaUrl = `${API.downloadNextcladeFasta}?run_name=${encodeURIComponent(selectedRun?.run_name ?? "")}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type ?? "")}&key=${encodeURIComponent(key)}`;
+                        const nextcladeFastaUrl = new URL(
+                          `${API.downloadNextcladeFasta}?run_name=${encodeURIComponent(selectedRun?.run_name ?? "")}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type ?? "")}&key=${encodeURIComponent(key)}`,
+                          window.location.origin
+                        ).toString();
                         const nextcladeViewUrl = `${NEXTCLADE_BASE}?dataset-name=${encodeURIComponent(key)}&input-fasta=${encodeURIComponent(nextcladeFastaUrl)}`;
                         return (
                           <div key={key} className="flex items-start justify-between gap-3 p-3 rounded-xl border border-border bg-muted/10">
