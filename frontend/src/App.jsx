@@ -566,6 +566,10 @@ function StepPanel({ children }) {
   return <div className="flex flex-col items-center px-4 pb-4 pt-2 space-y-4">{children}</div>;
 }
 
+function ResultSection({ id, children }) {
+  return <div id={id} className="w-full max-w-full min-w-0 overflow-x-auto overscroll-x-contain">{children}</div>;
+}
+
 function FieldLabel({ children }) {
   return <p className="text-xs font-semibold text-foreground mb-1">{children}</p>;
 }
@@ -736,7 +740,7 @@ const MIRA_SUMMARY_DEFAULT_COLS = [
   "nextclade_alias",
 ];
 
-function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colorize = false, compact = false, defaultVisibleCols = null, defaultHiddenCols = null, fitCols = 0 }) {
+function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colorize = false, compact = false, defaultVisibleCols = null, defaultHiddenCols = null, fitCols = 0, rotateHeaders = false, stickyFirstCol = false }) {
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
   const [searchQuery, setSearchQuery] = useState("");
@@ -996,10 +1000,19 @@ function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colo
           </colgroup>
           <thead className="bg-muted sticky top-0 z-10">
             <tr>
-              {visibleCols.map(c => (
-                <th key={c} className={cn("relative px-3 py-2 text-left font-semibold text-muted-foreground font-mono select-none", (compact || colWidths[c]) ? "" : "whitespace-nowrap")}>
-                  <span onClick={() => handleSort(c)} className="flex items-center gap-1 cursor-pointer hover:text-foreground transition-colors">
-                    <span className={(compact || colWidths[c]) ? "truncate" : undefined}>{c}</span>
+              {visibleCols.map((c, ci) => (
+                <th key={c} className={cn("relative px-3 py-2 text-left font-semibold text-muted-foreground font-mono select-none", rotateHeaders && "h-36 align-bottom whitespace-nowrap", (compact || colWidths[c]) ? "" : "whitespace-nowrap", stickyFirstCol && ci === 0 && "sticky left-0 z-20 bg-muted")}>
+                  <span
+                    onClick={() => handleSort(c)}
+                    style={rotateHeaders ? { transform: "rotate(-80deg)", transformOrigin: "left bottom", width: "1.5rem" } : undefined}
+                    className="flex items-center gap-1 cursor-pointer hover:text-foreground transition-colors"
+                  >
+                    <span
+                      title={(compact || colWidths[c]) ? c : undefined}
+                      className={(!rotateHeaders && (compact || colWidths[c])) ? "truncate" : undefined}
+                    >
+                      {c}
+                    </span>
                     {sortCol === c
                       ? sortDir === "asc" ? <ArrowUp size={9} className="text-primary shrink-0" /> : <ArrowDown size={9} className="text-primary shrink-0" />
                       : <ArrowUpDown size={9} className="opacity-30 shrink-0" />}
@@ -1016,8 +1029,8 @@ function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colo
             </tr>
             {showFilters && (
               <tr className="bg-background">
-                {visibleCols.map(c => (
-                  <th key={c} className="px-1.5 py-1 border-t border-border">
+                {visibleCols.map((c, ci) => (
+                  <th key={c} className={cn("px-1.5 py-1 border-t border-border", stickyFirstCol && ci === 0 && "sticky left-0 z-20 bg-background")}>
                     <input
                       value={colFilters[c] ?? ""}
                       onChange={(e) => setColFilter(c, e.target.value)}
@@ -1038,10 +1051,10 @@ function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colo
               </tr>
             ) : pageRows.map((row, i) => (
               <tr key={pageStart + i} className="border-t border-border hover:bg-muted/10">
-                {visibleCols.map(c => {
+                {visibleCols.map((c, ci) => {
                   const cellStyle = getCellStyle(c, row[c]);
                   return (
-                    <td key={c} title={row[c] == null ? undefined : String(row[c])} className={cn("px-3 py-1.5 font-mono", (compact || colWidths[c]) ? "truncate" : "whitespace-nowrap", !cellStyle.backgroundColor && "text-foreground")} style={cellStyle}>
+                    <td key={c} title={row[c] == null ? undefined : String(row[c])} className={cn("px-3 py-1.5 font-mono", (compact || colWidths[c]) ? "truncate" : "whitespace-nowrap", !cellStyle.backgroundColor && "text-foreground", stickyFirstCol && ci === 0 && "sticky left-0 z-10 bg-background")} style={cellStyle}>
                       {row[c] == null ? <span className="text-muted-foreground/50">—</span> : String(row[c])}
                     </td>
                   );
@@ -1923,13 +1936,24 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   }, []);
 
   // Hide the app header when the accordion is scrolled down, reveal it when scrolling back up.
+  // The header collapses via a height transition, which grows this scroll container and makes
+  // the browser clamp scrollTop back down mid-animation. On pages too short to sustain the
+  // scroll, that clamp reads as "scrolling up" and re-reveals the header, causing a jitter loop.
+  // A brief lock after each toggle absorbs those reflow-driven scroll events.
   const lastScrollTopRef = useRef(0);
+  const headerToggleLockRef = useRef(0);
   const handleContentScroll = useCallback((e) => {
     const st = e.currentTarget.scrollTop;
-    const last = lastScrollTopRef.current;
-    if (st > last && st > 60) setHeaderHidden?.(true);
-    else if (st < last) setHeaderHidden?.(false);
+    const delta = st - lastScrollTopRef.current;
     lastScrollTopRef.current = st;
+    if (performance.now() < headerToggleLockRef.current) return;
+    if (delta > 0 && st > 60) {
+      setHeaderHidden?.(true);
+      headerToggleLockRef.current = performance.now() + 350;
+    } else if (delta < 0) {
+      setHeaderHidden?.(false);
+      headerToggleLockRef.current = performance.now() + 350;
+    }
   }, [setHeaderHidden]);
 
   // Always restore the header when this tab unmounts.
@@ -3854,13 +3878,14 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                     {assembled && resultBarcodeAssignments !== null && (() => {
                       if ((resultBarcodeAssignments.data ?? []).length === 0) {
                         return (
-                          <div id="result-section-barcode">
+                          <ResultSection id="result-section-barcode">
                             <EmptyResultTable title="Barcode Assignment" />
-                          </div>
+                          </ResultSection>
                         );
                       }
                       return (
-                        <div id="result-section-barcode" className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
+                        <ResultSection id="result-section-barcode">
+                        <div className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                             <p className="text-xs font-bold text-foreground uppercase tracking-wider">Barcode Assignment</p>
                           </div>
@@ -3886,6 +3911,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                             </div>
                           </div>
                         </div>
+                        </ResultSection>
                       );
                     })()}
 
@@ -3893,9 +3919,9 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                     {assembled && resultQcDecisions !== null && (() => {
                       if ((resultQcDecisions.data ?? []).length === 0) {
                         return (
-                          <div id="result-section-qc">
+                          <ResultSection id="result-section-qc">
                             <EmptyResultTable title="Automatic Quality Control Decisions" />
-                          </div>
+                          </ResultSection>
                         );
                       }
                       // The heatmap trace stores x/y as parallel per-cell arrays, so size by the
@@ -3907,7 +3933,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                       const qcManyCols = qcCols.length > 12;
                       const qcHeight = Math.max(120, qcRows.length * HEATMAP_ROW_PX + 120);
                       return (
-                        <div id="result-section-qc" className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
+                        <ResultSection id="result-section-qc">
+                        <div className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                             <p className="text-xs font-bold text-foreground uppercase tracking-wider">Automatic Quality Control Decisions</p>
                           </div>
@@ -3974,27 +4001,28 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                             </div>
                           </div>
                         </div>
+                        </ResultSection>
                       );
                     })()}
 
                     {/* ── 4. MIRA Summary ── */}
                     {assembled && resultMiraSummary !== null && (
-                      <div id="result-section-summary">
+                      <ResultSection id="result-section-summary">
                         {resultMiraSummary.length === 0 ? (
                           <EmptyResultTable title="Mira Summary Table" />
                         ) : (
                           <ResultTable title="Mira Summary Table" data={resultMiraSummary} page={miraSummaryPage} setPage={setMiraSummaryPage} colorize compact defaultVisibleCols={MIRA_SUMMARY_DEFAULT_COLS} />
                         )}
-                      </div>
+                      </ResultSection>
                     )}
 
                     {/* ── 5b. Coverage Heatmap (after Mira Summary) ── */}
                     {assembled && resultCoverageHeatmap !== null && (() => {
                       if ((resultCoverageHeatmap.data ?? []).length === 0) {
                         return (
-                          <div id="result-section-heatmap">
+                          <ResultSection id="result-section-heatmap">
                             <EmptyResultTable title="Median Coverage Heatmap" />
-                          </div>
+                          </ResultSection>
                         );
                       }
                       // The heatmap trace stores x/y as parallel per-cell arrays (one entry per
@@ -4028,7 +4056,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                         heatmapRows.length * HEATMAP_ROW_PX + 120
                       );
                       return (
-                        <div id="result-section-heatmap" className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
+                        <ResultSection id="result-section-heatmap">
+                        <div className="min-w-[60vw] rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                             <p className="text-xs font-bold text-foreground uppercase tracking-wider">Median Coverage Heatmap</p>
                           </div>
@@ -4086,6 +4115,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                             </div>
                           </div>
                         </div>
+                        </ResultSection>
                       );
                     })()}
 
@@ -4099,7 +4129,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                       const figure = resultSampleCoverageSankey?.[currentSample] ?? null;
                       const covFigure = resultSampleCoveragePlot?.[currentSample] ?? null;
                       return (
-                        <div id="result-section-coverage" className="w-[80vw] max-w-full rounded-xl border border-border overflow-hidden">
+                        <ResultSection id="result-section-coverage">
+                        <div className="w-[80vw] max-w-full rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                             <p className="text-xs font-bold text-foreground uppercase tracking-wider">Read Assignment and Coverage Plots</p>
                             <select
@@ -4224,40 +4255,41 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                           })()}
 
                         </div>
+                        </ResultSection>
                       );
                     })()}
 
                     {/* ── 6. Reference Variants ── */}
                     {assembled && resultVariants !== null && (
-                      <div id="result-section-variants">
+                      <ResultSection id="result-section-variants">
                         {resultVariants.length === 0 ? (
                           <EmptyResultTable title="AA Variants Table" />
                         ) : (
                           <ResultTable title="AA Variants Table" data={resultVariants} page={variantsPage} setPage={setVariantsPage} compact fitCols={5} defaultHiddenCols={["positional_reference_id"]} />
                         )}
-                      </div>
+                      </ResultSection>
                     )}
 
                     {/* ── 7. Minor SNVs ── */}
                     {assembled && resultMinorSnvs !== null && (
-                      <div id="result-section-snvs">
+                      <ResultSection id="result-section-snvs">
                         {resultMinorSnvs.length === 0 ? (
                           <EmptyResultTable title="Minor Variants Table" message="No Minor Variants found for this run." />
                         ) : (
-                          <ResultTable title="Minor Variants Table" data={resultMinorSnvs} page={minorSnvsPage} setPage={setMinorSnvsPage} />
+                          <ResultTable title="Minor Variants Table" data={resultMinorSnvs} page={minorSnvsPage} setPage={setMinorSnvsPage} compact fitCols={5} defaultHiddenCols={["dais_reference"]} stickyFirstCol />
                         )}
-                      </div>
+                      </ResultSection>
                     )}
 
                     {/* ── 8. Reference Indels ── */}
                     {assembled && resultIndels !== null && (
-                      <div id="result-section-indels">
+                      <ResultSection id="result-section-indels">
                         {resultIndels.length === 0 ? (
                           <EmptyResultTable title="Minor Indels Table" message="No Minor Indels found for this run." />
                         ) : (
                           <ResultTable title="Minor Indels Table" data={resultIndels} page={indelsPage} setPage={setIndelsPage} />
                         )}
-                      </div>
+                      </ResultSection>
                     )}
                   </StepPanel>
                 )}

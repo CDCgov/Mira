@@ -358,8 +358,17 @@ def retrieve_minor_snvs(run_name: str, experiment_type: str) -> dict | None:
         # Get pathogen and instrument type from experiment_type
         pathogen = experiment_type.split("-")[0]
         instrument = experiment_type.split("-")[-1]
+        aggregate_dir = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, "outputs", "aggregate_outputs")
+        # For influenza, prefer the annotated minor variants table, which adds codon/amino-acid columns
+        if pathogen.lower() == "flu":
+            annotated_matches = sorted(
+                glob.glob(os.path.join(aggregate_dir, "csv-reports", "mira_*_annotated_minor_variants.csv")),
+                reverse=True,
+            )
+            if annotated_matches:
+                return pl.read_csv(annotated_matches[0]).to_dicts()
         # Get minor snvs result from storage
-        minor_snvs_result_path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, "outputs", "aggregate_outputs", "dash-json", "minor_variants.json")
+        minor_snvs_result_path = os.path.join(aggregate_dir, "dash-json", "minor_variants.json")
         # Check if the minor snvs result file exists
         if os.path.exists(minor_snvs_result_path):
             with open(minor_snvs_result_path, "r") as f:
