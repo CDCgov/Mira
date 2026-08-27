@@ -1850,11 +1850,33 @@ def create_mira_dag(
     }
 
 # Define function to retrieve the error log for a single failed task
+def _extract_nextflow_task_lines(nextflow_log: str, prefix: str, rest: str) -> List[str]:
+    """
+    Return the lines from a run's .nextflow.log that reference a single task,
+    identified by its truncated trace hash "<prefix>/<rest>" (e.g. "9f/df6545").
+    Used as a fallback log feed for tasks (everything but IRMA) that don't write
+    anything to their command streams.
+    """
+    if not nextflow_log or not os.path.exists(nextflow_log):
+        return []
+    needle = f"[{prefix}/{rest}"
+    matched: List[str] = []
+    try:
+        with open(nextflow_log, errors="replace") as fh:
+            for raw in fh:
+                if needle in raw:
+                    matched.append(raw.rstrip("\n"))
+    except Exception:
+        return []
+    return matched
+
+
 def retrieve_task_log(
     run_name: str,
     experiment_type: str,
     task_hash: str,
     stream: Optional[str] = None,
+    full: bool = False,
 ) -> Dict[str, Any]:
     """
     Locate the Nextflow work directory for a single task (identified by its
@@ -1862,7 +1884,10 @@ def retrieve_task_log(
     relative path, filename, exit code, and the error lines with line numbers.
 
     When ``stream`` is "stdout", the process output (.command.out / .command.log)
-    is preferred; otherwise the error log (.command.err) is preferred.
+    is preferred; otherwise the error log (.command.err) is preferred. Tasks that
+    write nothing to their command streams fall back to the task-specific lines
+    from the run's .nextflow.log. When ``full`` is true the untruncated file
+    contents are also returned in ``full_text``.
     """
     if not task_hash or "/" not in task_hash:
         raise ValueError("A valid task hash (e.g. '9f/df6545') is required.")
@@ -1938,24 +1963,44 @@ def retrieve_task_log(
 
     lines: List[Dict[str, Any]] = []
     error_lines: List[Dict[str, Any]] = []
+    full_text: str = ""
+    log_source_path: Optional[str] = None
     if chosen_file is not None:
-        log_full_path = os.path.join(task_dir, chosen_file)
-        with open(log_full_path, errors="replace") as fh:
-            for i, raw in enumerate(fh, start=1):
-                text = raw.rstrip("\n")
-                entry = {"line_number": i, "text": text}
-                lines.append(entry)
-                if error_re.search(text):
-                    error_lines.append(entry)
-        # Keep the payload reasonable: cap the returned lines.
-        if len(lines) > 500:
-            lines = lines[-500:]
+        log_source_path = os.path.join(task_dir, chosen_file)
+        with open(log_source_path, errors="replace") as fh:
+            full_text = fh.read()
+        for i, raw in enumerate(full_text.splitlines(), start=1):
+            entry = {"line_number": i, "text": raw}
+            lines.append(entry)
+            if error_re.search(raw):
+                error_lines.append(entry)
     else:
-        chosen_file = candidates[0]
+        # Only IRMA writes to its command streams; other tasks leave them empty.
+        # Fall back to the task-specific lines from the run's .nextflow.log so the
+        # modal still shows a (live) feed of the task's lifecycle.
+        fallback = _extract_nextflow_task_lines(nextflow_log, prefix, rest)
+        if fallback:
+            chosen_file = ".nextflow.log"
+            log_source_path = nextflow_log
+            full_text = "\n".join(fallback)
+            for i, raw in enumerate(fallback, start=1):
+                entry = {"line_number": i, "text": raw}
+                lines.append(entry)
+                if error_re.search(raw):
+                    error_lines.append(entry)
+        else:
+            chosen_file = candidates[0]
 
-    rel_log_path = os.path.relpath(os.path.join(task_dir, chosen_file), run_dir)
+    # Keep the display payload reasonable: cap the returned lines to the tail.
+    if len(lines) > 500:
+        lines = lines[-500:]
 
-    return {
+    rel_log_path = os.path.relpath(
+        log_source_path if log_source_path else os.path.join(task_dir, chosen_file),
+        run_dir,
+    )
+
+    result: Dict[str, Any] = {
         "task_hash":   task_hash,
         "log_file":    chosen_file,
         "log_path":    rel_log_path,
@@ -1964,6 +2009,9 @@ def retrieve_task_log(
         "error_lines": error_lines,
         "lines":       lines,
     }
+    if full:
+        result["full_text"] = full_text
+    return result
 
 # Define function to extract per-sample pass/fail status from the Nextflow execution log
 def get_sample_workflow_status(

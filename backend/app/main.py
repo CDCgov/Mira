@@ -880,6 +880,7 @@ async def get_mira_task_log(req: TaskLogRequest = Depends()):
             experiment_type = req.experiment_type,
             task_hash       = req.hash,
             stream          = req.stream,
+            full            = bool(req.full),
         )
         return result
     except ValueError as err:

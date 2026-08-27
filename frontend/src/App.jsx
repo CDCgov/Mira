@@ -1564,26 +1564,33 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   const openTaskLog = async (task, process, sample, stream) => {
     closeTaskHover(); // stop the live hover box while the modal is open
     if (!task?.hash || !selectedRun?.run_name || !selectedRun?.experiment_type) {
-      setTaskLog({ loading: false, error: "No log is available for this task (its work directory may have been cleaned up).", data: null, process, sample, stream });
+      setTaskLog({ loading: false, error: "No log is available for this task (its work directory may have been cleaned up).", data: null, process, sample, stream, hash: task?.hash ?? null });
       return;
     }
-    setTaskLog({ loading: true, error: null, data: null, process, sample, stream });
+    setTaskLog({ loading: true, error: null, data: null, process, sample, stream, hash: task.hash });
     try {
       const streamParam = stream ? `&stream=${encodeURIComponent(stream)}` : "";
       const res = await fetch(`${API.miraTaskLog}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&hash=${encodeURIComponent(task.hash)}${streamParam}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Failed to load task log");
-      setTaskLog({ loading: false, error: null, data, process, sample, stream });
+      setTaskLog(prev => (prev && prev.hash === task.hash && prev.stream === stream) ? { loading: false, error: null, data, process, sample, stream, hash: task.hash } : prev);
     } catch (err) {
-      setTaskLog({ loading: false, error: err.message, data: null, process, sample, stream });
+      setTaskLog(prev => (prev && prev.hash === task.hash && prev.stream === stream) ? { loading: false, error: err.message, data: null, process, sample, stream, hash: task.hash } : prev);
     }
   };
 
-  // Copy the full log text of the open modal to the clipboard, with brief feedback.
+  // Copy the entire log file's contents to the clipboard (not just the displayed
+  // tail), with brief feedback.
   const copyTaskLog = async () => {
-    const text = (taskLog?.data?.lines ?? []).map(ln => ln.text).join("\n");
-    if (!text) return;
+    if (!taskLog?.hash || !selectedRun?.run_name || !selectedRun?.experiment_type) return;
     try {
+      const streamParam = taskLog.stream ? `&stream=${encodeURIComponent(taskLog.stream)}` : "";
+      const res = await fetch(`${API.miraTaskLog}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&hash=${encodeURIComponent(taskLog.hash)}${streamParam}&full=1`);
+      const data = await res.json();
+      const text = res.ok
+        ? (data.full_text ?? (data.lines ?? []).map(ln => ln.text).join("\n"))
+        : (taskLog.data?.lines ?? []).map(ln => ln.text).join("\n");
+      if (!text) return;
       await navigator.clipboard.writeText(text);
       setTaskLogCopied(true);
       setTimeout(() => setTaskLogCopied(false), 1500);
@@ -1591,6 +1598,46 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       /* clipboard unavailable — ignore */
     }
   };
+
+  // ── Task log modal: live feed ──
+  // While the modal is open on a task that hasn't exited yet, keep re-fetching its
+  // log so the feed stays current. Depends only on primitives so data updates don't
+  // reset the polling interval.
+  const taskLogRunning = taskLog?.data != null && taskLog.data.exit_code == null;
+  useEffect(() => {
+    if (!taskLog?.hash || taskLog.loading || taskLog.error) return;
+    if (!taskLogRunning) return;
+    if (!selectedRun?.run_name || !selectedRun?.experiment_type) return;
+    const { hash, stream, process, sample } = taskLog;
+    const streamParam = stream ? `&stream=${encodeURIComponent(stream)}` : "";
+    const id = setInterval(async () => {
+      try {
+        const res = await fetch(`${API.miraTaskLog}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&hash=${encodeURIComponent(hash)}${streamParam}`);
+        const data = await res.json();
+        if (!res.ok) return;
+        setTaskLog(prev => (prev && prev.hash === hash && prev.stream === stream)
+          ? { ...prev, loading: false, error: null, data, process, sample }
+          : prev);
+      } catch {
+        /* transient fetch error — keep the last good feed */
+      }
+    }, 2000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskLog?.hash, taskLog?.stream, taskLog?.loading, taskLog?.error, taskLogRunning, selectedRun]);
+
+  // Auto-scroll the log body to the bottom as new lines stream in, unless the user
+  // has scrolled up to read earlier output.
+  const taskLogBodyRef  = useRef(null);
+  const taskLogStickRef = useRef(true);
+  const onTaskLogScroll = (e) => {
+    const el = e.currentTarget;
+    taskLogStickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  };
+  useEffect(() => {
+    const el = taskLogBodyRef.current;
+    if (el && taskLogStickRef.current) el.scrollTop = el.scrollHeight;
+  }, [taskLog?.data?.lines?.length]);
 
   // ── Task Progress hover box: stream a task's stdout while the cursor is over its cell ──
   const taskHoverPollRef = useRef(null); // setInterval id for the streaming refresh
@@ -4966,6 +5013,11 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                   {taskLog.stream === "stdout" ? "Task Log" : "Task Error"} — <span className="font-mono">{taskLog.process}</span>
                   {taskLog.sample ? <span className="font-mono text-muted-foreground"> ({taskLog.sample})</span> : null}
                 </h3>
+                {taskLog.data && taskLog.data.exit_code == null && (
+                  <span className="flex items-center gap-1 shrink-0 text-[10px] font-semibold uppercase tracking-wider text-sky-500">
+                    <span className="h-1.5 w-1.5 rounded-full bg-sky-500 animate-pulse" /> Live
+                  </span>
+                )}
               </div>
               <button onClick={() => setTaskLog(null)} className="text-muted-foreground hover:text-foreground transition-colors shrink-0">
                 <X size={15} />
@@ -5026,7 +5078,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                   {taskLog.data.lines?.length > 0 && (
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Log ({taskLog.data.log_file})</p>
-                      <div className="rounded-lg border border-border overflow-auto max-h-72 bg-muted/10">
+                      <div ref={taskLogBodyRef} onScroll={onTaskLogScroll} className="rounded-lg border border-border overflow-auto max-h-96 bg-muted/10">
                         <table className="w-full text-xs font-mono">
                           <tbody>
                             {taskLog.data.lines.map((ln, i) => (
