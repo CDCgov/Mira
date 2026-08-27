@@ -8,9 +8,10 @@
 #
 # The pipeline runs in-container via `-profile mira_nf_container` (singularity). singularity
 # mounts each sandbox DIRECTORY as the container root and reads the sandbox's underlying
-# (baked v1.5.10) mira-oxide -- a Docker bind-mount layered over that file is bypassed.
-# So instead we expose the local binary at a neutral path and use SINGULARITY_BIND (below)
-# to bind it over /app/mira-oxide for every sandbox exec.
+# (baked v1.5.10) mira-oxide. Nextflow launches singularity with `env -`, stripping
+# SINGULARITY_BIND, so we expose the local binary at a neutral path and set MIRA_OXIDE_DEV_BIND
+# (below); the mira_nf_container profile appends it as a `-B` run option to overlay our binary
+# over /app/mira-oxide for every sandbox exec.
 #
 # Prereqs:
 #   1. `mira:latest` image present (linux/amd64).
@@ -42,12 +43,12 @@ services:
       # Force file polling so live edits under the bind mounts trigger reloads
       CHOKIDAR_USEPOLLING: "true"
       WATCHFILES_FORCE_POLLING: "true"
-      # Make singularity run the locally-built mira-oxide. A Docker bind-mount over the
-      # sandbox binary does NOT work: singularity reads the sandbox dir's underlying
-      # (baked v1.5.10) file and ignores the overlay. SINGULARITY_BIND is applied to every
-      # singularity exec; binding into non-mira-oxide sandboxes is harmless.
-      SINGULARITY_BIND: "/opt/mira-oxide-dev/mira-oxide:/app/mira-oxide"
-      APPTAINER_BIND: "/opt/mira-oxide-dev/mira-oxide:/app/mira-oxide"
+      # Make singularity run the locally-built mira-oxide. Nextflow launches singularity with
+      # `env -`, which strips SINGULARITY_BIND, so the overlay cannot be passed via that env
+      # var. Instead the mira_nf_container profile reads MIRA_OXIDE_DEV_BIND and appends it as
+      # a `-B` run option, overlaying our binary over the sandbox's baked /app/mira-oxide for
+      # every singularity exec. Unset in production, so the baked binary is used.
+      MIRA_OXIDE_DEV_BIND: "/opt/mira-oxide-dev/mira-oxide:/app/mira-oxide"
     volumes:
       # Data volume
       - type: bind

@@ -75,6 +75,7 @@ from .mira_handler import (
     retrieve_sample_coverage_list,
     retrieve_sample_coverage_sankeyfig,
     retrieve_sample_coverage_plot,
+    retrieve_sample_coverage_linearfig,
     retrieve_variants,
     retrieve_minor_snvs,
     retrieve_indels,
@@ -1055,18 +1056,38 @@ async def get_sample_coverage_sankeyfig(
         raise HTTPException(status_code=500, detail=str(err))
 
 # ---------- Retrieve Sample Coverage Plot ----------
-@app.get("/retrieve/sample_coverage_plot", response_model=Optional[Dict[str, Any]], summary="Retrieve Sample Coverage Plot (Linear)", tags=["MIRA Results"])
+@app.get("/retrieve/sample_coverage_plot", response_model=Optional[Dict[str, Any]], summary="Retrieve Sample Segment Coverage Plot", tags=["MIRA Results"])
 async def get_sample_coverage_plot(
     req: RunRequest = Depends(),
-    sample_id: str = Query(..., description="Sample ID to retrieve the coverage plot for"),
+    sample_id: str = Query(..., description="Sample ID to retrieve the segment coverage plot for"),
 ):
     """
-    Retrieve sample coverage plot for a given sequencing run and sample.
+    Retrieve sample segment coverage plot for a given sequencing run and sample.
     """
     try:
         result = await asyncio.to_thread(
             retrieve_sample_coverage_plot,
             run_name = req.run_name, 
+            experiment_type = req.experiment_type,
+            sample_id = sample_id,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+
+# ---------- Retrieve Sample Combined (linear) Coverage Plot ----------
+@app.get("/retrieve/sample_coverage_linearfig", response_model=Optional[Dict[str, Any]], summary="Retrieve Sample Combined Coverage Plot", tags=["MIRA Results"])
+async def get_sample_coverage_linearfig(
+    req: RunRequest = Depends(),
+    sample_id: str = Query(..., description="Sample ID to retrieve the combined coverage plot for"),
+):
+    """
+    Retrieve sample combined (all-segment) coverage plot for a given sequencing run and sample.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_sample_coverage_linearfig,
+            run_name = req.run_name,
             experiment_type = req.experiment_type,
             sample_id = sample_id,
         )

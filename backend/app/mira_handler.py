@@ -300,8 +300,8 @@ def retrieve_sample_coverage_plot(run_name: str, experiment_type: str, sample_id
         # Get pathogen and instrument type from experiment_type
         pathogen = experiment_type.split("-")[0]
         instrument = experiment_type.split("-")[-1]
-        # Get sample coverage plot result from storage
-        sample_coverage_plot_path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, "outputs", "aggregate_outputs", "dash-json", f"coveragefig_{sample_id}_linear.json")
+        # Get sample segment coverage plot result from storage
+        sample_coverage_plot_path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, "outputs", "aggregate_outputs", "dash-json", f"coveragefig_{sample_id}_seg.json")
         # Check if the sample coverage plot result file exists
         if os.path.exists(sample_coverage_plot_path):
             with open(sample_coverage_plot_path, "r") as f:
@@ -311,6 +311,23 @@ def retrieve_sample_coverage_plot(run_name: str, experiment_type: str, sample_id
     except Exception as err:
         raise Exception(str(err))
     return sample_coverage_plot
+
+# Get sample combined (linear) coverage plot from storage
+def retrieve_sample_coverage_linearfig(run_name: str, experiment_type: str, sample_id: str) -> dict | None:
+    try:
+        # Get pathogen and instrument type from experiment_type
+        pathogen = experiment_type.split("-")[0]
+        instrument = experiment_type.split("-")[-1]
+        # Get the combined coverage plot (all segments on one axis) result from storage
+        sample_coverage_linear_path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, "outputs", "aggregate_outputs", "dash-json", f"coveragefig_{sample_id}_linear.json")
+        if os.path.exists(sample_coverage_linear_path):
+            with open(sample_coverage_linear_path, "r") as f:
+                sample_coverage_linear = json.load(f)
+        else:
+            sample_coverage_linear = None
+    except Exception as err:
+        raise Exception(str(err))
+    return sample_coverage_linear
 
 # Get variants from storage
 def retrieve_variants(run_name: str, experiment_type: str) -> dict | None:

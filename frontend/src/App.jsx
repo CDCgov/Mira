@@ -156,6 +156,7 @@ const API = {
   retrieveSampleCoverageList:   `${API_BASE}/retrieve/sample_coverage_list`,
   retrieveSampleCoverageSankey: `${API_BASE}/retrieve/sample_coverage_sankeyfig`,
   retrieveSampleCoveragePlot:   `${API_BASE}/retrieve/sample_coverage_plot`,
+  retrieveSampleCoverageLinear: `${API_BASE}/retrieve/sample_coverage_linearfig`,
   retrieveVariants:             `${API_BASE}/retrieve/variants`,
   retrieveMinorSnvs:            `${API_BASE}/retrieve/minor_snvs`,
   retrieveIndels:               `${API_BASE}/retrieve/indels`,
@@ -172,6 +173,21 @@ const API = {
   downloadMiraReports:          `${API_BASE}/download/mira_reports`,
   downloadSeqsenderConfig:           `${API_BASE}/download/seqsender_config_template`,
   downloadSeqsenderMetadataTemplate: `${API_BASE}/download/seqsender_metadata_template`,
+};
+
+// Persist the in-flight MIRA run so it keeps processing (and stays cancellable) after the
+// user navigates away, closes the browser, and reopens it. The backend process is unaffected
+// by the browser; we only need to remember which run/PID to resume polling for.
+const ACTIVE_RUN_KEY = "mira.activeRun";
+const readActiveRun = () => {
+  try { return JSON.parse(localStorage.getItem(ACTIVE_RUN_KEY) || "null"); }
+  catch { return null; }
+};
+const writeActiveRun = (run) => {
+  try { localStorage.setItem(ACTIVE_RUN_KEY, JSON.stringify(run)); } catch { /* storage unavailable */ }
+};
+const clearActiveRun = () => {
+  try { localStorage.removeItem(ACTIVE_RUN_KEY); } catch { /* storage unavailable */ }
 };
 
 // Standardized on-disk filenames the backend always saves custom config uploads
@@ -632,38 +648,86 @@ const PLOT_CONFIG = {
   }],
 };
 
+// Plotly figure pinned to its container's measured width and a viewport-capped
+// height, so multi-subplot grids never overflow their box horizontally.
+function ResponsivePlot({ data, layout, config, style, minHeight = 320, maxHeight = 640, heightVh = 0.72, ...rest }) {
+  const ref = useRef(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const measure = () => {
+      const width = el.clientWidth;
+      const height = Math.max(minHeight, Math.min(Math.round(window.innerHeight * heightVh), maxHeight));
+      setSize((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener("resize", measure);
+    return () => { ro.disconnect(); window.removeEventListener("resize", measure); };
+  }, [minHeight, maxHeight, heightVh]);
+  return (
+    <div ref={ref} className="w-full">
+      {size.width > 0 && (
+        <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
+          <Plot
+            data={data}
+            layout={{ ...layout, autosize: false, width: size.width, height: size.height }}
+            config={config}
+            style={{ ...style, width: `${size.width}px`, height: `${size.height}px` }}
+            {...rest}
+          />
+        </Suspense>
+      )}
+    </div>
+  );
+}
+
 /* ── Reusable paginated + sortable result table ──── */
 const N_BINS = 8;
 const PUBUGN_8 = ['#fff7fb','#ece2f0','#d0d1e6','#a6bddb','#67a9cf','#3690c0','#02818a','#016450'];
 
-// Columns shown by default in the Mira Summary table (all others start hidden).
+// Columns shown by default in the Mira Summary table. Covers every column
+// mira-oxide can emit across virus types (flu, sc2-wgs, sc2-spike, rsv),
+// including all nextclade call columns. Names absent from a given run's data
+// are simply ignored.
 const MIRA_SUMMARY_DEFAULT_COLS = [
   "sample_id",
   "total_reads",
-  "pass_qc",
   "reads_mapped",
   "reference",
   "percent_reference_coverage",
   "median_coverage",
   "count_minor_snv_at_or_over_5_pct",
+  "spike_percent_coverage",
+  "spike_median_coverage",
   "di_5prime;di_3prime",
   "pass_fail_reason",
   "subtype",
+  // nextclade calls (virus-specific keys; only those present in the data render)
+  "clade",
+  "clade_who",
+  "nextclade_pango",
   "nextclade_alias",
 ];
 
-function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colorize = false, compact = false, defaultVisibleCols = null, fitCols = 0 }) {
+function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colorize = false, compact = false, defaultVisibleCols = null, defaultHiddenCols = null, fitCols = 0 }) {
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
   const [searchQuery, setSearchQuery] = useState("");
   const [colWidths, setColWidths] = useState({});          // { colName: px } — manually resized columns
   const [hiddenCols, setHiddenCols] = useState(() => {
     // When a default visible-column set is supplied, hide every other (existing) column up front.
-    if (!defaultVisibleCols) return new Set();
-    const allCols = Array.isArray(rawData)
-      ? (rawData[0] ? Object.keys(rawData[0]) : [])
-      : (rawData?.columns ?? []);
-    return new Set(allCols.filter(c => !defaultVisibleCols.includes(c)));
+    if (defaultVisibleCols) {
+      const allCols = Array.isArray(rawData)
+        ? (rawData[0] ? Object.keys(rawData[0]) : [])
+        : (rawData?.columns ?? []);
+      return new Set(allCols.filter(c => !defaultVisibleCols.includes(c)));
+    }
+    // Otherwise hide only the explicitly listed columns up front.
+    if (defaultHiddenCols) return new Set(defaultHiddenCols);
+    return new Set();
   });
   const [colFilters, setColFilters] = useState({});        // { colName: filterText } — per-column filters
   const [colMenuOpen, setColMenuOpen] = useState(false);   // column visibility menu
@@ -1139,6 +1203,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   const [resultSampleCoverageList, setResultSampleCoverageList]       = useState(null);
   const [resultSampleCoverageSankey, setResultSampleCoverageSankey]   = useState(null); // {sample_id: plotly_figure}
   const [resultSampleCoveragePlot, setResultSampleCoveragePlot]       = useState(null); // {sample_id: plotly_figure}
+  const [resultSampleCoverageLinear, setResultSampleCoverageLinear]   = useState(null); // {sample_id: combined coverage figure}
+  const [focusedCovSegment, setFocusedCovSegment]                     = useState(null); // segment name focused in combined view, or null
   const [selectedSampleForCoverage, setSelectedSampleForCoverage]     = useState("");   // selected sample in dropdown
   const [resultVariants, setResultVariants]                           = useState(null);
   const [resultMinorSnvs, setResultMinorSnvs]                         = useState(null);
@@ -1185,6 +1251,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
             setSubmitting(false);
             setSubmitSuccess(null);
             setPipelinePolling(false);
+            clearActiveRun();
           }
           return;
         }
@@ -1270,7 +1337,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                 }
               }
 
-              // Also fetch linear coverage plot for the first sample
+              // Also fetch segment coverage plot for the first sample
               if (_sankeyFirst) {
                 const coveragePlotRes = await fetch(
                   `${API.retrieveSampleCoveragePlot}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}&sample_id=${encodeURIComponent(_sankeyFirst)}`
@@ -1338,6 +1405,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
               setSubmitting(false);
               setSubmitSuccess(null);
               setPipelinePolling(false);
+              clearActiveRun();
 
             }
           }
@@ -1347,22 +1415,6 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     poll(); // immediate first fetch
     const timer = setInterval(poll, 5000);
     return () => { cancelled = true; clearInterval(timer); };
-  }, [pipelinePolling, submitProcessId, selectedRun, cancelRun]);
-
-  // ── Cancel the in-flight MIRA run if the tab is closed/refreshed while it's still running ──
-  useEffect(() => {
-    if (!pipelinePolling || !submitProcessId || cancelRun) return;
-    const cancelOnExit = () => {
-      const url = `${API.miraCancel}?run_name=${encodeURIComponent(selectedRun?.run_name)}&experiment_type=${encodeURIComponent(selectedRun?.experiment_type)}&pid=${submitProcessId}`;
-      // keepalive lets the request survive page unload; response is never read
-      fetch(url, { keepalive: true }).catch(() => {});
-    };
-    window.addEventListener("beforeunload", cancelOnExit);
-    window.addEventListener("pagehide", cancelOnExit);
-    return () => {
-      window.removeEventListener("beforeunload", cancelOnExit);
-      window.removeEventListener("pagehide", cancelOnExit);
-    };
   }, [pipelinePolling, submitProcessId, selectedRun, cancelRun]);
 
   // ── Sample sheet state ───────────────────────
@@ -1855,6 +1907,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   // Fetch the sankey figure for a specific sample (lazy-loads, caches in resultSampleCoverageSankey)
   const fetchSankeyForSample = useCallback(async (sampleId) => {
     setSelectedSampleForCoverage(sampleId);
+    setFocusedCovSegment(null); // switching samples returns to the separate-plots (grid) view
     if (!selectedRun || !sampleId) return;
     const fetchPromises = [];
     if (!resultSampleCoverageSankey?.[sampleId]) {
@@ -1876,6 +1929,15 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     await Promise.all(fetchPromises);
   }, [selectedRun, resultSampleCoverageSankey, resultSampleCoveragePlot]);
 
+  // Lazy-load the combined (all-segment) coverage figure for a sample, caching it.
+  const fetchLinearForSample = useCallback((sampleId) => {
+    if (!selectedRun || !sampleId || resultSampleCoverageLinear?.[sampleId]) return;
+    fetch(`${API.retrieveSampleCoverageLinear}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&sample_id=${encodeURIComponent(sampleId)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setResultSampleCoverageLinear(prev => ({ ...(prev ?? {}), [sampleId]: d })); })
+      .catch(() => {});
+  }, [selectedRun, resultSampleCoverageLinear]);
+
   // Reset all state variables to their initial values, effectively clearing the form and any loaded run data
   const resetRun = useCallback(() => {
 
@@ -1884,6 +1946,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       fetch(`${API.miraCancel}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&pid=${submitProcessId}`)
         .catch(() => {});
     }
+    clearActiveRun();
 
     // Reset all state variables to their initial values
     setRunName("");
@@ -1961,6 +2024,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     setResultSampleCoverageList(null);
     setResultSampleCoverageSankey(null);
     setResultSampleCoveragePlot(null);
+    setResultSampleCoverageLinear(null);
+    setFocusedCovSegment(null);
     setSelectedSampleForCoverage("");
     setResultCoverageHeatmap(null);
     setResultNtPassedFasta(null);
@@ -2044,6 +2109,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     setShowDAG(false);
     setPipelineDAG(null);
     setPipelinePolling(false);
+    clearActiveRun();
   }, []);
 
   // Refresh the inputs when signaled from outside (e.g. the Home "New Run" card).
@@ -2270,7 +2336,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       setExperimentType(info.experiment_type ?? "");
       setPrimer(info.sc2_primer || info.rsv_primer || "");
       setCustomPrimers(info.custom_primers ? CUSTOM_PRIMER_CONFIG_FILENAME : "");
-      setUseCustomPrimers(Boolean(info.custom_primers));
+      setUseCustomPrimers(false);
       setLoadedCustomPrimersName(info.custom_primers ? CUSTOM_PRIMER_CONFIG_FILENAME : "");
       setPrimerKmerLen(info.primer_kmer_len ? String(info.primer_kmer_len) : "");
       setPrimerRestrictWindow(info.primer_restrict_window ? String(info.primer_restrict_window) : "");
@@ -2338,6 +2404,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       setSelectedSampleForCoverage("");
       setResultSampleCoverageSankey(null);
       setResultSampleCoveragePlot(null);
+      setResultSampleCoverageLinear(null);
+      setFocusedCovSegment(null);
       setResultVariants(null);
       setVariantsPage(0);
       setResultMinorSnvs(null);
@@ -2375,6 +2443,31 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       setLoadRunLoading(false);
     }
   }, [loadRunSelectedRow]);
+
+  // ── Resume an in-flight run after a browser reload/reopen ──
+  // The backend process keeps running independently of the browser, so if a run was still
+  // processing when the app was last closed, reload its context and resume live polling.
+  useEffect(() => {
+    const active = readActiveRun();
+    if (!active?.run_name || !active?.experiment_type) return;
+    (async () => {
+      try {
+        const statusRes = await fetch(`${API.miraStatus}?run_name=${encodeURIComponent(active.run_name)}&experiment_type=${encodeURIComponent(active.experiment_type)}&pid=${active.pid ?? -1}`);
+        const statusData = await statusRes.json().catch(() => ({}));
+        if (statusRes.ok && statusData?.status === "PROCESSING") {
+          // Repopulate the form/DAG for this run, then restore the PID so the Cancel Run
+          // button reappears and status polling can reach the still-running process.
+          await handleLoadRun({ run_name: active.run_name, experiment_type: active.experiment_type, assembly_status: "PROCESSING" });
+          setSubmitProcessId(active.pid);
+          setSubmitting(true);
+        } else {
+          // Run already finished while the browser was closed — nothing to resume.
+          clearActiveRun();
+        }
+      } catch { /* backend unreachable — leave the marker so a later reload can retry */ }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Submit assembly to backend API ─────────────
   const submitAssembly = useCallback(async () => {
@@ -2621,6 +2714,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
         setSelectedSampleForCoverage("");      
         setResultSampleCoverageSankey(null);
         setResultSampleCoveragePlot(null);
+        setResultSampleCoverageLinear(null);
+        setFocusedCovSegment(null);
         setResultVariants(null);      
         setVariantsPage(0);
         setResultMinorSnvs(null);
@@ -2639,6 +2734,9 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
         setCancelRun(false);
         setShowDAG(true);
         setPipelinePolling(true);
+
+        // Remember this run so it keeps processing (and stays cancellable) across browser reloads
+        writeActiveRun({ pid: miraData.pid, run_name: runName, experiment_type: experimentType });
 
       } else {
         // No pid to poll — nothing further will clear the "Processing..." state, so reset it now.
@@ -2744,7 +2842,11 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       <div className="flex flex-1 overflow-hidden">
 
       {/* ── Left: accordion steps ─────────────────── */}
-      <div className="flex-1 overflow-auto p-4 space-y-2" onScroll={handleContentScroll}>
+      <div className="relative flex-1 overflow-auto p-4 space-y-2" onScroll={handleContentScroll}>
+        {loadRunModal && (
+          // Click anywhere on the main panel to dismiss the open Load Existing Run panel.
+          <div className="absolute inset-0 z-10" onClick={() => setLoadRunModal(false)} />
+        )}
         {ASSEMBLY_STEPS.map(({ id, title, subtitle, icon }) => (
           <div key={id} id={`step-${id}`} className={cn("w-fit max-w-full rounded-xl border border-border overflow-hidden transition-all duration-300", openStep.has(id) ? "mx-auto" : "mr-auto")}>
             <button
@@ -3391,6 +3493,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                               if (!statusRes.ok) throw new Error(data.detail || "Failed to cancel Mira run");
                               setCancelRun(true);
                               setSubmitting(false);
+                              clearActiveRun();
                               setSubmitError({
                                 title: "Canceled Status",
                                 items: Array.isArray(data.message) ? data.message : [data.message || "Mira run was canceled or interrupted."],
@@ -3813,6 +3916,25 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                       const rawHeatmapY = resultCoverageHeatmap.data?.[0]?.y ?? [];
                       const heatmapCols = [...new Set(rawHeatmapX)];
                       const heatmapRows = [...new Set(rawHeatmapY)];
+                      // The trace ships x/y/z as parallel per-cell 1D arrays; Plotly needs z as a
+                      // 2D [row][col] matrix for a proper grid and reliable click points.
+                      const rawHeatmapZ = resultCoverageHeatmap.data?.[0]?.z ?? [];
+                      const zByCell = new Map();
+                      for (let i = 0; i < rawHeatmapX.length; i++) {
+                        zByCell.set(`${rawHeatmapY[i]}\u0000${rawHeatmapX[i]}`, rawHeatmapZ[i]);
+                      }
+                      const heatmapZ = heatmapRows.map((r) =>
+                        heatmapCols.map((c) => {
+                          const v = zByCell.get(`${r}\u0000${c}`);
+                          return v === undefined ? null : v;
+                        })
+                      );
+                      const heatmapTrace = {
+                        ...(resultCoverageHeatmap.data?.[0] ?? {}),
+                        x: heatmapCols,
+                        y: heatmapRows,
+                        z: heatmapZ,
+                      };
                       const heatmapManyCols = heatmapCols.length > 12;
                       const heatmapMinHeight = Math.max(
                         120,
@@ -3827,7 +3949,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                             <div style={{ width: "100%" }}>
                               <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
                                 <Plot
-                                  data={resultCoverageHeatmap.data ?? []}
+                                  data={[heatmapTrace]}
                                   layout={{
                                     ...(resultCoverageHeatmap.layout ?? {}),
                                     autosize: true,
@@ -3857,16 +3979,20 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                                     },
                                   }}
                                   config={PLOT_CONFIG}
-                                  style={{ width: "100%", height: heatmapMinHeight }}
+                                  style={{ width: "100%", height: heatmapMinHeight, cursor: "pointer" }}
                                   useResizeHandler
                                   onClick={(e) => {
-                                    // Clicking a cell selects that sample (x value) in the
+                                    // A cell's x category is the sample; select it in the
                                     // Per-Sample Coverage and Sankey Plots section below.
-                                    const sample = e?.points?.[0]?.x;
-                                    if (sample != null) {
-                                      fetchSankeyForSample(String(sample));
-                                      setTimeout(() => document.getElementById("result-section-coverage")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+                                    const pt = e?.points?.[0];
+                                    if (!pt) return;
+                                    let sample = pt.x;
+                                    if (sample == null && Array.isArray(pt.data?.x) && typeof pt.pointNumber?.[1] === "number") {
+                                      sample = pt.data.x[pt.pointNumber[1]];
                                     }
+                                    if (sample == null) return;
+                                    fetchSankeyForSample(String(sample));
+                                    setTimeout(() => document.getElementById("result-section-coverage")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
                                   }}
                                 />
                               </Suspense>
@@ -3886,9 +4012,9 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                       const figure = resultSampleCoverageSankey?.[currentSample] ?? null;
                       const covFigure = resultSampleCoveragePlot?.[currentSample] ?? null;
                       return (
-                        <div id="result-section-coverage" className="min-w-[80vw] rounded-xl border border-border overflow-hidden">
+                        <div id="result-section-coverage" className="w-[80vw] max-w-full rounded-xl border border-border overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
-                            <p className="text-xs font-bold text-foreground uppercase tracking-wider">Per-Sample Coverage and Sankey Plots</p>
+                            <p className="text-xs font-bold text-foreground uppercase tracking-wider">Read Assignment and Coverage Plots</p>
                             <select
                               value={currentSample}
                               onChange={e => fetchSankeyForSample(e.target.value)}
@@ -3900,16 +4026,17 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                           <div className="p-2">
                             {figure ? (
                               <>
-                                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1 pb-1">Sankey Plot - {currentSample}</p>
+                                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1 pb-1">Read Assignment - {currentSample}</p>
                                 <div className="overflow-x-auto">
-                                  <div style={{ minWidth: figure.layout?.width ? `${figure.layout.width}px` : "100%" }}>
+                                  <div style={{ width: "75%", margin: "0 auto", minWidth: figure.layout?.width ? `${figure.layout.width}px` : undefined }}>
                                     <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
                                     <Plot
                                       data={figure.data ?? []}
                                       layout={{
                                         ...(figure.layout ?? {}),
+                                        title: undefined,
                                         autosize: true,
-                                        margin: { l: 20, r: 20, t: 30, b: 20 },
+                                        margin: { l: 20, r: 20, t: 10, b: 20 },
                                         paper_bgcolor: "transparent",
                                         plot_bgcolor: "transparent",
                                         font: { size: 11 },
@@ -3929,35 +4056,80 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                             )}
                           </div>
 
-                          {/* ── Linear Coverage Plot ── */}
+                          {/* ── Segment Coverage Plot ── */}
                           {(() => {
+                            const linearFig = resultSampleCoverageLinear?.[currentSample] ?? null;
+                            // All traces of a segment share a legendgroup (the segment name);
+                            // fall back to the trace name to identify the clicked segment.
+                            const onSegmentClick = (e) => {
+                              const pt = e?.points?.[0];
+                              if (!pt) return;
+                              const seg = pt.data?.legendgroup || pt.data?.name;
+                              if (!seg) return;
+                              fetchLinearForSample(currentSample);
+                              setFocusedCovSegment(seg);
+                            };
                             return (
                               <div className="border-t border-border p-2">
-                                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1 pb-1">Coverage Plot - {currentSample}</p>
-                                {covFigure ? (
-                                  <div className="overflow-x-auto">
-                                    <div style={{ minWidth: covFigure.layout?.width ? `${covFigure.layout.width}px` : "100%" }}>
-                                      <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
-                                        <Plot
-                                          data={covFigure.data ?? []}
-                                          layout={{
-                                            ...(covFigure.layout ?? {}),
-                                            autosize: true,
-                                            margin: { l: 50, r: 20, t: 30, b: 40 },
-                                            paper_bgcolor: "transparent",
-                                            plot_bgcolor: "transparent",
-                                            font: { size: 11 },
-                                          }}
-                                          config={{ ...(covFigure.config ?? {}), ...PLOT_CONFIG }}
-                                          style={{ width: "100%", minHeight: 260 }}
-                                          useResizeHandler
-                                        />
-                                      </Suspense>
+                                <div className="flex items-center justify-between px-1 pb-1">
+                                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                                    {focusedCovSegment ? `Coverage - ${currentSample} · ${focusedCovSegment}` : `Segment Coverage - ${currentSample}`}
+                                  </p>
+                                  {focusedCovSegment && (
+                                    <button
+                                      onClick={() => setFocusedCovSegment(null)}
+                                      className="flex items-center gap-1 h-7 px-2 rounded-md border border-border bg-background text-xs font-medium text-foreground hover:border-primary hover:text-primary transition-colors"
+                                    >
+                                      <ChevronLeft size={13} className="shrink-0" /> Back to separate plots
+                                    </button>
+                                  )}
+                                </div>
+                                {focusedCovSegment ? (
+                                  linearFig ? (
+                                    <ResponsivePlot
+                                      data={(linearFig.data ?? []).map((tr) => {
+                                        // Isolate the clicked segment, like a legend double-click.
+                                        const match = (tr.legendgroup ?? tr.name) === focusedCovSegment;
+                                        return { ...tr, visible: match ? true : "legendonly" };
+                                      })}
+                                      layout={{
+                                        ...(linearFig.layout ?? {}),
+                                        title: undefined,
+                                        margin: { l: 55, r: 15, t: 10, b: 40 },
+                                        paper_bgcolor: "transparent",
+                                        plot_bgcolor: "transparent",
+                                        font: { size: 11 },
+                                        // Autoscale axes to the isolated segment.
+                                        xaxis: { ...(linearFig.layout?.xaxis ?? {}), autorange: true, range: undefined },
+                                        yaxis: { ...(linearFig.layout?.yaxis ?? {}), autorange: true, range: undefined },
+                                      }}
+                                      config={{ ...(linearFig.config ?? {}), ...PLOT_CONFIG }}
+                                      maxHeight={520}
+                                      useResizeHandler
+                                    />
+                                  ) : (
+                                    <div className="flex items-center gap-2 text-xs text-muted-foreground px-3 py-4">
+                                      <Database size={13} className="shrink-0" /> Loading combined coverage…
                                     </div>
-                                  </div>
+                                  )
+                                ) : covFigure ? (
+                                  <ResponsivePlot
+                                    data={covFigure.data ?? []}
+                                    layout={{
+                                      ...(covFigure.layout ?? {}),
+                                      title: undefined,
+                                      margin: { l: 45, r: 15, t: 20, b: 30 },
+                                      paper_bgcolor: "transparent",
+                                      plot_bgcolor: "transparent",
+                                      font: { size: 10 },
+                                    }}
+                                    config={{ ...(covFigure.config ?? {}), ...PLOT_CONFIG }}
+                                    onClick={onSegmentClick}
+                                    useResizeHandler
+                                  />
                                 ) : (
                                   <div className="flex items-center gap-2 text-xs text-muted-foreground px-3 py-4">
-                                    <Database size={13} className="shrink-0" /> No coverage plot found for this sample.
+                                    <Database size={13} className="shrink-0" /> No segment coverage plot found for this sample.
                                   </div>
                                 )}
                               </div>
@@ -3974,7 +4146,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                         {resultVariants.length === 0 ? (
                           <EmptyResultTable title="AA Variants Table" />
                         ) : (
-                          <ResultTable title="AA Variants Table" data={resultVariants} page={variantsPage} setPage={setVariantsPage} compact fitCols={5} />
+                          <ResultTable title="AA Variants Table" data={resultVariants} page={variantsPage} setPage={setVariantsPage} compact fitCols={5} defaultHiddenCols={["positional_reference_id"]} />
                         )}
                       </div>
                     )}
