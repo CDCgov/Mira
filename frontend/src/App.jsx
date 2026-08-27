@@ -38,6 +38,7 @@ import {
   ExternalLink,
   FileSearch,
   AlertCircle,
+  ShieldQuestionMark,
   Network,
   Package,
   GitFork,
@@ -55,6 +56,7 @@ import {
   CloudFog,
   CloudBackup,
   Cloud,
+  BadgeQuestionMark,
 } from "lucide-react";
 
 /* ── utility ─────────────────────────────────────── */
@@ -132,6 +134,7 @@ const API_BASE = "/api";
 const API = {
   checkVersion:     `${API_BASE}/version`,
   listRuns:         `${API_BASE}/list/runs`,
+  statsSummary:     `${API_BASE}/stats/summary`,
   retrieveRun:      `${API_BASE}/retrieve/run`,
   createRun:        `${API_BASE}/create/run`,
   deleteSample:     `${API_BASE}/delete/sample`,
@@ -246,9 +249,9 @@ const TABS = [
 
 /* ── Home Tab ────────────────────────────────────── */
 const STATS = [
-  { label: "Sequencing Runs",          value: "1,284",  hover: "Click here to see past runs",  icon: Cpu,        color: "text-teal-600"     },
-  { label: "Sequences to NCBI",        value: "48,312", sub: "GenBank + SRA combined",  icon: Cloud,   color: "text-purple-500"     },
-  { label: "Sequences to GISAID",      value: "31,047", sub: "EpiFlu + EpiCoV",         icon: Cloud,   color: "text-purple-500" },
+  { label: "Sequencing Runs",          value: "…",  hover: "Click here to see past runs",  icon: Cpu,        color: "text-teal-600"     },
+  { label: "Sequences to NCBI",        value: "…", sub: "GenBank + SRA combined",  icon: Cloud,   color: "text-purple-500"     },
+  { label: "Sequences to GISAID",      value: "…", sub: "EpiFlu + EpiCoV",         icon: Cloud,   color: "text-purple-500" },
 ];
 
 const FEATURES = [
@@ -368,7 +371,26 @@ function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, u
 
 function HomeTab({ onNewRun, onLoadRun }) {
   const [runCount, setRunCount] = useState(null);
+  const [ncbiCount, setNcbiCount] = useState(null);     // sequences submitted to NCBI (GenBank + SRA)
+  const [gisaidCount, setGisaidCount] = useState(null); // sequences submitted to GISAID
   const [segmentsTrend, setSegmentsTrend] = useState(null); // null = loading, [] = no data
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(API.statsSummary);
+        const data = res.ok ? await res.json() : null;
+        if (!cancelled) {
+          setNcbiCount(Number.isFinite(data?.ncbi_sequences) ? data.ncbi_sequences : 0);
+          setGisaidCount(Number.isFinite(data?.gisaid_sequences) ? data.gisaid_sequences : 0);
+        }
+      } catch {
+        if (!cancelled) { setNcbiCount(0); setGisaidCount(0); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -450,9 +472,11 @@ function HomeTab({ onNewRun, onLoadRun }) {
             </div>
           </button>
           {STATS.map(({ label, value, sub, icon: Icon, color }, i) => {
-            const displayValue = label === "Sequencing Runs"
-              ? (runCount === null ? "…" : runCount.toLocaleString())
-              : value;
+            const displayValue =
+              label === "Sequencing Runs"     ? (runCount === null ? "…" : runCount.toLocaleString()) :
+              label === "Sequences to NCBI"   ? (ncbiCount === null ? "…" : ncbiCount.toLocaleString()) :
+              label === "Sequences to GISAID" ? (gisaidCount === null ? "…" : gisaidCount.toLocaleString()) :
+              value;
             const isRuns = label === "Sequencing Runs";
             const cardClass = cn(
               "rounded-xl border border-border bg-card px-4 py-3 flex items-center gap-3",
@@ -1138,6 +1162,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   const [primersFileError, setPrimersFileError] = useState(null); // validation error when a non-.fasta file is picked for Custom Primers
   const [createParquet, setCreateParquet]           = useState(false);
   const [nextclade, setNextclade]                   = useState(true);
+  const [keepWorkdir, setKeepWorkdir]               = useState(false); // preserve Nextflow work dir after a successful run (for reviewing per-task logs)
   const [exportFmt, setExportFmt]                   = useState("fasta");
   const [assembled, setAssembled]                   = useState(false);
   const [rightWidth, setRightWidth]                 = useState(440);
@@ -1182,7 +1207,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
 
   const [isNewRun, setIsNewRun]                       = useState(true);   // true = new run, false = loaded existing run
   const [confirmRemoveIdx, setConfirmRemoveIdx]       = useState(null); // index of sample row pending removal confirmation
-  const [taskLog, setTaskLog]                         = useState(null); // { loading, error, data, process, sample } for the failed-task log popup
+  const [taskLog, setTaskLog]                         = useState(null); // { loading, error, data, process, sample, stream } for the task log popup
+  const [taskLogCopied, setTaskLogCopied]             = useState(false); // brief "copied" feedback for the log modal's copy button
   const [taskHover, setTaskHover]                     = useState(null); // { key, process, sample, x, y, loading, error, data } for the streaming stdout hover box
   const [ontConfirmFiles, setOntConfirmFiles]         = useState(null); // [{ file, name }] awaiting confirmation when no flowcell-ID files were found
   const [ontConfirmSelected, setOntConfirmSelected]   = useState(() => new Set()); // sanitized filenames checked in the confirm dialog
@@ -1520,20 +1546,36 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     setConfirmRemoveIdx(null);
   };
 
-  // Fetch and show the error log for a failed task-sample (clicked X in the Task Progress grid).
-  const openTaskLog = async (task, process, sample) => {
+  // Fetch and show the log for a task-sample in a modal. When `stream` is "stdout" the
+  // process output (.command.out/.command.log) is shown; otherwise the error log.
+  const openTaskLog = async (task, process, sample, stream) => {
+    closeTaskHover(); // stop the live hover box while the modal is open
     if (!task?.hash || !selectedRun?.run_name || !selectedRun?.experiment_type) {
-      setTaskLog({ loading: false, error: "No log is available for this task (its work directory may have been cleaned up).", data: null, process, sample });
+      setTaskLog({ loading: false, error: "No log is available for this task (its work directory may have been cleaned up).", data: null, process, sample, stream });
       return;
     }
-    setTaskLog({ loading: true, error: null, data: null, process, sample });
+    setTaskLog({ loading: true, error: null, data: null, process, sample, stream });
     try {
-      const res = await fetch(`${API.miraTaskLog}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&hash=${encodeURIComponent(task.hash)}`);
+      const streamParam = stream ? `&stream=${encodeURIComponent(stream)}` : "";
+      const res = await fetch(`${API.miraTaskLog}?run_name=${encodeURIComponent(selectedRun.run_name)}&experiment_type=${encodeURIComponent(selectedRun.experiment_type)}&hash=${encodeURIComponent(task.hash)}${streamParam}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Failed to load task log");
-      setTaskLog({ loading: false, error: null, data, process, sample });
+      setTaskLog({ loading: false, error: null, data, process, sample, stream });
     } catch (err) {
-      setTaskLog({ loading: false, error: err.message, data: null, process, sample });
+      setTaskLog({ loading: false, error: err.message, data: null, process, sample, stream });
+    }
+  };
+
+  // Copy the full log text of the open modal to the clipboard, with brief feedback.
+  const copyTaskLog = async () => {
+    const text = (taskLog?.data?.lines ?? []).map(ln => ln.text).join("\n");
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setTaskLogCopied(true);
+      setTimeout(() => setTaskLogCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable — ignore */
     }
   };
 
@@ -1964,6 +2006,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     setCustomConfigDownloadError(null);
     setCreateParquet(false);
     setNextclade(true);
+    setKeepWorkdir(false);
     setExportFmt("fasta");
     setAssembled(false);
     setSortConfig({ key: "sample_id", dir: "asc" });
@@ -2083,6 +2126,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     setPrimersFileError(null);
     setCreateParquet(false);
     setNextclade(true);
+    setKeepWorkdir(false);
     // Sample sheet + uploads
     setOntSampleRows([]);
     setIlluminaSampleRows([]);
@@ -2344,6 +2388,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       setIrmaModule(info.irma_module || "");
       setCreateParquet(info.parquet_files ?? false);
       setNextclade(info.nextclade ?? true);
+      setKeepWorkdir(info.keep_workdir ?? false);
       const isOnt = (info.experiment_type ?? "").toLowerCase().endsWith("ont");
       const rows = Array.isArray(data.samplesheet) ? data.samplesheet : [];
       if (isOnt) {
@@ -2590,6 +2635,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       irma_module:            experimentType === "Flu-Illumina" ? irmaModule : "",
       parquet_files:          createParquet,
       nextclade:              nextclade,
+      keep_workdir:           keepWorkdir,
       samplesheet:            formattedSamplesheet,
       assembly_status:        "SUBMITTED",
     };
@@ -2749,7 +2795,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       setSubmitting(false);
     }
 
-  }, [runName, experimentType, ontSampleRows, illuminaSampleRows, subSample, primer, customPrimers, useCustomPrimers, primerKmerLen, primerRestrictWindow, irmaModule, customPrimersFile, createParquet, nextclade, isNewRun, assembled]);
+  }, [runName, experimentType, ontSampleRows, illuminaSampleRows, subSample, primer, customPrimers, useCustomPrimers, primerKmerLen, primerRestrictWindow, irmaModule, customPrimersFile, createParquet, nextclade, keepWorkdir, isNewRun, assembled]);
 
   // True once assembly finishes but every result field is still empty (nothing to display).
   const hasNoResults = [
@@ -3183,10 +3229,12 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                       <span className="text-xs font-bold tracking-wider text-muted-foreground uppercase">Assembly Parameters</span>
                       <div className="flex-1 h-px bg-border" />
                     </div>
+                    
                     <div>
                       <FieldLabel>
                         <span className="relative inline-flex items-center group">
-                          <span className="cursor-help decoration-dotted underline underline-offset-2 decoration-muted-foreground/50">Subsample Reads</span>
+                          <span className="cursor-help decoration-muted-foreground/50">Subsample Reads</span>
+                          <BadgeQuestionMark size={13} className="text-muted-foreground cursor-help" />
                           <span
                             role="tooltip"
                             className="pointer-events-none absolute bottom-full left-0 z-50 mb-1.5 w-max max-w-xs rounded-md border border-border bg-popover px-2.5 py-1.5 text-xs font-normal text-popover-foreground shadow-lg opacity-0 translate-y-1 transition-all duration-150 group-hover:opacity-100 group-hover:translate-y-0"
@@ -3208,7 +3256,29 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                         className="w-[182px] max-w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                       />
                     </div>
-
+<button
+                      onClick={() => setNextclade((v) => !v)}
+                      className="w-fit flex items-center justify-start gap-4 p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-sm font-medium">Run Nextclade</p>
+                        <span
+                          role="link"
+                          tabIndex={0}
+                          title="Learn more about Nextclade"
+                          onClick={(e) => { e.stopPropagation(); window.open("https://github.com/nextstrain/nextclade", "_blank", "noopener,noreferrer"); }}
+                          className="text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+                        >
+                          <ExternalLink size={13} />
+                        </span>
+                      </div>
+                      <span className={cn(
+                        "relative w-10 h-5 rounded-full transition-colors shrink-0 pointer-events-none",
+                        nextclade ? "bg-primary" : "bg-muted"
+                      )}>
+                        <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform", nextclade ? "translate-x-5" : "translate-x-0.5")} />
+                      </span>
+                    </button>
                     <button
                       onClick={() => setUseCustomPrimers((v) => !v)}
                       className="w-fit flex items-center justify-start gap-4 p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
@@ -3383,6 +3453,17 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                     >
                       <div className="flex items-center gap-1.5">
                         <p className="text-sm font-medium">Output Parquet</p>
+                        <span className="relative inline-flex items-center group">
+                            <BadgeQuestionMark size={13} className="text-muted-foreground cursor-help" />
+                            <span
+                              role="tooltip"
+                              className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 z-50 mb-1.5 w-max max-w-xs rounded-md border border-border bg-popover px-2.5 py-1.5 text-xs font-normal text-popover-foreground shadow-lg opacity-0 translate-y-1 transition-all duration-150 group-hover:opacity-100 group-hover:translate-y-0"
+                            >
+                              Parquet is a columnar storage file format that is optimized for use with large datasets.<br></br><br></br>
+                              It is read by database engines like Apache Hive and Apache Impala.<br></br><br></br>
+                              It is not commonly used by laboratories.
+                            </span>
+                          </span>
                         <span
                           role="link"
                           tabIndex={0}
@@ -3400,27 +3481,31 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                         <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform", createParquet ? "translate-x-5" : "translate-x-0.5")} />
                       </span>
                     </button>
+                    
                     <button
-                      onClick={() => setNextclade((v) => !v)}
+                      onClick={() => setKeepWorkdir((v) => !v)}
                       className="w-fit flex items-center justify-start gap-4 p-3 rounded-lg border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left"
                     >
-                      <div className="flex items-center gap-1.5">
-                        <p className="text-sm font-medium">Run Nextclade</p>
-                        <span
-                          role="link"
-                          tabIndex={0}
-                          title="Learn more about Nextclade"
-                          onClick={(e) => { e.stopPropagation(); window.open("https://github.com/nextstrain/nextclade", "_blank", "noopener,noreferrer"); }}
-                          className="text-muted-foreground hover:text-primary transition-colors cursor-pointer"
-                        >
-                          <ExternalLink size={13} />
-                        </span>
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-sm font-medium">Preserve Work Directory</p>
+                          <span className="relative inline-flex items-center group">
+                            <BadgeQuestionMark size={13} className="text-muted-foreground cursor-help" />
+                            <span
+                              role="tooltip"
+                              className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 z-50 mb-1.5 w-max max-w-xs rounded-md border border-border bg-popover px-2.5 py-1.5 text-xs font-normal text-popover-foreground shadow-lg opacity-0 translate-y-1 transition-all duration-150 group-hover:opacity-100 group-hover:translate-y-0"
+                            >
+                              This will greatly increase disc space used and is not recommended for routine use.
+                            </span>
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">Keep all intermediate processing data</p>
                       </div>
                       <span className={cn(
                         "relative w-10 h-5 rounded-full transition-colors shrink-0 pointer-events-none",
-                        nextclade ? "bg-primary" : "bg-muted"
+                        keepWorkdir ? "bg-primary" : "bg-muted"
                       )}>
-                        <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform", nextclade ? "translate-x-5" : "translate-x-0.5")} />
+                        <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform", keepWorkdir ? "translate-x-5" : "translate-x-0.5")} />
                       </span>
                     </button>
                     {submitSuccess && submitError === null && (
@@ -3672,14 +3757,16 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                                           return (
                                             <td
                                               key={s}
-                                              className={cn("px-3 py-1.5 text-center align-middle", canHover && "cursor-help")}
+                                              className={cn("px-3 py-1.5 text-center align-middle", canHover && "cursor-pointer")}
                                               onMouseEnter={canHover ? (e) => openTaskHover(e, hoverTask, p, s) : undefined}
                                               onMouseLeave={canHover ? closeTaskHover : undefined}
+                                              onClick={canHover && bucket !== "failed" ? () => openTaskLog(hoverTask, p, s, "stdout") : undefined}
+                                              title={canHover && bucket !== "failed" ? "Click to open log" : undefined}
                                             >
                                               {bucket === "success" && <Check size={13} className="inline text-emerald-500" />}
                                               {bucket === "failed" && (
                                                 <button
-                                                  onClick={() => openTaskLog(failedTask, p, s)}
+                                                  onClick={(e) => { e.stopPropagation(); openTaskLog(failedTask, p, s); }}
                                                   title="View error log"
                                                   className="inline-flex items-center justify-center text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 rounded transition-colors"
                                                 >
@@ -4826,24 +4913,25 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                 <div key={i}>{ln.text || "\u00A0"}</div>
               ))}
             </div>
-            {taskHover.data?.log_file && (
-              <div className="px-3 py-1 border-t border-border bg-muted/20 shrink-0 text-[10px] font-mono text-muted-foreground truncate">
-                {taskHover.data.log_file}
-              </div>
-            )}
+            <div className="px-3 py-1 border-t border-border bg-muted/20 shrink-0 text-[10px] font-mono text-muted-foreground truncate flex items-center gap-2">
+              {taskHover.data?.log_file && <span className="truncate">{taskHover.data.log_file}</span>}
+              <span className="ml-auto shrink-0 not-italic text-muted-foreground/70">click to open &amp; copy</span>
+            </div>
           </div>
         );
       })()}
 
-      {/* ── Failed task error-log modal ────────────── */}
+      {/* ── Task log modal (stdout / error) ────────────── */}
       {taskLog !== null && (
         <div onClick={() => setTaskLog(null)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
           <div onClick={(e) => e.stopPropagation()} className="bg-background border border-border rounded-xl p-0 max-w-3xl w-full mx-4 shadow-xl flex flex-col gap-0 max-h-[85vh]">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/20 shrink-0">
               <div className="flex items-center gap-2 min-w-0">
-                <AlertCircle size={15} className="text-destructive shrink-0" />
+                {taskLog.stream === "stdout"
+                  ? <Terminal size={15} className="text-sky-500 shrink-0" />
+                  : <AlertCircle size={15} className="text-destructive shrink-0" />}
                 <h3 className="text-sm font-bold text-foreground truncate">
-                  Task Error — <span className="font-mono">{taskLog.process}</span>
+                  {taskLog.stream === "stdout" ? "Task Log" : "Task Error"} — <span className="font-mono">{taskLog.process}</span>
                   {taskLog.sample ? <span className="font-mono text-muted-foreground"> ({taskLog.sample})</span> : null}
                 </h3>
               </div>
@@ -4928,7 +5016,14 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
               )}
             </div>
 
-            <div className="flex justify-end px-4 py-3 border-t border-border bg-muted/10 shrink-0">
+            <div className="flex justify-end gap-2 px-4 py-3 border-t border-border bg-muted/10 shrink-0">
+              <button
+                onClick={copyTaskLog}
+                disabled={!taskLog.data?.lines?.length}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-muted/60 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {taskLogCopied ? <><Check size={13} className="text-emerald-500" /> Copied</> : <><Copy size={13} /> Copy log</>}
+              </button>
               <button
                 onClick={() => setTaskLog(null)}
                 className="px-4 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-muted/60 transition-colors"
@@ -5251,30 +5346,31 @@ function ContactCard({ name, role, email, github }) {
 function ResourcesTab() {
   return (
     <div className="h-full overflow-auto p-4">
-      <div className="h-full grid grid-cols-2 grid-rows-2 gap-4" style={{ minHeight: "fit-content" }}>
-
-        {/* ── Installation ─────────────────────── */}
+      <div className="h-full grid grid-cols-2 grid-rows-1 gap-4" style={{ minHeight: "fit-content" }}>
+        {/* ── Installation (disabled) ─────────────────────── */}
+        {false && (
         <ResourceCard icon={Package} title="Installation">
           <p className="text-xs text-muted-foreground mb-1">Mira requires Python 3.8+ and conda/mamba. Supports Linux and macOS.</p>
           <ResourceLink href="https://github.com/CDCgov/MIRA" icon={GitFork}>GitHub — CDCgov/MIRA</ResourceLink>
-          <ResourceLink href="https://github.com/CDCgov/MIRA/blob/master/MIRA-INSTALL.sh" icon={Download} badge="script">MIRA-INSTALL.sh</ResourceLink>
+          <ResourceLink href="https://github.com/CDCgov/MIRA/blob/master/MIRA-INSTALL.sh" icon={Download} >MIRA-INSTALL.sh</ResourceLink>
           <ResourceLink href="https://github.com/CDCgov/MIRA/blob/master/requirements.txt" icon={FileStack}>requirements.txt</ResourceLink>
           <div className="mt-2 rounded-lg bg-muted/30 border border-border px-3 py-2">
             <p className="text-xs font-mono text-foreground">bash MIRA-INSTALL.sh</p>
             <p className="text-xs font-mono text-muted-foreground mt-0.5">conda activate mira &amp;&amp; python app.py</p>
           </div>
-          <ResourceLink href="https://github.com/CDCgov/MIRA/blob/master/docker-compose.yml" icon={ExternalLink} badge="docker">Docker Compose</ResourceLink>
+          <ResourceLink href="https://github.com/CDCgov/MIRA/blob/master/docker-compose.yml" icon={ExternalLink} >Docker Compose</ResourceLink>
         </ResourceCard>
-
-        {/* ── Documentation ────────────────────── */}
+        )}
+        {/* ── Documentation (disabled) ────────────────────── */}
+        {false && (
         <ResourceCard icon={BookOpen} title="Documentation">
           <ResourceLink href="https://github.com/CDCgov/MIRA/blob/master/README.md">Mira README</ResourceLink>
           <ResourceLink href="https://github.com/CDCgov/MIRA/wiki">Mira Wiki</ResourceLink>
           <div className="mt-1 pt-2 border-t border-border">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Related Tools</p>
-            <ResourceLink href="https://docs.nextstrain.org/projects/nextclade/en/stable/" badge="nextclade">Nextclade Documentation</ResourceLink>
+            <ResourceLink href="https://docs.nextstrain.org/projects/nextclade/en/stable/" >Nextclade Documentation</ResourceLink>
             <ResourceLink href="https://docs.nextstrain.org/projects/nextclade/en/stable/user/nextclade-web/url-parameters.html">Nextclade URL Parameters</ResourceLink>
-            <ResourceLink href="https://github.com/CDCgov/seqsender" badge="seqsender">SeqSender Documentation</ResourceLink>
+            <ResourceLink href="https://github.com/CDCgov/seqsender" >SeqSender Documentation</ResourceLink>
             <ResourceLink href="https://github.com/CDCgov/irma-core">IRMA-core Documentation</ResourceLink>
           </div>
           <div className="mt-1 pt-2 border-t border-border">
@@ -5284,15 +5380,19 @@ function ResourcesTab() {
             <ResourceLink href="https://clades.nextstrain.org">Nextclade Web</ResourceLink>
           </div>
         </ResourceCard>
+        )}
 
         {/* ── GitHub Repositories ──────────────── */}
         <ResourceCard icon={GitFork} title="GitHub Repositories">
           {[
-            { repo: "CDCgov/MIRA",          desc: "Main Mira application",              badge: "main" },
-            { repo: "CDCgov/seqsender",      desc: "Sequence submission pipeline",       badge: "tool" },
-            { repo: "CDCgov/irma-core",      desc: "IRMA assembly core",                badge: "tool" },
-            { repo: "nextstrain/nextclade",  desc: "Clade assignment & QC tool",         badge: "ext" },
-            { repo: "nextstrain/augur",       desc: "Phylogenetic analysis pipeline",    badge: "ext" },
+            { repo: "CDCgov/MIRA",          desc: "Mira + Graphical User Interface (GUI)"             },
+            { repo: "CDCgov/Mira-nf",          desc: "Mira nextflow pipeline used by GUI or CLI "             },
+            { repo: "CDCgov/mira-oxide",          desc: "Rust tools used by Mira"             },
+            { repo: "CDCgov/IRMA",          desc: "The Assembler used by Mira"             },
+            { repo: "CDCgov/irma-core",      desc: "Rust tools used by IRMA"               },
+            { repo: "CDCgov/dais-ribosome",      desc: "ORF annotator used by Mira"               },
+            { repo: "CDCgov/seqsender",      desc: "Sequence submission tool used by Mira"      },
+            { repo: "nextstrain/nextclade",  desc: "Clade assignment tool used by Mira"       },
           ].map(({ repo, desc, badge }) => (
             <a key={repo} href={`https://github.com/${repo}`} target="_blank" rel="noopener noreferrer"
               className="flex items-start gap-2.5 px-3 py-2 rounded-lg hover:bg-muted/60 transition-colors group">
@@ -5314,23 +5414,18 @@ function ResourcesTab() {
         {/* ── Contact ──────────────────────────── */}
         <ResourceCard icon={Mail} title="Who to Contact">
           <ContactCard
-            name="Mira Development Team"
+            name="Mira And Laboratory Support"
             role="CDC VSDB — Virus Surveillance and Diagnostic Branch"
-            email="flu@cdc.gov"
-            github="CDCgov"
+            email="idseqsupport@cdc.gov"
           />
           <ContactCard
-            name="SeqSender Team"
-            role="CDC — Sequence submission support"
-            github="CDCgov"
+            name="Ben Rambo-Martin"
+            role="Mira project lead"
+            email="brambomartin@cdc.gov"
           />
           <div className="mt-2 pt-2 border-t border-border space-y-1.5">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Report Issues</p>
-            <ResourceLink href="https://github.com/CDCgov/MIRA/issues" icon={MessageSquare} badge="bugs">Mira GitHub Issues</ResourceLink>
-            <ResourceLink href="https://github.com/CDCgov/seqsender/issues" icon={MessageSquare} badge="bugs">SeqSender GitHub Issues</ResourceLink>
-          </div>
-          <div className="mt-2 pt-2 border-t border-border">
-            <p className="text-xs text-muted-foreground">For general inquiries about CDC influenza surveillance tools, visit <a href="https://www.cdc.gov/flu" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">cdc.gov/flu</a>.</p>
+            <ResourceLink href="https://github.com/CDCgov/MIRA/issues" icon={MessageSquare} >Mira GitHub Issues</ResourceLink>
           </div>
         </ResourceCard>
 

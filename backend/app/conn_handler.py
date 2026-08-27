@@ -72,6 +72,7 @@ def _apply_migrations(connection: sqlite3.Connection) -> None:
         ("assembly", "created_at", "TEXT"),
         ("assembly", "finished_at", "TEXT DEFAULT NULL"),
         ("assembly", "runtime", "TEXT DEFAULT NULL"),
+        ("assembly", "keep_workdir", "BOOLEAN NOT NULL DEFAULT 0"),
     ]
     for table, column, definition in _required_columns:
         existing = [row[1] for row in connection.execute(f'PRAGMA table_info("{table}")').fetchall()]

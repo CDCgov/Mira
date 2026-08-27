@@ -1245,6 +1245,7 @@ def run_mira_docker(
         subsample_reads = assembly_row.get("subsample_reads", 0)
         parquet_files = _as_bool(assembly_row.get("parquet_files", False))
         nextclade = _as_bool(assembly_row.get("nextclade", True))
+        keep_workdir = _as_bool(assembly_row.get("keep_workdir", False))
 
         # Extract custom primer from assembly_row
         custom_primers = _as_bool(assembly_row.get("custom_primers", None))
@@ -1362,6 +1363,8 @@ def run_mira_docker(
             cmd.extend(["--parquet_files", "true"])
         if nextclade:
             cmd.extend(["--nextclade", "true"])
+        if keep_workdir:
+            cmd.extend(["--keep_workdir", "true"])
 
         # Log the command for reference
         if _DEPLOY_TYPE == "Local":
@@ -1391,7 +1394,8 @@ def run_mira_docker(
                 (f" --custom_qc_settings {run_dir}/{CUSTOM_QC_SETTINGS_FILENAME}\n" if custom_qc_settings else "") +
                 (f" --subsample_reads {int(subsample_reads)}\n" if subsample_reads and int(subsample_reads) >= 0 else "") +
                 (f" --parquet_files true\n" if parquet_files else "") +
-                (f" --nextclade true\n" if nextclade else ""),
+                (f" --nextclade true\n" if nextclade else "") +
+                (f" --keep_workdir true\n" if keep_workdir else ""),
             )
         else:
             logger.info(
@@ -1412,7 +1416,8 @@ def run_mira_docker(
                 (f" --custom_qc_settings {run_dir}/{CUSTOM_QC_SETTINGS_FILENAME}\n" if custom_qc_settings else "") +
                 (f" --subsample_reads {int(subsample_reads)}\n" if subsample_reads and int(subsample_reads) >= 0 else "") +
                 (f" --parquet_files true\n" if parquet_files else "") +
-                (f" --nextclade true\n" if nextclade else ""),
+                (f" --nextclade true\n" if nextclade else "") +
+                (f" --keep_workdir true\n" if keep_workdir else ""),
             )
 
         # Fire and forget — launch in background, do not block. Capture the pipeline's
@@ -1860,13 +1865,40 @@ def retrieve_task_log(
 
     # The trace hash is truncated ("<a>/<short>"); the real directory name starts with it.
     prefix, rest = task_hash.split("/", 1)
-    parent = os.path.join(work_dir, prefix)
+
+    # Locate the task directory (name starts with the truncated hash) under a work root.
+    def _find_task_dir(work_root: str) -> Optional[str]:
+        parent = os.path.join(work_root, prefix)
+        if os.path.isdir(parent):
+            for name in os.listdir(parent):
+                if name.startswith(rest):
+                    candidate = os.path.join(parent, name)
+                    if os.path.isdir(candidate):
+                        return candidate
+        return None
+
+    # 1. Original processing place — the absolute workDir Nextflow records in .nextflow.log
+    #    while the task runs (e.g. "workDir: /data/MIRA/.../work/9f/df6545...").
     task_dir: Optional[str] = None
-    if os.path.isdir(parent):
-        for name in os.listdir(parent):
-            if name.startswith(rest):
-                task_dir = os.path.join(parent, name)
-                break
+    nextflow_log = os.path.join(run_dir, ".nextflow.log")
+    if os.path.exists(nextflow_log):
+        workdir_re = re.compile(
+            r"workDir:\s*(\S+/work/" + re.escape(prefix) + r"/" + re.escape(rest) + r"\S*)"
+        )
+        with open(nextflow_log, errors="replace") as fh:
+            for line in fh:
+                m = workdir_re.search(line)
+                if not m:
+                    continue
+                candidate = m.group(1).strip().rstrip("];")
+                if os.path.isdir(candidate):
+                    task_dir = candidate
+                    break
+
+    # 2. Fallback — mira-nf leaves the task directories under <run_dir>/work once it
+    #    finishes, so search there when the original processing place is gone.
+    if task_dir is None:
+        task_dir = _find_task_dir(work_dir)
 
     if task_dir is None or not os.path.isdir(task_dir):
         raise ValueError(f"Could not find the work directory for task '{task_hash}'. It may have been cleaned up.")

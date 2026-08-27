@@ -132,6 +132,7 @@ CREATE TABLE assembly (
   custom_qc_settings      BOOLEAN NOT NULL DEFAULT 0 CHECK (custom_qc_settings IN (0, 1)),
   parquet_files           BOOLEAN NOT NULL DEFAULT 0 CHECK (parquet_files IN (0, 1)),
   nextclade               BOOLEAN NOT NULL DEFAULT 1 CHECK (nextclade IN (0, 1)),  
+  keep_workdir            BOOLEAN NOT NULL DEFAULT 0 CHECK (keep_workdir IN (0, 1)),
   assembly_status         TEXT NOT NULL DEFAULT 'SUBMITTED' 
                             CHECK (assembly_status IN (
                               'SUBMITTED', 'PROCESSING', 'CANCELED',

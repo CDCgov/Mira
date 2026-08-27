@@ -363,6 +363,36 @@ async def get_runs():
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
 
+# ---------- Dashboard Summary Counts ----------
+@app.get("/stats/summary", response_model=Dict[str, int], summary="Dashboard summary counts (submitted sequences)", tags=["MIRA Utils"])
+async def get_stats_summary():
+    """
+    Return real counts for the home dashboard: sequences submitted to NCBI
+    (GenBank + SRA) and to GISAID, derived from assigned accessions in the
+    submission-status tables.
+    """
+    def _count_assigned(table: str, accession_col: str) -> int:
+        # Count distinct rows that have a non-null accession assigned; treat a
+        # missing/empty table as zero so the dashboard still renders.
+        try:
+            df = lookup_tbl_in_database(db_tbl_name=[table], return_var=[accession_col])
+        except Exception:
+            return 0
+        if df.is_empty():
+            return 0
+        return df.filter(pl.col(accession_col).is_not_null()).height
+
+    try:
+        genbank = await asyncio.to_thread(_count_assigned, "gb_submission_status", "genbank_accession")
+        sra = await asyncio.to_thread(_count_assigned, "sra_submission_status", "sra_accession")
+        gisaid = await asyncio.to_thread(_count_assigned, "gs_submission_status", "gisaid_accession_epi_isl_id")
+        return {
+            "ncbi_sequences": genbank + sra,
+            "gisaid_sequences": gisaid,
+        }
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
 # ---------- Retrieve Specific Run Information ----------
 @app.get("/retrieve/run", response_model=Optional[Dict[str, Any]], summary="Retrieve a run information", tags=["MIRA Utils"])
 async def get_run_info(req: RunRequest = Depends()):
@@ -489,6 +519,7 @@ async def create_run(req: AssemblyRequest):
             "custom_qc_settings":       [req.custom_qc_settings],
             "parquet_files":            [req.parquet_files],
             "nextclade":                [req.nextclade],
+            "keep_workdir":             [req.keep_workdir],
             "assembly_status":          [req.assembly_status],
             "created_at":               [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
         })
@@ -508,6 +539,7 @@ async def create_run(req: AssemblyRequest):
             f"custom_qc_settings='{req.custom_qc_settings}'\n"
             f"parquet_files='{req.parquet_files}'\n"
             f"nextclade='{req.nextclade}'\n"
+            f"keep_workdir='{req.keep_workdir}'\n"
             f"assembly_status='{req.assembly_status}'\n",
         )
         # Validate assembly table based on assembly schema

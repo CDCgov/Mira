@@ -364,6 +364,10 @@ assembly_pa_schema = pa.DataFrameSchema(
             pl.Boolean, nullable=False, required=True,
             description="Whether to run Nextclade analysis."
         ),
+        "keep_workdir": pa.Column(
+            pl.Boolean, nullable=False, required=False,
+            description="Whether to preserve the Nextflow work directory after a successful run."
+        ),
         "assembly_status": _required_enum_col(
             assembly_status, nullable=False, required=False,
             description=f"Status of the assembly. Options: {assembly_status}"
