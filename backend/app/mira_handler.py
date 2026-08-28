@@ -16,6 +16,7 @@ import shutil
 import signal
 import psutil
 import subprocess
+from datetime import datetime
 
 # Import schema validator 
 from .schema_validator import (
@@ -1577,7 +1578,31 @@ def cancel_mira_run(
             "status":  "not_running",
             "message": [f"PID '{pid}' does not exist. Run '{run_name}' is probably not running or completed. Nothing to be done."]
         }
-    
+
+# Define helper to normalize Nextflow timestamps to one canonical, sortable form
+def _normalize_workflow_ts(raw: Optional[str], year_hint: Optional[int] = None) -> Optional[str]:
+    """Normalize a Nextflow timestamp to 'YYYY-MM-DD HH:MM:SS'.
+
+    Nextflow reports finish times in a few shapes across its stdout summary and
+    .nextflow.log (e.g. '27-Aug-2026 15:49:32', '2026-08-27 15:49:32',
+    'Aug-27 15:49:32'). Returning one canonical, Date.parse-able form keeps the
+    task-progress footer, the DB 'finished_at' column, and the load-run panel in sync.
+    """
+    if not raw:
+        return raw
+    s = str(raw).strip()
+    year = year_hint or datetime.now().year
+    for fmt, candidate in (
+        ("%Y-%m-%d %H:%M:%S", s),
+        ("%d-%b-%Y %H:%M:%S", s),
+        ("%Y %b-%d %H:%M:%S", f"{year} {s}"),  # .nextflow.log timestamps carry no year
+    ):
+        try:
+            return datetime.strptime(candidate, fmt).strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+    return s
+
 # Define function to get pipeline DAG structure
 def create_mira_dag(
     run_name: str,
@@ -1615,6 +1640,9 @@ def create_mira_dag(
     # Runtime already persisted from a previous parse (None for runs that haven't completed)
     db_runtime = db_assembly_tbl.select("runtime").to_series()[0] if "runtime" in db_assembly_tbl.columns else None
     db_finished_at = db_assembly_tbl.select("finished_at").to_series()[0] if "finished_at" in db_assembly_tbl.columns else None
+    db_created_at = db_assembly_tbl.select("created_at").to_series()[0] if "created_at" in db_assembly_tbl.columns else None
+    # Year used to complete .nextflow.log timestamps, which carry no year
+    created_year = int(str(db_created_at)[:4]) if db_created_at and str(db_created_at)[:4].isdigit() else None
 
     # Get the actual sample_ids from the samplesheet, so run-level tasks (e.g.
     # CHECKMIRAVERSION (1)) or reference-dataset tasks (e.g. GETNEXTCLADEDATASET
@@ -1729,15 +1757,21 @@ def create_mira_dag(
 
     if parsed_runtime:
         workflow["runtime"] = parsed_runtime
-    if parsed_finished:
-        workflow["finished_at"] = parsed_finished
+
+    # Normalize timestamps to a single canonical, sortable form (YYYY-MM-DD HH:MM:SS) so
+    # the task-progress footer, the DB 'finished_at' column, and the load-run panel all
+    # show the same value. Prefer a freshly parsed finish time; else reuse what's stored.
+    workflow["started_at"] = _normalize_workflow_ts(workflow["started_at"], created_year)
+    finished_norm = _normalize_workflow_ts(parsed_finished or db_finished_at, created_year)
+    workflow["completed_at"] = finished_norm
+    workflow["finished_at"] = finished_norm
 
     # Persist any new values to the DB so they survive log cleanup
     updates = {}
     if parsed_runtime and parsed_runtime != db_runtime:
         updates["runtime"] = parsed_runtime
-    if parsed_finished and parsed_finished != db_finished_at:
-        updates["finished_at"] = parsed_finished
+    if finished_norm and finished_norm != db_finished_at:
+        updates["finished_at"] = finished_norm
     if updates:
         try:
             update_tbl_in_database(

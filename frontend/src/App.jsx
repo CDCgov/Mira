@@ -277,14 +277,15 @@ function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, u
   const dotMeta = [];
   // Plot samples against a numeric run index with horizontal jitter so
   // overlapping same-value points are all individually visible.
-  data.forEach(({ runId, samples }, i) => samples.forEach((v, j) => {
+  data.forEach(({ run, runId, samples }, i) => samples.forEach((v, j) => {
     xDots.push(i + (Math.random() - 0.5) * 0.5);
     yDots.push(v);
-    dotMeta.push([`${runId}-S${String(j + 1).padStart(2, "0")}`, runId]);
+    dotMeta.push([`${runId}-S${String(j + 1).padStart(2, "0")}`, runId, run]);
   }));
   const xMed = data.map((_, i) => i);
   const yMed = data.map((d) => median(d.samples));
   const runLabels = data.map((d) => d.run);
+  const medMeta = data.map((d) => [d.runId, d.run]);
 
   // Default the downloaded image name to the plot's title.
   const chartConfig = {
@@ -319,7 +320,7 @@ function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, u
                 name: "Samples",
                 customdata: dotMeta,
                 marker: { color, size: 6, opacity: 0.35 },
-                hovertemplate: `Sample %{customdata[0]}<br>Run %{customdata[1]}<br>%{y} ${unit}<extra></extra>`,
+                hovertemplate: `Run %{customdata[1]}<br>%{customdata[2]}<br>Sample %{customdata[0]}<br>%{y} ${unit}<extra></extra>`,
               },
               {
                 x: xMed,
@@ -327,10 +328,10 @@ function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, u
                 type: "scatter",
                 mode: "lines+markers",
                 name: "Median",
-                text: runLabels,
+                customdata: medMeta,
                 line: { color, width: 2, shape: "spline" },
                 marker: { color, size: 8, line: { color: "#ffffff", width: 1.5 } },
-                hovertemplate: `%{text}<br>median %{y} ${unit}<extra></extra>`,
+                hovertemplate: `Run %{customdata[0]}<br>%{customdata[1]}<br>median %{y} ${unit}<extra></extra>`,
               },
             ]}
             layout={{
@@ -423,15 +424,18 @@ function HomeTab({ onNewRun, onLoadRun }) {
               : (summary?.columns && summary?.data)
                 ? summary.data.map((r) => Object.fromEntries(summary.columns.map((c, i) => [c, r[i]])))
                 : [];
+            // Count only MIRA passing segments (pass_fail_reason === "Pass") per sample.
             const perSample = {};
             rows.forEach((row) => {
               const sid = row.sample_id ?? row.Sample ?? row.sample ?? null;
               if (sid == null || sid === "") return;
-              perSample[sid] = (perSample[sid] || 0) + 1;
+              if (!(sid in perSample)) perSample[sid] = 0;
+              const reason = row.pass_fail_reason ?? row["Pass/Fail Reason"] ?? row.qc_decision ?? "";
+              if (String(reason).trim().toLowerCase() === "pass") perSample[sid] += 1;
             });
             const samples = Object.values(perSample);
             if (!samples.length) return null;
-            const t = runTime(run);
+            const t = runTime(run); // ending date of the run (finished_at, falling back to created_at)
             const label = t ? new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : run.run_name;
             return { run: label, runId: run.run_name, samples };
           } catch {
@@ -506,13 +510,13 @@ function HomeTab({ onNewRun, onLoadRun }) {
           icon={BarChart3}
           title="Segments per Sample"
           statValue={medSegments}
-          statLabel="median segments / sample"
+          statLabel="median passing segments / sample"
           data={segData}
           loading={segmentsTrend === null}
           emptyMessage="No completed runs yet. Segment counts appear here after your first assembly."
           color="#0081A1"
           unit="segments"
-          yTitle="Segment Count"
+          yTitle="Passing Segment Count"
         />
 
         {/* ── Turnaround time (pending metadata & SeqSender integration) ─── */}
@@ -3862,13 +3866,14 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                           <div className="text-xs text-muted-foreground border-t border-border pt-2 grid grid-cols-2 gap-x-4">
                             <div className="flex flex-col gap-y-1">
                               <span>Began: <span className="text-foreground">{pipelineDAG?.workflows?.started_at || "—"}</span></span>
-                              <span>Ended: <span className="text-foreground">{pipelineDAG?.workflows?.completed_at || "—"}</span></span>
+                              {/* Persisted finish time (also stored in the DB and shown in the load-run panel); fall back to the log-derived completion time */}
+                              <span>Ended: <span className="text-foreground">{pipelineDAG?.workflows?.finished_at || pipelineDAG?.workflows?.completed_at || "—"}</span></span>
                               {pipelineDAG?.workflows?.runtime && (
                                 <span>Runtime: <span className="text-foreground font-mono">{pipelineDAG.workflows.runtime}</span></span>
                               )}
                               {(() => {
                                 const startedAt = pipelineDAG?.workflows?.started_at;
-                                const completedAt = pipelineDAG?.workflows?.completed_at;
+                                const completedAt = pipelineDAG?.workflows?.finished_at || pipelineDAG?.workflows?.completed_at;
                                 if (!startedAt || !completedAt) return null;
                                 const startMs = new Date(startedAt).getTime();
                                 const endMs = new Date(completedAt).getTime();
@@ -4155,7 +4160,6 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                                     }
                                     if (sample == null) return;
                                     fetchSankeyForSample(String(sample));
-                                    setTimeout(() => document.getElementById("result-section-coverage")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
                                   }}
                                 />
                               </Suspense>
