@@ -4,6 +4,7 @@ from typing import Optional
 
 # Import general python packages
 import os
+import re
 import threading
 
 # Import sqlite3 for database connection
@@ -13,13 +14,49 @@ import sqlite3
 from .schema_validator import _DEFAULT_SQLITE_PATH, _ensure_storage_directory
 
 # Define storage paths for sqlite database and schema file
-_DEFAULT_SCHEMA_FILE = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "sqlite/schema.sql"))
+_DEFAULT_MIRA_SCHEMA_FILE = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "sqlite/mira_schema.sql"))
+_DEFAULT_SEQSENDER_SCHEMA_FILE = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "sqlite/seqsender_schema.sql"))
 
 # Create sqlite database if it doesn't exist, using schema.sql
 _DEFAULT_SQLITE_FILE = os.path.join(_DEFAULT_SQLITE_PATH, "mira.db")
 
 # Guards first-time schema init against concurrent requests racing in via asyncio.to_thread
 _init_lock = threading.Lock()
+
+# Regular expression pattern to match CREATE TABLE statements in SQL schema files
+_CREATE_TABLE_PATTERN = re.compile(
+    r'^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?'
+    r'(?:(?:"([^"]+)")|(?:`([^`]+)`)|(?:\[([^\]]+)\])|([^\s(]+))',
+    re.IGNORECASE,
+)
+
+# Function to ensure that all tables declared in the schema files exist in the database
+def _ensure_schema_tables(connection: sqlite3.Connection, schema_files: tuple[str, ...]) -> None:
+    """Create tables declared by the schema files when they do not already exist."""
+    existing_tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    }
+    # Iterate over each schema file and create any missing tables
+    for schema_file in schema_files:
+        with open(schema_file, "r") as file:
+            statement_lines: list[str] = []
+            for line in file:
+                statement_lines.append(line)
+                statement = "".join(statement_lines)
+                if not sqlite3.complete_statement(statement):
+                    continue
+                match = _CREATE_TABLE_PATTERN.match(statement)
+                if match:
+                    table_name = next(group for group in match.groups() if group is not None)
+                    if table_name not in existing_tables:
+                        connection.execute(statement)
+                        existing_tables.add(table_name)
+                statement_lines.clear()
+    # Commit any changes made to the database
+    connection.commit()
 
 # Function to open a SQLite connection from a handler
 def init_connection() -> sqlite3.Connection:
@@ -45,13 +82,26 @@ def init_connection() -> sqlite3.Connection:
                 conn.close()
                 needs_init = table_count == 0
             if needs_init:
-                with open(_DEFAULT_SCHEMA_FILE, "r") as f:
-                    schema_sql = f.read()
+                # Initiate database with mira_schema.sql and seqsender_schema.sql
+                with open(_DEFAULT_MIRA_SCHEMA_FILE, "r") as f:
+                    mira_schema_sql = f.read()
+                with open(_DEFAULT_SEQSENDER_SCHEMA_FILE, "r") as f:
+                    seqsender_schema_sql = f.read()
                 conn = sqlite3.connect(_DEFAULT_SQLITE_FILE)
-                conn.executescript(schema_sql)
+                conn.executescript(mira_schema_sql)
+                conn.executescript(seqsender_schema_sql)
                 conn.commit()
                 conn.close()
                 os.chmod(_DEFAULT_SQLITE_FILE, 0o664)
+            # Restore any individual tables that are missing from an existing database.
+            conn = sqlite3.connect(_DEFAULT_SQLITE_FILE)
+            try:
+                _ensure_schema_tables(
+                    connection = conn,
+                    schema_files = (_DEFAULT_SEQSENDER_SCHEMA_FILE, _DEFAULT_MIRA_SCHEMA_FILE),
+                )
+            finally:
+                conn.close()
         # Open the connection with check_same_thread=False to allow usage across threads
         connection = sqlite3.connect(_DEFAULT_SQLITE_FILE, check_same_thread=False)
         connection.row_factory = sqlite3.Row   # column-name access on cursors
@@ -61,7 +111,6 @@ def init_connection() -> sqlite3.Connection:
         return connection
     except sqlite3.Error as err:
         raise Exception(f"SQLite Connection Error: {err}") from err
-
 
 # Apply lightweight, idempotent schema migrations to an existing database so that
 # columns added to schema.sql after a DB was first created are backfilled in place.

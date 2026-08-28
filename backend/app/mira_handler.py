@@ -37,7 +37,9 @@ from .schema_validator import (
 
 # Import utils for dataframe operations
 from .utils import (
-    compare_and_update_db_table
+    _cast_expr,
+    _as_bool,
+    compare_and_update_db_table,
 )
 
 # Import sqlite_handler for database connection
@@ -50,22 +52,6 @@ from .sqlite_handler import (
 
 # Import shared logger (INFO/DEBUG -> stdout, WARNING/ERROR/CRITICAL -> stderr)
 from .logging_config import logger
-
-# SQLite BOOLEAN columns are read back by Polars as strings ("0"/"1"), and
-# bool("0") is truthy in Python. Coerce such values to a real boolean before use.
-def _as_bool(value: Any) -> bool:
-    return str(value).strip().lower() in ("1", "true", "t", "yes")
-
-# Build a cast expression for a column to a target Polars dtype. Polars cannot
-# cast a string ("0"/"1") straight to Boolean, so map string values explicitly;
-# all other dtypes use a plain cast.
-def _cast_expr(col: str, dtype: Any) -> "pl.Expr":
-    if dtype == pl.Boolean:
-        return (
-            pl.col(col).cast(pl.String).str.strip_chars().str.to_lowercase()
-            .is_in(["1", "true", "t", "yes"]).alias(col)
-        )
-    return pl.col(col).cast(dtype)
 
 # Function to remove previous pipeline outputs for a given run directory
 def _remove_previous_pipeline_outputs(run_dir: str) -> None:
@@ -753,7 +739,7 @@ def update_assembly_in_database(
         else:
             # Compare and update database table
             compare_and_update_db_table(
-                unique_cols = ["run_name"],
+                unique_cols = ["run_name", "experiment_type"],
                 compare_tbl = assembly_tbl,
                 db_tbl = db_assembly_tbl,
                 db_tbl_name = "assembly"

@@ -5,6 +5,11 @@ import polars as pl
 # Import schema validator
 from .schema_validator import (
     validate_tbl,
+    organisms,
+    database_targets,
+    database_status,
+    submission_types,
+    submission_status,
     experiment_types,
     sample_types,
     sample_status,
@@ -13,11 +18,19 @@ from .schema_validator import (
     irma_modules,
     assembly_status,
     assembly_pa_schema,
+    submission_pa_schema,
     ont_samplesheet_pa_schema,
     illumina_samplesheet_pa_schema,
 )
 
-# Pre-compute Literal types at module level to avoid class-body name collisions
+# Pre-compute Literal types for SeqSender submission
+Organism = Literal[tuple(organisms)]
+DatabaseTargets = Literal[tuple(database_targets)]
+DatabaseStatus = Literal[tuple(database_status)]
+SubmissionTypes = Literal[tuple(submission_types)]
+SubmissionStatus = Literal[tuple(submission_status)]
+
+# Pre-compute Literal types for MIRA assembly
 _ExperimentTypes  = Literal[tuple(experiment_types)]
 _SampleTypes      = Literal[tuple(sample_types)]
 _SampleStatus    = Literal[tuple(sample_status)]
@@ -97,7 +110,7 @@ class RunRequest(BaseModel):
     experiment_type: _ExperimentTypes = Field(..., description="Type of sequencing experiment.")
 
 # ------ RUN RESPONSE ----------
-class RunResponse(BaseModel):
+class ListRunResponse(BaseModel):
     run_info: Optional[List[DBAssemblyInfo]] = Field(None, description="Assembly information for the sequencing run.")
 
 # ------  RUN STATUS REQUEST (REQUIRED: RUN NAME, EXPERIMENT TYPE, PID) ----------
@@ -131,23 +144,37 @@ class CopyRunRequest(RunRequest):
 class AssemblyRequest(AssemblyInfo):
     samplesheet: List[OntSamplesheet] | List[IlluminaSamplesheet] = Field(..., description="Samplesheet for the sequencing run.")
 
-# ------ GET RUN INFO RESPONSE ----------
-class GetRunInfoResponse(BaseModel):
-    assembly_info: Optional[List[Dict[str, Any]]] = Field(None, description="Assembly information for the sequencing run.")
-    samplesheet: Optional[List[Dict[str, Any]]] = Field(None, description="Samplesheet rows from the UI.")
-    barcode_assignments: Optional[Dict[str, Any]] = Field(None, description="Barcode assignment for the sequencing run.")
-    qc_statement: Optional[Dict[str, Any]] = Field(None, description="QC statement for the sequencing run.")
-    quality_control_decisions: Optional[Dict[str, Any]] = Field(None, description="Quality control decisions for the sequencing run.")
-    assembly_results: Optional[Dict[str, Any]] = Field(None, description="MIRA assembly results for the sequencing run.")
-    coverage: Optional[Dict[str, Any]] = Field(None, description="Reference coverage for the sequencing run.")
-    sample_coverage_list: Optional[List[Dict[str, Any]]] = Field(None, description="Sample coverage list for the sequencing run.")
-    sample_coverage_sankeyfig: Optional[Dict[str, Any]] = Field(None, description="Sample coverage sankey figure for the sequencing run.")
-    variants: Optional[Dict[str, Any]] = Field(None, description="Reference variants for the sequencing run.")
-    indels: Optional[Dict[str, Any]] = Field(None, description="Reference indels for the sequencing run.")
-    minor_snvs: Optional[Dict[str, Any]] = Field(None, description="Minor SNVs for the sequencing run.")
-    nt_passed_fasta_location: Optional[str] = Field(None, description="Location of the NT passed FASTA file for the sequencing run.")
-    nt_failed_fasta_location: Optional[str] = Field(None, description="Location of the NT failed FASTA file for the sequencing run.")
-    aa_passed_fasta_location: Optional[str] = Field(None, description="Location of the AA passed FASTA file for the sequencing run.")
-    aa_failed_fasta_location: Optional[str] = Field(None, description="Location of the AA failed FASTA file for the sequencing run.")
-    nextclade_fasta_location: Optional[List[Dict[str, Any]]] = Field(None, description="Location of the Nextclade FASTA file for the sequencing run.")
-    message: Optional[str] = Field(None, description="Message indicating the status of the request.")
+# -------- SEQSENDER MODELS --------
+class SubmissionInfo(BaseModel):
+    submission_name: str = Field(..., description="Name of the submission.")
+    organism: Literal[Organism] = Field(..., description="Organism for which to send sequences.")
+    database: List[Literal[DatabaseTargets]] = Field(..., description="One or more databases to submit to.")
+    database_status: List[Literal[DatabaseStatus]] = Field(..., description="Status of the submission to each database.")
+    submission_type: Literal[SubmissionTypes] = Field(..., description="Type of submission.")
+    gff_file: bool = Field(..., description="Indicates if a GFF file is included in the submission.")
+    table2asn: bool = Field(..., description="Indicates if a table2asn file is included in the submission.")
+    submission_id: Optional[str] = Field(None, description="Unique identifier for the submission.")
+    submission_status: Literal[SubmissionStatus] = Field(..., description="Status of the submission.")
+    @model_validator(mode='after')
+    def validate_against_submission_schema(self) -> 'SubmissionInfo':
+        tbl = pl.DataFrame([self.model_dump()])
+        validate_tbl(tbl, submission_pa_schema, "submission")
+        return self
+    
+class DBSubmissionInfo(SubmissionInfo):
+    submission_id_pk: str = Field(..., description="Unique identifier for the submission.")
+
+class ListSubmissionResponse(BaseModel):
+    submission_info: Optional[List[DBSubmissionInfo]] = Field(None, description="Information about the submissions.")
+
+class SubmissionRequest(BaseModel):
+    submission_name: str = Field(..., description="Name of the submission.")
+    organism: Literal[Organism] = Field(..., description="Organism for which to send sequences.")
+    database: List[Literal[DatabaseTargets]] = Field(..., description="One or more databases to submit to.")
+    submission_type: Literal[SubmissionTypes] = Field(..., description="Type of submission.")
+
+class SeqSenderRequest(SubmissionRequest):
+    database_status: List[Literal[DatabaseStatus]] = Field(..., description="Status of the submission to each database.")
+    gff_file: bool = Field(..., description="Indicates if a GFF file is included in the submission.")
+    table2asn: bool = Field(..., description="Indicates if a table2asn file is included in the submission.")
+

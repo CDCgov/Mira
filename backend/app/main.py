@@ -26,7 +26,7 @@ import polars as pl
 # Import schema
 from .schema import (
     RunRequest,
-    RunResponse,
+    ListRunResponse,
     RunStatusRequest,
     TaskLogRequest,
     AssemblyRequest,
@@ -34,20 +34,31 @@ from .schema import (
     DeleteSampleRequest,
     RenameRunRequest,
     CopyRunRequest,
+    SubmissionRequest,
+    SeqSenderRequest,
+    ListSubmissionResponse,
 )
 
 # Import schema validation
 from .schema_validator import (
+    _DEFAULT_SEQSENDER_STORAGE_PATH,
     _DEFAULT_MIRA_STORAGE_PATH,
     _MIRA_NF_VERSION_URL,
     _MIRA_VERSION_URL,
     _MIRA_NF_IMAGE,
     _REACT_PORT,
     validate_tbl,
+    organisms,
+    database_targets,
+    submission_types,
     experiment_types,
     assembly_pa_schema,
     ont_samplesheet_pa_schema,
     illumina_samplesheet_pa_schema, 
+    CONFIG_FILENAME,
+    METADATA_FILENAME,
+    FASTA_FILENAME,
+    GFF_FILENAME,
     CUSTOM_PRIMER_CONFIG_FILENAME,
     CUSTOM_IRMA_CONFIG_FILENAME,
     CUSTOM_QC_SETTINGS_FILENAME,
@@ -87,6 +98,19 @@ from .mira_handler import (
     validate_custom_configs_in_storage,
 )
 
+# Import SeqSender handler
+from .seqsender_handler import (
+    retrieve_submission,
+    create_seqsender_submission,
+    retrieve_seqsender_config,
+    retrieve_seqsender_metadata,
+    retrieve_seqsender_fasta,
+    retrieve_seqsender_gff,
+    retrieve_seqsender_table2asn,
+    retrieve_seqsender_submission_log,
+    retrieve_seqsender_submission_status,
+)
+
 # Import sqlite handler for database operations
 from .sqlite_handler import (
     lookup_tbl_in_database,
@@ -95,15 +119,15 @@ from .sqlite_handler import (
 # Import shared logger (INFO/DEBUG -> stdout, WARNING/ERROR/CRITICAL -> stderr)
 from .logging_config import logger
 
-# Define React base URL and internal base URL for the app
-_REACT_BASE_URL = f"http://localhost:{_REACT_PORT}"
-_REACT_INTERNAL_BASE_URL = f"http://127.0.0.1:{_REACT_PORT}"
-
 # Define FastAPI app
 app = FastAPI(title = "MIRA Backend")
 
 # Compress responses >= 1 KB with gzip (reduces large JSON payloads 5-10x)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# Define React base URL and internal base URL for the app
+_REACT_BASE_URL = f"http://localhost:{_REACT_PORT}"
+_REACT_INTERNAL_BASE_URL = f"http://127.0.0.1:{_REACT_PORT}"
 
 # CORS for your Vite dev server + Nextclade Web (fetches input-fasta directly from the browser)
 # Also accept the 127.0.0.1 form of the same host:port, since some dev setups (e.g. remote
@@ -341,10 +365,10 @@ async def check_mira_version():
     return check_result
 
 # ---------- List all runs ----------
-@app.get("/list/runs", response_model=RunResponse, summary="List all assembly runs", tags=["MIRA Utils"])
+@app.get("/list/runs", response_model=ListRunResponse, summary="List all assembly runs", tags=["MIRA Utils"])
 async def get_runs():
     """
-    Return a list of assembly runs in storage.
+    Return a list of assembly runs in database.
     """
     # Query for all assembly runs
     try:
@@ -1389,3 +1413,458 @@ async def delete_run(req: RunRequest):
 # 
 ##############################################
 
+# Upload config file to SeqSender storage location
+@app.post("/upload/seqsender/config", response_model=Dict[str, Any], summary="Upload a config file to SeqSender storage location", tags=["SeqSender Workflows"])
+async def upload_seqsender_config(
+    submission_name: str = Form("", description="Name of the submission."),
+    organism: Literal[organisms] = Form(..., description="Type of organisms to submit."),
+    database: List[Literal[database_targets]] = Form(..., description="One or more databases to submit to."),
+    submission_type: Literal[submission_types] = Form(..., description="Type of submission."),
+    config_file: UploadFile = File(..., description="Config file to upload.")
+):
+    """
+    Upload a config file to the SeqSender storage location for a given submission.
+    """
+    try:
+        # Retrieve assembly table from database
+        db_submission_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["submission"],
+            return_var = ["*"],
+            filter_coln_var = ["submission_name", "organism", "database", "submission_type"],
+            filter_coln_val = {"submission_name": [submission_name], "organism": [organism], "database": database, "submission_type": [submission_type]},
+            filter_var_by = ["AND", "AND", "AND", "AND"]
+        )
+        # Make sure db_assembly_tbl is not empty
+        if db_submission_tbl.shape[0] == 0:
+            raise ValueError(f"No submission found for submission_name '{submission_name}', organism '{organism}', database '{database}', and submission_type '{submission_type}'.")
+        # Define the storage directory based on submission name and organism
+        storage_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism, submission_name))
+        os.makedirs(storage_dir, exist_ok=True)
+        # Standardize the filename 
+        filename = CONFIG_FILENAME
+        dest_file_path = os.path.join(storage_dir, filename)
+        # Copy config file to the destination file path
+        config_file.file.seek(0)
+        with open(dest_file_path, "wb") as buf:
+            shutil.copyfileobj(config_file.file, buf)
+        # Return success message with file path and name
+        return {
+            "status": "success",
+            "message": f"Config file '{config_file.filename}' has been uploaded successfully.",
+            "file_path": dest_file_path,
+            "file_name": filename
+        }
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+# Upload metadata file to SeqSender storage location
+@app.post("/upload/seqsender/metadata", response_model=Dict[str, Any], summary="Upload a metadata file to SeqSender storage location", tags=["SeqSender Workflows"])
+async def upload_seqsender_metadata(
+    submission_name: str = Form("", description="Name of the submission."),
+    organism: Literal[organisms] = Form(..., description="Type of organisms to submit."),
+    database: List[Literal[database_targets]] = Form(..., description="One or more databases to submit to."),
+    submission_type: Literal[submission_types] = Form(..., description="Type of submission."),
+    metadata_file: UploadFile = File(..., description="Metadata file to upload.")
+):
+    """
+    Upload a metadata file to the SeqSender storage location for a given submission.
+    """
+    try:
+        # Retrieve assembly table from database
+        db_submission_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["submission"],
+            return_var = ["*"],
+            filter_coln_var = ["submission_name", "organism", "database", "submission_type"],
+            filter_coln_val = {"submission_name": [submission_name], "organism": [organism], "database": database, "submission_type": [submission_type]},
+            filter_var_by = ["AND", "AND", "AND", "AND"]
+        )
+        # Make sure db_assembly_tbl is not empty
+        if db_submission_tbl.shape[0] == 0:
+            raise ValueError(f"No submission found for submission_name '{submission_name}', organism '{organism}', database '{database}', and submission_type '{submission_type}'.")
+        # Define the storage directory based on submission name and organism
+        storage_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism, submission_name))
+        os.makedirs(storage_dir, exist_ok=True)
+        # Standardize the filename
+        filename = METADATA_FILENAME
+        dest_file_path = os.path.join(storage_dir, filename)
+        metadata_file.file.seek(0)
+        with open(dest_file_path, "wb") as buf:
+            shutil.copyfileobj(metadata_file.file, buf)
+        # Return success message with file path and name
+        return {
+            "status": "success",
+            "message": f"Metadata file '{metadata_file.filename}' has been uploaded successfully.",
+            "file_path": dest_file_path,
+            "file_name": filename
+        }
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))    
+
+# Upload fasta file to SeqSender storage location
+@app.post("/upload/seqsender/fasta", response_model=Dict[str, Any], summary="Upload a fasta file to SeqSender storage location", tags=["SeqSender Workflows"])
+async def upload_seqsender_fasta(
+    submission_name: str = Form("", description="Name of the submission."),
+    organism: Literal[organisms] = Form(..., description="Type of organisms to submit."),
+    database: List[Literal[database_targets]] = Form(..., description="One or more databases to submit to."),
+    submission_type: Literal[submission_types] = Form(..., description="Type of submission."),
+    fasta_file: UploadFile = File(..., description="Fasta file to upload.")
+):
+    """
+    Upload a fasta file to the SeqSender storage location for a given submission.
+    """
+    try:
+        # Retrieve assembly table from database
+        db_submission_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["submission"],
+            return_var = ["*"],
+            filter_coln_var = ["submission_name", "organism", "database", "submission_type"],
+            filter_coln_val = {"submission_name": [submission_name], "organism": [organism], "database": database, "submission_type": [submission_type]},
+            filter_var_by = ["AND", "AND", "AND", "AND"]
+        )
+        # Make sure db_assembly_tbl is not empty
+        if db_submission_tbl.shape[0] == 0:
+            raise ValueError(f"No submission found for submission_name '{submission_name}', organism '{organism}', database '{database}', and submission_type '{submission_type}'.")
+        # Define the storage directory based on submission name and organism
+        storage_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism, submission_name))
+        os.makedirs(storage_dir, exist_ok=True)
+        # Standardize the filename
+        filename = FASTA_FILENAME
+        dest_file_path = os.path.join(storage_dir, filename)
+        fasta_file.file.seek(0)
+        with open(dest_file_path, "wb") as buf:
+            shutil.copyfileobj(fasta_file.file, buf)
+        # Return success message with file path and name
+        return {
+            "status": "success",
+            "message": f"Fasta file '{fasta_file.filename}' has been uploaded successfully.",
+            "file_path": dest_file_path,
+            "file_name": filename
+        }
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) 
+
+# Upload GISAID CLI file to SeqSender storage location
+@app.post("/upload/seqsender/gisaid_cli", response_model=Dict[str, Any], summary="Upload a GISAID CLI file to SeqSender storage location", tags=["SeqSender Workflows"])
+async def upload_seqsender_gisaid_cli(
+    submission_name: str = Form("", description="Name of the submission."),
+    organism: Literal[organisms] = Form(..., description="Type of organisms to submit."),
+    database: List[Literal[database_targets]] = Form(..., description="One or more databases to submit to."),
+    submission_type: Literal[submission_types] = Form(..., description="Type of submission."),
+    gisaid_cli_file: UploadFile = File(..., description="Gisaid CLI file to upload.")
+):
+    """
+    Upload a GISAID CLI file to the SeqSender storage location for a given submission.
+    """
+    try:
+        # Retrieve assembly table from database
+        db_submission_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["submission"],
+            return_var = ["*"],
+            filter_coln_var = ["submission_name", "organism", "database", "submission_type"],
+            filter_coln_val = {"submission_name": [submission_name], "organism": [organism], "database": database, "submission_type": [submission_type]},
+            filter_var_by = ["AND", "AND", "AND", "AND"]
+        )
+        # Make sure db_assembly_tbl is not empty
+        if db_submission_tbl.shape[0] == 0:
+            raise ValueError(f"No submission found for submission_name '{submission_name}', organism '{organism}', database '{database}', and submission_type '{submission_type}'.")
+        # Define the storage directory based on submission name and organism
+        storage_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism, "gisaid_cli"))
+        os.makedirs(storage_dir, exist_ok=True)
+        # Standardize the filename
+        filename = organism.lower()+"CLI"
+        dest_file_path = os.path.join(storage_dir, filename)
+        gisaid_cli_file.file.seek(0)
+        with open(dest_file_path, "wb") as buf:
+            shutil.copyfileobj(gisaid_cli_file.file, buf)
+        # Return success message with file path and name
+        return {
+            "status": "success",
+            "message": f"GISAID CLI file '{gisaid_cli_file.filename}' has been uploaded successfully.",
+            "file_path": dest_file_path,
+            "file_name": filename
+        }
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) 
+
+# Upload GFF file to SeqSender storage location
+@app.post("/upload/seqsender/gff", response_model=Dict[str, Any], summary="Upload a GFF file to SeqSender storage location", tags=["SeqSender Workflows"])
+async def upload_seqsender_gff(
+    submission_name: str = Form("", description="Name of the submission."),
+    organism: Literal[organisms] = Form(..., description="Type of organisms to submit."),
+    database: List[Literal[database_targets]] = Form(..., description="One or more databases to submit to."),
+    submission_type: Literal[submission_types] = Form(..., description="Type of submission."),
+    gff_file: UploadFile = File(..., description="GFF file to upload.")
+):
+    """
+    Upload a GFF file to the SeqSender storage location for a given submission.
+    """
+    try:
+        # Retrieve assembly table from database
+        db_submission_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["submission"],
+            return_var = ["*"],
+            filter_coln_var = ["submission_name", "organism", "database", "submission_type"],
+            filter_coln_val = {"submission_name": [submission_name], "organism": [organism], "database": database, "submission_type": [submission_type]},
+            filter_var_by = ["AND", "AND", "AND", "AND"]
+        )
+        # Make sure db_assembly_tbl is not empty
+        if db_submission_tbl.shape[0] == 0:
+            raise ValueError(f"No submission found for submission_name '{submission_name}', organism '{organism}', database '{database}', and submission_type '{submission_type}'.")
+        # Define the storage directory
+        storage_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism, submission_name))
+        os.makedirs(storage_dir, exist_ok=True)
+        # Standardize the filename
+        filename = GFF_FILENAME
+        dest_file_path = os.path.join(storage_dir, filename)
+        gff_file.file.seek(0)
+        with open(dest_file_path, "wb") as buf:
+            shutil.copyfileobj(gff_file.file, buf)
+        # Return success message with file path and name
+        return {
+            "status": "success",
+            "message": f"GFF file '{gff_file.filename}' has been uploaded successfully.",
+            "file_path": dest_file_path,
+            "file_name": filename
+        }
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) 
+
+# ---------- List all submissions ----------
+@app.get("/list/submissions", response_model=ListSubmissionResponse, summary="List all submissions", tags=["SeqSender Utils"])
+async def get_submissions():
+    """
+    Return a list of submissions in database.
+    """
+    # Query for all assembly runs
+    try:
+        db_submission_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["submission"],
+            return_var  = ["*"]
+        )
+        # If no submissions found, return an empty list
+        if db_submission_tbl.shape[0] == 0:
+            return {"submission_info": []}
+        else:
+            return {"submission_info": db_submission_tbl.to_dicts()}
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+# ---------- Retrieve SeqSender submission details ----------    
+@app.get("/retrieve/submission", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender submission details", tags=["SeqSender Utils"])
+async def get_submission_info(req: SubmissionRequest):
+    """
+    Retrieve SeqSender submission details for a given submission name, organism, database, and submission type. 
+    The function will return a list of dictionaries containing the details of the submission.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_submission,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+    
+
+# ---------- Create SeqSender submission ----------
+@app.get("/create/submission", response_model=List[str], summary="Create a SeqSender submission", tags=["SeqSender Workflows"])
+async def create_submission(req: SeqSenderRequest):
+    """
+    Create a SeqSender submission for a given submission name, organism, database, and submission type. 
+    The submission will be created using the provided config file, metadata file, fasta file, and optionally GISAID CLI and GFF files. 
+    The function will return a list of messages indicating the success or failure of each step in the submission process.
+    """
+    try:
+        result = await asyncio.to_thread(
+            create_seqsender_submission,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type,
+            database_status= req.database_status,
+            gff_file = req.gff_file,
+            table2asn= req.table2asn,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))         
+
+@app.get("/retrieve/config", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender config file location", tags=["SeqSender Results"])
+async def get_config(req: SubmissionRequest):
+    """
+    Retrieve SeqSender config file location for a given submission name, organism, database, and submission type. 
+    The function will return a dictionary containing the details of the config file location.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_seqsender_config,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+    
+@app.get("/retrieve/metadata", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender metadata file location", tags=["SeqSender Results"])
+async def get_metadata(req: SubmissionRequest):
+    """
+    Retrieve SeqSender metadata file location for a given submission name, organism, database, and submission type. 
+    The function will return a list of dictionaries containing the details of the metadata file location.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_seqsender_metadata,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+    
+@app.get("/retrieve/fasta", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender FASTA file location", tags=["SeqSender Results"])
+async def get_fasta(req: SubmissionRequest):
+    """
+    Retrieve SeqSender FASTA file location for a given submission name, organism, database, and submission type. 
+    The function will return a dictionary containing the details of the FASTA file location.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_seqsender_fasta,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+@app.get("/retrieve/gff", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender GFF file location", tags=["SeqSender Results"])
+async def get_gff(req: SubmissionRequest):
+    """
+    Retrieve SeqSender GFF file location for a given submission name, organism, database, and submission type. 
+    The function will return a dictionary containing the details of the GFF file location.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_seqsender_gff,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+@app.get("/retrieve/table2asn", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender table2asn file location", tags=["SeqSender Results"])
+async def get_table2asn(req: SubmissionRequest):
+    """
+    Retrieve SeqSender table2asn file location for a given submission name, organism, database, and submission type. 
+    The function will return a dictionary containing the details of the table2asn file location.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_seqsender_table2asn,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))  
+      
+@app.get("/retrieve/gisaid_cli", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender GISAID CLI file location", tags=["SeqSender Results"])
+async def get_gisaid_cli(req: SubmissionRequest):
+    """
+    Retrieve SeqSender GISAID CLI file location for a given submission name, organism, database, and submission type. 
+    The function will return a dictionary containing the details of the GISAID CLI file location.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_seqsender_gisaid_cli,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))      
+
+@app.get("/retrieve/submission_log", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender submission log location", tags=["SeqSender Results"])
+async def get_submission_log(req: SubmissionRequest):
+    """
+    Retrieve SeqSender submission log location for a given submission name, organism, database, and submission type. 
+    The function will return a dictionary containing the details of the submission log location.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_seqsender_submission_log,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+@app.get("/retrieve/submission_status", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender submission status file location", tags=["SeqSender Results"])
+async def get_submission_status(req: SubmissionRequest):
+    """
+    Retrieve SeqSender submission status file location for a given submission name, organism, database, and submission type. 
+    The function will return a dictionary containing the details of the submission status file location.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_seqsender_submission_status,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))    

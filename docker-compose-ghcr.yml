@@ -16,7 +16,6 @@ services:
     privileged: true
     ports:
       - 5174:5175
-      - 8880:8080
     restart: always
     volumes:
       - type: bind

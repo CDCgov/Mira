@@ -4704,12 +4704,18 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
 }
 
 /* ── SeqSender Tab ──────────────────────────────── */
-const ORGANISMS = ["INFLUENZA", "SARS-COV-2", "RSV"];
+const ORGANISMS = [
+  { value: "flu", label: "INFLUENZA" },
+  { value: "cov", label: "SARS-COV-2" },
+  { value: "rsv", label: "RSV" },
+];
+
+// Database targets for SeqSender submission, with links to their respective websites
 const DB_LIST = [
-  { key: "biosample", label: "BioSample", url: "https://www.ncbi.nlm.nih.gov/biosample/"},
-  { key: "sra",       label: "SRA", url: "https://www.ncbi.nlm.nih.gov/sra/ "},
-  { key: "genbank",   label: "GenBank", url: "https://www.ncbi.nlm.nih.gov/genbank/"},
-  { key: "gisaid",    label: "GISAID", url: "https://www.gisaid.org/"},
+  { key: "biosample", value: "biosample", label: "BioSample", url: "https://www.ncbi.nlm.nih.gov/biosample/"},
+  { key: "sra", value: "sra", label: "SRA", url: "https://www.ncbi.nlm.nih.gov/sra/ "},
+  { key: "genbank", value: "genbank", label: "GenBank", url: "https://www.ncbi.nlm.nih.gov/genbank/"},
+  { key: "gisaid", value: "gisaid", label: "GISAID", url: "https://www.gisaid.org/"},
 ];
 
 // ── SeqSender panel — rendered as Step 5 inside the Mira accordion ──
@@ -4769,14 +4775,14 @@ function SeqSenderPanel() {
                     <div>
                       <FieldLabel>Organism <span className="text-destructive">*</span></FieldLabel>
                       <div className="flex flex-wrap gap-2">
-                        {ORGANISMS.map((org) => (
-                          <button key={org} onClick={() => setOrganism(org)}
+                        {ORGANISMS.map(({ value, label }) => (
+                          <button key={value} onClick={() => setOrganism(value)}
                             className={cn(
                               "px-4 py-1.5 rounded-full text-xs font-semibold border transition-colors",
-                              organism === org
+                              organism === value
                                 ? "bg-primary text-primary-foreground border-primary"
                                 : "border-border text-muted-foreground hover:border-primary hover:text-primary"
-                            )}>{org}</button>
+                            )}>{label}</button>
                         ))}
                       </div>
                     </div>

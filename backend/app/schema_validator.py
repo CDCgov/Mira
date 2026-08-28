@@ -166,6 +166,73 @@ def validate_tbl(
         raise ValueError(f"{label}Schema validation failed: {exc}") from exc
 
 # ---------------------------------------------------------------------------
+# GLOBAL VARIABLES FOR SEQSENDER
+# --------------------------------------------------------------------------- 
+organisms = ["FLU", "COV", "RSV"]
+database_targets = [
+    "BIOSAMPLE",
+    "SRA",
+    "GENBANK",
+    "GISAID"
+]
+database_status = ["ACTIVE", "INACTIVE"]
+submission_types = ["TEST", "PRODUCTION"]
+submission_status = [
+    'SUBMITTED', 'CREATED', 'QUEUED', 'PROCESSING',
+    'FAILED', 'PROCESSED', 'ERROR', 'WAITING', 
+    'DELETED', 'RETIRED', 'VALIDATED', 'EMAILED'
+]
+
+# ---------------------------------------------------------------------------
+# SUBMISSION SCHEMA
+# ---------------------------------------------------------------------------
+submission_pa_schema = pa.DataFrameSchema(
+    columns={
+        "submission_name": _required_str(description="Name of the submission."),
+        "organism": _required_enum_col(organisms, description="Type of organism."),
+        "database": _required_enum_col(database_targets, description="Target database."),
+        "database_status": _required_enum_col(
+            database_status,
+            description="Status of the target database."
+        ),
+        "submission_type": _required_enum_col(
+            submission_types, 
+            description="Type of submission: Test or Production."
+        ),
+        "gff_file": pa.Column(
+            pl.Boolean, nullable=False, required=True,
+            description="Whether to include GFF file in the submission."
+        ),
+        "table2asn": pa.Column(
+            pl.Boolean, nullable=False, required=True,
+            description="Whether to run table2asn."
+        ),
+        "submission_id": _nullable_str(description="Unique identifier for the submission in the database."),
+        "submission_status": _required_enum_col(
+            submission_status,
+            description="Status of the submission."
+        ),
+    },
+    name="submission",
+)
+# ---------------------------------------------------------------------------
+submission_db_schema = pa.DataFrameSchema(
+    columns={
+        "submission_id_pk": pa.Column(pl.Int64, nullable=False, required=False, description="Primary key for the submission table in database."),
+        **{col: pa.Column(submission_pa_schema.columns[col].dtype.type, nullable=submission_pa_schema.columns[col].nullable, required=submission_pa_schema.columns[col].required) for col in submission_pa_schema.columns}
+    },
+    name="submission",
+)
+
+# Standardized on-disk filenames for seqsender
+CONFIG_FILENAME = "config.yml"
+METADATA_FILENAME = "metadata.csv"
+FASTA_FILENAME = "sequence.fasta"
+GFF_FILENAME = "annotation.gff"
+TABLE2ASN_FILENAME = "table2asn"
+SUBMISSION_LOG_FILENAME = "submission_log.csv"
+SUBMISSION_STATUS_REPORT_FILENAME = "submission_status_report.csv"
+# ---------------------------------------------------------------------------
 # GLOBAL VARIABLES FOR MIRA
 # ---------------------------------------------------------------------------
 experiment_types = [
@@ -377,7 +444,7 @@ assembly_db_schema = pa.DataFrameSchema(
         "assembly_id": pa.Column(pl.Int64, nullable=False, required=False, description="Foreign key linking to the assembly table in database."),
         **{col: pa.Column(assembly_pa_schema.columns[col].dtype.type, nullable=assembly_pa_schema.columns[col].nullable, required=assembly_pa_schema.columns[col].required) for col in assembly_pa_schema.columns}
     },
-    name="assembly_db",
+    name="assembly",
 )
 
 # ---------------------------------------------------------------------------
@@ -409,7 +476,7 @@ ont_samplesheet_db_schema = pa.DataFrameSchema(
         "assembly_id": pa.Column(pl.Int64, nullable=False, required=False, description="Foreign key linking to the assembly table in database."),
         **{col: pa.Column(ont_samplesheet_pa_schema.columns[col].dtype.type, nullable=ont_samplesheet_pa_schema.columns[col].nullable, required=ont_samplesheet_pa_schema.columns[col].required) for col in ont_samplesheet_pa_schema.columns}
     },
-    name="ont_samplesheet_db",
+    name="ont_samplesheet",
 )
 
 # ---------------------------------------------------------------------------
@@ -441,7 +508,7 @@ illumina_samplesheet_db_schema = pa.DataFrameSchema(
         "assembly_id": pa.Column(pl.Int64, nullable=False, required=False, description="Foreign key linking to the assembly table in database."),
         **{col: pa.Column(illumina_samplesheet_pa_schema.columns[col].dtype.type, nullable=illumina_samplesheet_pa_schema.columns[col].nullable, required=illumina_samplesheet_pa_schema.columns[col].required) for col in illumina_samplesheet_pa_schema.columns}
     },
-    name="illumina_samplesheet_db",
+    name="illumina_samplesheet",
 )
 
 # ---------------------------------------------------------------------------
@@ -454,171 +521,3 @@ upload_fastq_files_pa_schema = pa.DataFrameSchema(
     },
     name="upload_fastq_files",
 )
-
-# ---------------------------------------------------------------------------
-# GLOBAL VARIABLES FOR SEQSENDER
-# ---------------------------------------------------------------------------
-database_targets = ["BioSample", "SRA", "GenBank", "GISAID"]
-
-submission_status = [
-    'SUBMITTED', 'CREATED', 'QUEUED', 'PROCESSING',
-    'FAILED', 'PROCESSED', 'ERROR', 'WAITING', 
-    'DELETED', 'RETIRED', 'VALIDATED', 'EMAILED'
-]
-
-pathogen_targets = ["FLU", "COV", "RSV", "POX", "ARBO", "OTHER"]
-
-# ---------------------------------------------------------------------------
-# SEQSENDER SUBMISSION TABLE SCHEMA
-# ---------------------------------------------------------------------------
-submission_tbl_pa_schema = pa.DataFrameSchema(
-    columns={
-        "submission_name": _required_str(),
-        "organism": _required_str(),
-        "db": _required_str(),
-        "submission_type": _required_str(),
-        "submission_status": _required_str(),
-        "submission_id": _nullable_str(required=True),
-        "submission_id_status": _required_str(),
-        "submission_date": _required_str(),
-        "upload_date": _required_str(),
-    },
-    name="submission"
-)
-# ---------------------------------------------------------------------------
-# SEQSENDER METADATA SCHEMA
-# ---------------------------------------------------------------------------
-metadata_tbl_pa_schema = pa.DataFrameSchema(
-    columns={
-        "organism": _required_str(),
-        "authors": _required_str(),
-        "collection_date": _required_str(),
-        "bioproject": _required_str(),
-        "sequence_name": _required_str(),
-        "gb-sample_name": _required_str(),
-        "gb-fasta_definition_line_modifiers": _nullable_str(required=False),
-        "gb-title": _nullable_str(required=False),
-        "gb-comment": _nullable_str(required=False),
-        "src-Altitude": _nullable_str(required=False),
-        "src-Bio_material": _nullable_str(required=False),
-        "src-Breed": _nullable_str(required=False),
-        "src-Cell_line": _nullable_str(required=False),
-        "src-Cell_type": _nullable_str(required=False),
-        "src-Clone": _nullable_str(required=False),
-        "src-Collected_by": _nullable_str(required=False),
-        "src-geo_loc_name": _required_str(),
-        "src-Cultivar": _nullable_str(required=False),
-        "src-Culture_collection": _nullable_str(required=False),
-        "src-Dev_stage": _nullable_str(required=False),
-        "src-Ecotype": _nullable_str(required=False),
-        "src-Fwd_primer_name": _nullable_str(required=False),
-        "src-Fwd_primer_seq": _nullable_str(required=False),
-        "src-Genotype": _nullable_str(required=False),
-        "src-Haplogroup": _nullable_str(required=False),
-        "src-Haplotype": _nullable_str(required=False),
-        "src-Host": _required_str(),
-        "src-Isolate": _required_str(),
-        "src-Isolation-source": _nullable_str(required=False),
-        "src-Lab_host": _nullable_str(required=False),
-        "src-Lat_Lon": _nullable_str(required=False),
-        "src-Note": _nullable_str(required=False),
-        "src-Rev_primer_name": _nullable_str(required=False),
-        "src-Rev_primer_seq": _nullable_str(required=False),
-        "src-Segment": _nullable_str(required=False),
-        "src-Serotype": _nullable_str(required=False),
-        "src-Serovar": _nullable_str(required=False),
-        "src-Sex": _nullable_str(required=False),
-        "src-Specimen_voucher": _nullable_str(required=False),
-        "src-Strain": _nullable_str(required=False),
-        "src-Sub_species": _nullable_str(required=False),
-        "src-Tissue_lib": _nullable_str(required=False),
-        "src-Tissue_type": _nullable_str(required=False),
-        "src-Variety": _nullable_str(required=False),
-        "cmt-StructuredCommentPrefix": _required_str(),
-        "cmt-StructuredCommentSuffix": _required_str(),
-        "cmt-Assembly Method": _required_str(),
-        "gs-sample_name": _required_str(),
-        "gs-rsv_subtype": _required_str(),
-        "gs-rsv_passage": _required_str(),
-        "gs-rsv_location": _required_str(),
-        "gs-rsv_add_location": _nullable_str(required=False),
-        "gs-rsv_host": _required_str(),
-        "gs-rsv_add_host_info": _nullable_str(required=False),
-        "gs-rsv_sampling_strategy": _nullable_str(required=False),
-        "gs-rsv_sex": _required_str(),
-        "gs-rsv_patient_age": _required_str(),
-        "gs-rsv_patient_status": _required_str(),
-        "gs-rsv_specimen": _nullable_str(required=False),
-        "gs-rsv_outbreak": _nullable_str(required=False),
-        "gs-rsv_last_vaccinated": _nullable_str(required=False),
-        "gs-rsv_treatment": _nullable_str(required=False),
-        "gs-rsv_seq_technology": _required_str(),
-        "gs-rsv_assembly_method": _nullable_str(required=False),
-        "gs-rsv_coverage": _nullable_str(required=False),
-        "gs-rsv_orig_lab": _required_str(),
-        "gs-rsv_orig_lab_addr": _required_str(),
-        "gs-rsv_provider_sample_id": _nullable_str(required=False),
-        "gs-rsv_subm_lab": _required_str(),
-        "gs-rsv_subm_lab_addr": _required_str(),
-        "gs-rsv_subm_sample_id": _nullable_str(required=False),
-        "gs-rsv_comment": _required_str(),
-        "gs-comment_type": _required_str(),
-        "bs-sample_name": _required_str(),
-        "bs-sample_title": _required_str(),
-        "bs-sample_description": _nullable_str(required=False),
-        "bs-strain": _nullable_str(required=False),
-        "bs-isolate": _nullable_str(required=False),
-        "bs-collected_by": _required_str(),
-        "bs-geo_loc_name": _required_str(),
-        "bs-host": _required_str(),
-        "bs-host_disease": _required_str(),
-        "bs-isolation_source": _required_str(),
-        "bs-lat_lon": _required_str(),
-        "bs-culture_collection": _nullable_str(required=False),
-        "bs-genotype": _nullable_str(required=False),
-        "bs-host_age": _nullable_str(required=False),
-        "bs-host_description": _nullable_str(required=False),
-        "bs-host_disease_outcome": _nullable_str(required=False),
-        "bs-host_disease_stage": _nullable_str(required=False),
-        "bs-host_health_state": _nullable_str(required=False),
-        "bs-host_sex": _nullable_str(required=False),
-        "bs-host_subject_id": _nullable_str(required=False),
-        "bs-host_tissue_sampled": _nullable_str(required=False),
-        "bs-passage_history": _nullable_str(required=False),
-        "bs-pathotype": _nullable_str(required=False),
-        "bs-serotype": _nullable_str(required=False),
-        "bs-serovar": _nullable_str(required=False),
-        "bs-specimen_voucher": _nullable_str(required=False),
-        "bs-subgroup": _nullable_str(required=False),
-        "bs-subtype": _nullable_str(required=False),
-        "bs-title": _nullable_str(required=False),
-        "bs-comment": _nullable_str(required=False),
-        "sra-sample_name": _required_str(),
-        "sra-file_location": _required_str(),
-        "sra-file_1": _required_str(),
-        "sra-file_#": _nullable_str(required=False),
-        "sra-library_name": _nullable_str(required=False),
-        "sra-loader": _nullable_str(required=False),
-        "sra-library_strategy": _required_str(),
-        "sra-library_source": _required_str(),
-        "sra-library_selection": _required_str(),
-        "sra-library_layout": _required_str(),
-        "sra-platform": _nullable_str(required=False),
-        "sra-instrument_model": _required_str(),
-        "sra-design_description": _nullable_str(required=False),
-        "sra-title": _nullable_str(required=False),
-        "sra-comment": _nullable_str(required=False),
-    },
-    checks=[
-        pa.Check(
-            lambda data: data.lazyframe.select(
-                (pl.col("bs-strain").is_not_null() | pl.col("bs-isolate").is_not_null())
-                .alias("bs_strain_or_isolate_present")
-            ),
-            error="At least one of 'bs-strain' or 'bs-isolate' is required.",
-        ),
-    ],
-    name="metadata",
-)
-
-
