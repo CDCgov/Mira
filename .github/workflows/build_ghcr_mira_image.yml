@@ -1,0 +1,115 @@
+name: Build MIRA Image and Push to GHCR
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  prepare:
+    name: Verify tag on mira-dev and extract version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      on_branch: ${{ steps.check.outputs.on_branch }}
+      version: ${{ steps.check.outputs.version }}
+      repo_lc: ${{ steps.check.outputs.repo_lc }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag is on mira-dev and extract metadata
+        id: check
+        run: |
+          echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "repo_lc=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          # Only build when the tagged commit is part of the mira-dev branch history.
+          git fetch --no-tags origin mira-dev:refs/remotes/origin/mira-dev
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/mira-dev; then
+            echo "on_branch=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "on_branch=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Tag ${GITHUB_REF_NAME} is not on mira-dev; skipping image build."
+          fi
+
+  build-mira:
+    name: Build and Push MIRA Image (${{ matrix.variant }})
+    needs: prepare
+    if: needs.prepare.outputs.on_branch == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      # cdcgov/mira-nf is amd64-only, so both variants are linux/amd64 images. They differ
+      # only in the polars build: the amd64 variant keeps the stock (AVX) wheel for native
+      # x86-64 hosts; the arm64 variant swaps in polars-lts-cpu so the image runs correctly
+      # under Rosetta emulation on Apple Silicon (stock polars SIGSEGVs there).
+      matrix:
+        include:
+          - variant: amd64
+            polars_package: ""
+          - variant: arm64
+            polars_package: "polars-lts-cpu==1.33.1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set image tags
+        id: meta
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          VARIANT: ${{ matrix.variant }}
+          SHA: ${{ github.sha }}
+        run: |
+          BASE="${{ env.REGISTRY }}/${{ needs.prepare.outputs.repo_lc }}-dev"
+          # Never tag `latest`; use the commit version, falling back to the short commit SHA.
+          REF="${VERSION:-${SHA:0:7}}"
+          {
+            echo "tags<<EOF"
+            echo "${BASE}:${REF}-${VARIANT}"
+            # amd64 is the default target, so also publish the unsuffixed version tag for it.
+            if [ "$VARIANT" = "amd64" ]; then
+              echo "${BASE}:${REF}"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push MIRA image (${{ matrix.variant }})
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          # org.opencontainers.image.source links the GHCR package back to this repository.
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.description=MIRA image (${{ matrix.variant }} variant)
+          build-args: |
+            POLARS_PACKAGE=${{ matrix.polars_package }}
+          provenance: false
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
