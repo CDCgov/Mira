@@ -5,6 +5,7 @@ from typing import Optional
 # Import general python packages
 import os
 import threading
+from datetime import datetime
 
 # Import sqlite3 for database connection
 import sqlite3
@@ -80,5 +81,43 @@ def _apply_migrations(connection: sqlite3.Connection) -> None:
         if existing and column not in existing:
             connection.execute(f'ALTER TABLE "{table}" ADD COLUMN {column} {definition}')
             connection.commit()
+
+    _normalize_finished_at(connection)
+
+
+# One-time, idempotent data backfill for the assembly.finished_at column.
+def _normalize_finished_at(connection: sqlite3.Connection) -> None:
+    """Rewrite legacy finished_at values to a canonical, sortable form.
+
+    Older runs stored finished_at in Nextflow's '%d-%b-%Y %H:%M:%S' shape
+    (e.g. '27-Aug-2026 15:49:32'), which the frontend can't Date.parse or sort.
+    Rewrite those to 'YYYY-MM-DD HH:MM:SS' so the load-run panel displays and
+    orders them correctly. Already-canonical values fail this parse and are
+    left untouched, so the pass is safe to run on every connection.
+    """
+    try:
+        has_assembly = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='assembly'"
+        ).fetchone()
+        if not has_assembly:
+            return
+        rows = connection.execute(
+            "SELECT assembly_id, finished_at FROM assembly WHERE finished_at IS NOT NULL"
+        ).fetchall()
+        for row in rows:
+            raw = row["finished_at"]
+            try:
+                canon = datetime.strptime(str(raw), "%d-%b-%Y %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
+            except (ValueError, TypeError):
+                continue
+            if canon != raw:
+                connection.execute(
+                    "UPDATE assembly SET finished_at = ? WHERE assembly_id = ?",
+                    (canon, row["assembly_id"]),
+                )
+        connection.commit()
+    except sqlite3.Error:
+        # Best-effort; a display-format backfill must never block DB startup
+        pass
 
 

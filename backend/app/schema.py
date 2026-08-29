@@ -55,6 +55,8 @@ class AssemblyInfo(BaseModel):
 # ------ DB ASSEMBLY INFO MODEL ----------
 class DBAssemblyInfo(AssemblyInfo):
     assembly_id: int = Field(..., description="Assembly ID.")
+    created_at: Optional[str] = Field(None, description="Timestamp when the run was created (YYYY-MM-DD HH:MM:SS).")
+    finished_at: Optional[str] = Field(None, description="Timestamp when the run finished (YYYY-MM-DD HH:MM:SS).")
 
 # ------ ONT SAMPLESHEET MODEL ----------
 class OntSamplesheet(BaseModel):

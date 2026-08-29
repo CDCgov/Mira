@@ -1711,7 +1711,7 @@ def create_mira_dag(
                         workflow["started_at"] = m.group(1)
                 m = complete_re.search(line)
                 if m and workflow["completed_at"] is None:
-                        workflow["completed_at"] = m.group(1)
+                    workflow["completed_at"] = m.group(1)
                 sp = starting_re.search(line)
                 if sp:      
                     process_name = sp.group(1).strip().split(":")[-1]

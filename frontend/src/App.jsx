@@ -277,15 +277,15 @@ function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, u
   const dotMeta = [];
   // Plot samples against a numeric run index with horizontal jitter so
   // overlapping same-value points are all individually visible.
-  data.forEach(({ run, runId, samples }, i) => samples.forEach((v, j) => {
+  data.forEach(({ detail, runId, samples }, i) => samples.forEach((v, j) => {
     xDots.push(i + (Math.random() - 0.5) * 0.5);
     yDots.push(v);
-    dotMeta.push([`${runId}-S${String(j + 1).padStart(2, "0")}`, runId, run]);
+    dotMeta.push([`${runId}-S${String(j + 1).padStart(2, "0")}`, runId, detail ?? ""]);
   }));
   const xMed = data.map((_, i) => i);
   const yMed = data.map((d) => median(d.samples));
   const runLabels = data.map((d) => d.run);
-  const medMeta = data.map((d) => [d.runId, d.run]);
+  const medMeta = data.map((d) => [d.runId, d.detail ?? ""]);
 
   // Default the downloaded image name to the plot's title.
   const chartConfig = {
@@ -320,7 +320,7 @@ function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, u
                 name: "Samples",
                 customdata: dotMeta,
                 marker: { color, size: 6, opacity: 0.35 },
-                hovertemplate: `Run %{customdata[1]}<br>%{customdata[2]}<br>Sample %{customdata[0]}<br>%{y} ${unit}<extra></extra>`,
+                hovertemplate: `Run %{customdata[1]}<br>Ended %{customdata[2]}<br>Sample %{customdata[0]}<br>%{y} ${unit}<extra></extra>`,
               },
               {
                 x: xMed,
@@ -331,7 +331,7 @@ function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, u
                 customdata: medMeta,
                 line: { color, width: 2, shape: "spline" },
                 marker: { color, size: 8, line: { color: "#ffffff", width: 1.5 } },
-                hovertemplate: `Run %{customdata[0]}<br>%{customdata[1]}<br>median %{y} ${unit}<extra></extra>`,
+                hovertemplate: `Run %{customdata[0]}<br>Ended %{customdata[1]}<br>median %{y} ${unit}<extra></extra>`,
               },
             ]}
             layout={{
@@ -403,11 +403,23 @@ function HomeTab({ onNewRun, onLoadRun }) {
         const completed = runs.filter((r) => r.assembly_status === "COMPLETED");
         if (!cancelled) setRunCount(completed.length);
 
-        // Oldest→newest by run date; keep the most recent runs for a readable trend.
-        const runTime = (r) => {
-          const t = Date.parse((r.finished_at || r.created_at || "").replace(" ", "T"));
-          return Number.isNaN(t) ? 0 : t;
+        // Oldest→newest by run ending date. finished_at is normalized to
+        // "YYYY-MM-DD HH:MM:SS" by the backend, but tolerate the legacy
+        // "DD-Mon-YYYY HH:MM:SS" (Nextflow) shape too.
+        const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+        const parseRunTime = (raw) => {
+          if (!raw) return 0;
+          const s = String(raw).trim();
+          let t = Date.parse(s.replace(" ", "T"));
+          if (!Number.isNaN(t)) return t;
+          const m = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})[ T](\d{1,2}):(\d{2}):(\d{2})/);
+          if (m) {
+            const mo = MONTHS[m[2].toLowerCase()];
+            if (mo != null) return new Date(+m[3], mo, +m[1], +m[4], +m[5], +m[6]).getTime();
+          }
+          return 0;
         };
+        const runTime = (r) => parseRunTime(r.finished_at || r.created_at);
         // Segment counts are only meaningful for segmented (flu) genomes, so limit the chart to flu runs.
         const fluCompleted = completed.filter((r) => /^flu/i.test(r.experiment_type || ""));
         const recent = [...fluCompleted].sort((a, b) => runTime(a) - runTime(b)).slice(-12);
@@ -437,7 +449,10 @@ function HomeTab({ onNewRun, onLoadRun }) {
             if (!samples.length) return null;
             const t = runTime(run); // ending date of the run (finished_at, falling back to created_at)
             const label = t ? new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : run.run_name;
-            return { run: label, runId: run.run_name, samples };
+            const detail = t
+              ? new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
+              : "end time unknown";
+            return { run: label, detail, runId: run.run_name, samples };
           } catch {
             return null;
           }
