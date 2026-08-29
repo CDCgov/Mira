@@ -76,7 +76,12 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.description=MIRA dev image (${{ matrix.variant }} variant)
+          # Mirror the build args from docker-compose.yml so the CI image matches a local
+          # `docker compose build`. POLARS_PACKAGE differs per variant (see matrix above).
           build-args: |
+            MICROMAMBA_IMAGE=mambaorg/micromamba:2.8.0
+            MIRA_NF_IMAGE=cdcgov/mira-nf:v2.2.1
+            NODE_VERSION=24
             POLARS_PACKAGE=${{ matrix.polars_package }}
           provenance: false
           cache-from: type=gha,scope=dev-${{ matrix.variant }}

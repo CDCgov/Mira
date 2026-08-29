@@ -36,8 +36,8 @@ services:
       - mira
     privileged: true
     ports:
-      - 5175:5175
-      - 8080:8080
+      - 5176:5175
+      - 8081:8080
     restart: always
     environment:
       # Force file polling so live edits under the bind mounts trigger reloads
