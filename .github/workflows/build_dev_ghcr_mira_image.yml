@@ -52,7 +52,8 @@ jobs:
         env:
           VARIANT: ${{ matrix.variant }}
         run: |
-          BASE="${{ env.REGISTRY }}/${GITHUB_REPOSITORY,,}"
+          # Publish into the existing mira-dev package (already configured on GHCR).
+          BASE="${{ env.REGISTRY }}/${GITHUB_REPOSITORY,,}-dev"
           {
             echo "tags<<EOF"
             echo "${BASE}:dev-${VARIANT}"
