@@ -368,7 +368,7 @@ async def get_runs():
 async def get_stats_summary():
     """
     Return real counts for the home dashboard: sequences submitted to NCBI
-    (GenBank + SRA) and to GISAID, derived from assigned accessions in the
+    (GenBank + SRA), derived from assigned accessions in the
     submission-status tables.
     """
     def _count_assigned(table: str, accession_col: str) -> int:
@@ -385,10 +385,8 @@ async def get_stats_summary():
     try:
         genbank = await asyncio.to_thread(_count_assigned, "gb_submission_status", "genbank_accession")
         sra = await asyncio.to_thread(_count_assigned, "sra_submission_status", "sra_accession")
-        gisaid = await asyncio.to_thread(_count_assigned, "gs_submission_status", "gisaid_accession_epi_isl_id")
         return {
             "ncbi_sequences": genbank + sra,
-            "gisaid_sequences": gisaid,
         }
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))

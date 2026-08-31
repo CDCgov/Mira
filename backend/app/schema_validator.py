@@ -462,7 +462,7 @@ upload_fastq_files_pa_schema = pa.DataFrameSchema(
 # ---------------------------------------------------------------------------
 # GLOBAL VARIABLES FOR SEQSENDER
 # ---------------------------------------------------------------------------
-database_targets = ["BioSample", "SRA", "GenBank", "GISAID"]
+database_targets = ["BioSample", "SRA", "GenBank"]
 
 submission_status = [
     'SUBMITTED', 'CREATED', 'QUEUED', 'PROCESSING',

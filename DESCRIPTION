@@ -17,7 +17,7 @@ Description: MIRA is an interactive dashboard created using Dash, a python frame
   written on the top of Flask, Plotly.js and React.js. The Dash dashboard 
   allows users to interactively create a metadata and config file for Influenza
   , SARS-COV-2 and RSV Assembly. Subsequently, it generates files necessary 
-  to upload via FTP to NCBI’s databases Genbank, BioSample, and SRA, as well as, GISAID.
+  to upload via FTP to NCBI’s databases Genbank, BioSample, and SRA.
 RoxygenNote: 7.2.3
 License: GPL-3 + file LICENSE
 URL: https://github.com/CDCgov/MIRA

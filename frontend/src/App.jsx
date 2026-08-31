@@ -251,13 +251,12 @@ const TABS = [
 const STATS = [
   { label: "Sequencing Runs",          value: "…",  hover: "Click here to see past runs",  icon: Cpu,        color: "text-teal-600"     },
   { label: "Sequences to NCBI",        value: "…", sub: "GenBank + SRA combined",  icon: Cloud,   color: "text-purple-500"     },
-  { label: "Sequences to GISAID",      value: "…", sub: "EpiFlu + EpiCoV",         icon: Cloud,   color: "text-purple-500" },
 ];
 
 const FEATURES = [
   { icon: Cpu,          title: "IRMA Assembly",     desc: "Iterative refinement meta-assembler for influenza, SARS-CoV-2 and RSV consensus genome assembly from FASTQ reads." },
   { icon: ShieldCheck,  title: "QC & Clade Assignment", desc: "Automated quality control metrics per segment and Nextclade-powered clade/lineage assignment for all supported pathogens." },
-  { icon: Send,         title: "SeqSender",          desc: "One-click submission pipeline to NCBI BioSample, SRA, GenBank, and GISAID with configurable metadata and validation." },
+  { icon: Send,         title: "SeqSender",          desc: "One-click submission pipeline to NCBI BioSample, SRA, and GenBank with configurable metadata and validation." },
   { icon: Network,      title: "Nextclade Integration", desc: "Build pre-configured Nextclade Web URLs to visualize clade assignments, mutations, and phylogenetic placement." },
 ];
 
@@ -373,7 +372,6 @@ function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, u
 function HomeTab({ onNewRun, onLoadRun }) {
   const [runCount, setRunCount] = useState(null);
   const [ncbiCount, setNcbiCount] = useState(null);     // sequences submitted to NCBI (GenBank + SRA)
-  const [gisaidCount, setGisaidCount] = useState(null); // sequences submitted to GISAID
   const [segmentsTrend, setSegmentsTrend] = useState(null); // null = loading, [] = no data
 
   useEffect(() => {
@@ -384,10 +382,9 @@ function HomeTab({ onNewRun, onLoadRun }) {
         const data = res.ok ? await res.json() : null;
         if (!cancelled) {
           setNcbiCount(Number.isFinite(data?.ncbi_sequences) ? data.ncbi_sequences : 0);
-          setGisaidCount(Number.isFinite(data?.gisaid_sequences) ? data.gisaid_sequences : 0);
         }
       } catch {
-        if (!cancelled) { setNcbiCount(0); setGisaidCount(0); }
+        if (!cancelled) { setNcbiCount(0); }
       }
     })();
     return () => { cancelled = true; };
@@ -494,7 +491,6 @@ function HomeTab({ onNewRun, onLoadRun }) {
             const displayValue =
               label === "Sequencing Runs"     ? (runCount === null ? "…" : runCount.toLocaleString()) :
               label === "Sequences to NCBI"   ? (ncbiCount === null ? "…" : ncbiCount.toLocaleString()) :
-              label === "Sequences to GISAID" ? (gisaidCount === null ? "…" : gisaidCount.toLocaleString()) :
               value;
             const isRuns = label === "Sequencing Runs";
             const cardClass = cn(
@@ -563,7 +559,7 @@ const ASSEMBLY_STEPS = [
   { id: "progress", title: "Step 2: Processing",  subtitle: "Monitor assembly progress and stage status",                      icon: RefreshCw },
   { id: "results",  title: "Step 3: Results",     subtitle: "Assembly statistics, QC decisions, and coverage plots",           icon: BarChart3 },
   { id: "export",   title: "Step 4: Export",      subtitle: "Download FASTA outputs from the assembly run",                    icon: Download },
-  { id: "seqsender", title: "Step 5: SeqSender",  subtitle: "Submit assembled sequences to NCBI & GISAID databases",           icon: Send },
+  { id: "seqsender", title: "Step 5: SeqSender",  subtitle: "Submit assembled sequences to NCBI databases",           icon: Send },
 ];
 
 function StepHeader({ icon: Icon, title, subtitle, open }) {
@@ -5190,18 +5186,16 @@ const DB_LIST = [
   { key: "biosample", label: "BioSample", url: "https://www.ncbi.nlm.nih.gov/biosample/"},
   { key: "sra",       label: "SRA", url: "https://www.ncbi.nlm.nih.gov/sra/ "},
   { key: "genbank",   label: "GenBank", url: "https://www.ncbi.nlm.nih.gov/genbank/"},
-  { key: "gisaid",    label: "GISAID", url: "https://www.gisaid.org/"},
 ];
 
 // ── SeqSender panel — rendered as Step 5 inside the Mira accordion ──
 function SeqSenderPanel() {
-  const [dbs, setDbs]                     = useState({ biosample: true, sra: true, genbank: true, gisaid: true });
+  const [dbs, setDbs]                     = useState({ biosample: true, sra: true, genbank: true });
   const [organism, setOrganism]           = useState("");
   const [subName, setSubName]             = useState("");
   const [configFile, setConfigFile]       = useState("");
   const [metaFile, setMetaFile]           = useState("");
   const [fastaFile, setFastaFile]         = useState("");
-  const [gisaidCliFile, setGisaidCliFile] = useState("");
   const [gffFile, setGffFile]             = useState("");
   const [table2asn, setTable2asn]         = useState(false);
   const [testMode, setTestMode]           = useState(false);
@@ -5297,7 +5291,6 @@ function SeqSenderPanel() {
                       { label: "Config File",    required: true,  val: configFile,    set: setConfigFile,     accept: ".yaml,.yml,.json",     ph: "config.yaml" },
                       { label: "Metadata File",  required: true,  val: metaFile,      set: setMetaFile,       accept: ".csv,.tsv,.xlsx",      ph: "metadata.csv" },
                       { label: "FASTA Files",    required: true,  val: fastaFile,     set: setFastaFile,      accept: ".fasta,.fa,.fna",      ph: "sequences.fasta" },
-                      { label: "GISAID CLI",     required: true,  val: gisaidCliFile, set: setGisaidCliFile,  accept: "binary",               ph: "e.g. fluCLI" },
                       { label: "GFF File",       required: false, val: gffFile,       set: setGffFile,        accept: ".gff,.gff3",           ph: "annotation.gff (optional)" },
                     ].map(({ label, required, val, set, accept, ph }) => (
                       <div key={label}>
@@ -5359,7 +5352,6 @@ function SeqSenderPanel() {
                           { key: "biosample", label: "BioSample", accessionLabel: "BioSample Accession",  placeholder: "e.g. SAMN00000000"    },
                           { key: "sra",       label: "SRA",       accessionLabel: "SRA Accession",        placeholder: "e.g. SRR00000000"    },
                           { key: "genbank",   label: "GenBank",   accessionLabel: "GenBank Accession",    placeholder: "e.g. MN000000"       },
-                          { key: "gisaid",    label: "GISAID",    accessionLabel: "EPI ISL Accession",    placeholder: "e.g. EPI_ISL_000000" },
                         ]
                           .filter(({ key }) => dbs[key])
                           .map(({ key, label, accessionLabel, placeholder }) => (
@@ -5479,7 +5471,6 @@ function ResourcesTab() {
           <div className="mt-1 pt-2 border-t border-border">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Databases</p>
             <ResourceLink href="https://www.ncbi.nlm.nih.gov/sra">NCBI SRA</ResourceLink>
-            <ResourceLink href="https://www.gisaid.org">GISAID</ResourceLink>
             <ResourceLink href="https://clades.nextstrain.org">Nextclade Web</ResourceLink>
           </div>
         </ResourceCard>
