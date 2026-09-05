@@ -41,6 +41,9 @@ _This documentation assumes you have pulled the MIRA docker image into your Dock
 
  ![](images/mira_dd_docker_rolldown.png)
 
+* Mac users with Podman Desktop, [open Podman Desktop](images/podman-start-container.png), click on "Containers" on the left panel. Click the three dots under "Actions" in the row with MIRA and click "Open Browser".
+
+
 ### Select run, data type, and enter sample information
 
 * Click the `REFRESH RUN LISTING` button and select your run from  the dropdown box.

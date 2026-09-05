@@ -1,13 +1,12 @@
-version: "3.9"
 
 x-spyne-image:
   &spyne-image
-  spyne_image: cdcgov/spyne:v2.0.0
+  spyne_image: cdcgov/spyne:latest
 
 x-data-volume:
   &data-volume
   type: bind
-  source: ~/FLU_SC2_SEQUENCING
+  source: /home/snu3/Github/FLU_SC2_SEQUENCING
   target: /data
 
 services:
@@ -24,3 +23,4 @@ services:
       - 8020:8050
     volumes:
       - *data-volume
+    command: tail -f /dev/null

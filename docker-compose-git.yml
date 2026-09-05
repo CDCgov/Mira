@@ -1,4 +1,3 @@
-version: "3.9"
  
 x-spyne-git-repo:
   &spyne-git-repo
@@ -8,21 +7,29 @@ x-mira-git-repo:
   &mira-git-repo
   https://github.com/CDCgov/MIRA.git#prod
  
+x-base-image:
+  &base-image
+  base_image: python:3.10-slim-bookworm
+
+x-python-version:
+  &python-version
+  python_version: python3.10
+
 x-irma-image:
   &irma-image
-  cdcgov/irma:v1.2.0
- 
+  irma_image: cdcgov/irma:v1.2.1
+
 x-dais-image:
   &dais-image
-  cdcgov/dais-ribosome:v1.5.4
- 
+  dais_image: cdcgov/dais-ribosome:v1.5.5
+
 x-spyne-image:
   &spyne-image
-  spyne:v2.0.0  
+  spyne:latest  
  
 x-mira-image:
   &mira-image
-  mira:v2.0.0    
+  mira:latest   
  
 x-data-volume:
   &data-volume
@@ -38,8 +45,7 @@ services:
       context: *spyne-git-repo
       dockerfile: Dockerfile
       args:
-        irma_image: *irma-image
-        dais_image: *dais-image
+        << : [*base-image, *python-version, *irma-image, *dais-image]
     restart: always
     networks:
       - backend
@@ -65,6 +71,7 @@ services:
       - 8020:8050
     volumes:
       - *data-volume
+    command: tail -f /dev/null
  
 networks:
   backend:

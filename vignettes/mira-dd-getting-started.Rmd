@@ -5,7 +5,9 @@ Docker allows you to run software inside an isolated "container image" on your c
 
 - [Windows](https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe?utm_source=docker&utm_medium=webreferral&utm_campaign=dd-smartbutton&utm_location=header)
 - [Mac-Intel](https://desktop.docker.com/mac/main/amd64/Docker.dmg?utm_source=docker&utm_medium=webreferral&utm_campaign=dd-smartbutton&utm_location=module)
-- [Mac-AppleChip](https://desktop.docker.com/mac/main/arm64/Docker.dmg?utm_source=docker&utm_medium=webreferral&utm_campaign=dd-smartbutton&utm_location=module)
+- [~~Mac-AppleChip~~](https://desktop.docker.com/mac/main/arm64/Docker.dmg?utm_source=docker&utm_medium=webreferral&utm_campaign=dd-smartbutton&utm_location=module)
+  - **_We recommend using podman-desktop instead of docker desktop for newer Macs with M-series chips_**
+    - [Mac-AppleChip Podman Desktop instructions](mac-podman-setup.html)
 - [Linux](https://docs.docker.com/desktop/linux/install/)
 
 

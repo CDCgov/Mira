@@ -1,0 +1,126 @@
+Subject: e(draft) MIRA v2.1.0 Released!
+Content-type: text/html
+Bcc: "Ben gmail" <b.rambomartin@gmail.com>, "Ben" <nbx0@cdc.gov>, "Kristine" <qgx6@cdc.gov>
+From: idseqsupport@cdc.gov
+
+  <html>
+
+  <head>
+    <meta charset="UTF-8">
+    <title>MIRA v2.1.0 Released!</title>
+    <style>
+      body {
+        font-family: "Segoe UI", "Roboto", "Helvetica Neue", Arial, "Liberation Sans", sans-serif;
+        color: #222;
+        background: #fff;
+      }
+
+      .container {
+        max-width: 700px;
+        margin: 0 auto;
+        background: #f1f1f1;
+        padding: 32px 40px;
+        border-radius: 10px;
+        border: 1px solid #e0e0e0;
+      }
+
+      h1 {
+        color: #005ea2;
+        font-size: 1.6em;
+        margin-bottom: 0.5em;
+      }
+
+      ul,
+      ol {
+        margin: 0 0 1em 1.5em;
+      }
+
+      li {
+        margin-bottom: 0.6em;
+      }
+
+      .signature {
+        margin-top: 2em;
+      }
+
+      .footer {
+        color: #888;
+        font-size: 0.95em;
+        margin-top: 2em;
+      }
+
+      .section-title {
+        font-weight: bold;
+        font-size: large;
+        margin-top: 1.5em;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="container">
+      <img src="https://cdcgov.github.io/MIRA/logo.png" alt="MIRA Logo" style="width:200px;height:auto;">
+      <p>Dear MIRA users,</p>
+      <p>Due to your ongoing sequencing efforts, GISAID sequences assembled with MIRA now total over <b>14,000 samples
+          from 47 countries</b>!</p>
+      <h1>MIRA v2.1.0</h1>
+      <p>We are delighted to announce the release of <b>MIRA v2.1.0</b>! Please be sure to upgrade your installation
+        following these <a href="https://cdcgov.github.io/MIRA/articles/upgrading-mira-dd.html" target="_blank">these
+          instructions our website.</a> For Mac users who have experienced problems with Docker, we now
+        recommend using Podman and have <a href="https://cdcgov.github.io/MIRA/articles/mac-podman-setup.html"
+          target="_blank">
+          instructions here.</a></p>
+      <div class="section-title">Notable additions to this version include:</div>
+      <ul>
+        <li><b>Influenza</b>
+          <ul>
+            <li>Amino acid mutations called against <a
+                href="https://www.who.int/publications/m/item/recommended-composition-of-influenza-virus-vaccines-for-use-in-the-2025-2026-nh-influenza-season"
+                target="_blank">contemporary seasonal vaccine recommendations</a> and <a
+                href="https://aspr.hhs.gov/legal/Pandemic-Influenza-Strategy/Pages/Objective-1.aspx"
+                target="_blank">zoonotic CVVs.</a></li>
+          </ul>
+        </li>
+        <li><b>SARS-CoV-2</b>
+          <ul>
+            <li>SC2-Spike Illumina module</li>
+            <li>Artic V5.4.2 primers for SARS-CoV-2 whole genome Illumina sequencing</li>
+          </ul>
+        </li>
+        <li><b>RSV</b>
+          <ul>
+            <li>Artic V1.0 and updated VIDRL primers</li>
+          </ul>
+        </li>
+      </ul>
+      <div class="section-title">GISAID Submissions</div>
+      <p>GISAID Influenza submissions now allow you to include <b>"Assembly Method"</b> in the sample metadata, please
+        be
+        sure to denote <b>MIRA</b> here.</p>
+      <img
+src="https://github.com/CDCgov/MIRA/blob/v2.1.0/images/gisaid_assembly_method_mira.png?raw=true"        alt="Select MIRA as the assembler when submitting to GISAID" style="width:400px;height:auto;">
+      <p>If you are submitting MIRA sequences to GISAID and have not been receiving monthly clade and mutation reports
+        from us, please reply to this email.</p>
+      <div class="section-title">HPC Support</div>
+      <p>If your laboratory utilizes a High-Performance Computing Cluster (HPC), we can assist
+        your bioinformatics personnel with setting up <b>MIRA-NF</b>, which leverages a Nextflow framework to run MIRA
+        without the GUI on a computing cluster.</p>
+        <hr>
+      <p>CDC's Influenza Division remains committed to providing technical support to the laboratories that we have
+        trained. Thank you for your ongoing collaboration and we are eager to assist with any future questions you may
+        have.</p>
+        <hr>
+      <div class="signature">
+        Most sincerely,<br><br>
+        Ben, Kristine, Reina, and Mandy<br>
+        <span>Bioinformatics Infrastructure Activity<br>
+          Influenza Division<br>
+          United States CDC</span>
+        <br>
+        <img src="https://www.cdc.gov/TemplatePackage/5.0/img/logo/cdc-logo-tag-right.svg" alt="CDC Logo"
+          style="width:300px;height:auto;">
+      </div>
+    </div>
+  </body>
+
+  </html>

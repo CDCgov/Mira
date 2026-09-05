@@ -460,6 +460,8 @@ def run_snake_script_onClick(
             docker_cmd += f"-p {Amplicon_Library_SC2} "
         elif  "rsv-illumina" in experiment_type.lower():
             docker_cmd += f"-p {Amplicon_Library_RSV} "
+        elif "sc2-spike-only-illumina" in experiment_type.lower():
+            docker_cmd += f"-p s_gene "
         docker_cmd += f"-c CLEANUP-FOOTPRINT"
         print(f'launching docker_cmd == "{docker_cmd}"\n\n')
         subprocess.Popen(docker_cmd.split(), close_fds=True)
@@ -1055,12 +1057,13 @@ content = html.Div(
             dcc.Dropdown(
                 [
                     {"label": "Flu-ONT", "value": "Flu-ONT"},
-                    {"label": "SC2-Spike-Only-ONT", "value": "SC2-Spike-Only-ONT"},
                     {"label": "Flu-Illumina", "value": "Flu-Illumina"},
+                    {"label": "SC2-Spike-Only-ONT", "value": "SC2-Spike-Only-ONT"},
+                    {"label": "SC2-Spike-Only-Illumina", "value":"SC2-Spike-Only-Illumina"},
                     {"label": "SC2-Whole-Genome-ONT", "value":"SC2-Whole-Genome-ONT"},
                     {"label": "SC2-Whole-Genome-Illumina", "value": "SC2-Whole-Genome-Illumina"},
                     {"label": "RSV-Illumina", "value": "RSV-Illumina"},
-                    {"label": "RSV-ONT", "value": "RSV-ONT",},
+                    {"label": "RSV-ONT", "value": "RSV-ONT"},
                 ],
                 id="experiment_type",
                 placeholder="What kind of data is this?",
@@ -1075,6 +1078,7 @@ content = html.Div(
                     {"label": "Artic V4", "value": "articv4"},
                     {"label": "Artic V4.1", "value": "articv4.1"},
                     {"label": "Artic V5.3.2", "value": "articv5.3.2"},
+                    {"label": "Artic V5.4.2", "value": "articv5.4.2"},
                     {"label": "Qiagen QIAseq", "value": "qiagen"},
                     {"label": "xGen™ SARS-CoV-2 Amplicon Panel", "value": "swift"},
                     {
@@ -1094,8 +1098,9 @@ content = html.Div(
             dcc.Dropdown(
                 [
                     {"label": "RSV CDC 8 amplicon 230901", "value": "RSV_CDC_8amplicon_230901"},
-                    {"label": "Dong et al. 230312", "value": "dong_et_al"},
+                    {"label": "WHO-CC Australia | 2024", "value": "australia_cc_2024"},
                     {"label": "Davina-Nunez et al. - WG pools", "value": "davina_nunez_wgs"},
+                    {"label": "Artic V1", "value":"artic_v1"}
                 ],  # add handling here for no primers used
                 id="Amplicon_Library_RSV",
                 placeholder="For Illumina RSV, which primer schema was used?",
@@ -1303,6 +1308,13 @@ content = html.Div(
     + [html.P( ["Non-amino-acid variants ", dcc.Link(
                     "key",
                     href="https://cdcgov.github.io/MIRA/articles/running-mira.html#special-translated-characters",
+                    target="_blank",
+                ), ], className="display-8")
+                ]
+                + [html.Br()]
+    + [html.P( ["Influenza References and ", dcc.Link(
+                    "Candidate Vaccine Viruses (CVVs)",
+                    href="https://cdcgov.github.io/MIRA/articles/sequence-qc.html#amino-acid-variant-references",
                     target="_blank",
                 ), ], className="display-8")
                 ]
