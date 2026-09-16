@@ -9,3 +9,5 @@ frontend/dist/
 
 # Git
 data/nf_status
+Mira.code-workspace
+.DS_Store

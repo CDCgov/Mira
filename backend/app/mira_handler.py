@@ -675,6 +675,28 @@ def validate_samplesheet_and_fastqs_in_storage(
             "message": [f"All FASTQ files exist in the storage location for this run."]
         }
 
+# List FASTQ files already present in a run's storage location (used to skip re-uploading on re-run)
+def list_fastq_files_in_storage(
+    run_name: str,
+    experiment_type: str,
+) -> dict[str, Any]:
+    pathogen = experiment_type.split("-")[0]
+    instrument = experiment_type.split("-")[-1]
+    run_dir = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name)
+
+    # ONT stores per-barcode under fastq_pass/<sample_id>/; Illumina stores flat under fastqs/.
+    if "ONT" in instrument.upper():
+        search_glob = os.path.join(run_dir, "fastq_pass", "*", "*")
+    else:
+        search_glob = os.path.join(run_dir, "fastqs", "*")
+
+    present = sorted({
+        os.path.basename(p)
+        for p in glob.glob(search_glob)
+        if os.path.isfile(p) and re.search(r"\.(fastq|fq)(\.gz)?$", p.lower())
+    })
+    return {"present_fastq_files": present, "count": len(present)}
+
 # Validate custom primers, custom irma config, and custom nextclade config in storage if provided
 def validate_custom_configs_in_storage(
     run_name: str,

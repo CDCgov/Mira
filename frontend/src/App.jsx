@@ -142,6 +142,7 @@ const API = {
   deleteRun:        `${API_BASE}/delete/run`,
   copyRun:          `${API_BASE}/copy/run`,
   uploadFastqs:     `${API_BASE}/upload/fastqs`,
+  listFastqs:       `${API_BASE}/list/fastqs`,
   uploadCustomPrimerConfig:     `${API_BASE}/upload/custom_primer_config`,
   downloadCustomPrimerConfig:   `${API_BASE}/download/custom_primer_config`,
   validateRun:                  `${API_BASE}/validate/run`,
@@ -1199,6 +1200,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   const [submitting, setSubmitting]                 = useState(false);
   const [submitError, setSubmitError]               = useState(null);
   const [submitSuccess, setSubmitSuccess]           = useState(null);
+  const [submitStatus, setSubmitStatus]             = useState(null);
   const [submitProcessId, setSubmitProcessId]       = useState(null);
   const [loadRunModal, setLoadRunModal]             = useState(false);
   const [loadRunLoading, setLoadRunLoading]         = useState(false);
@@ -1244,6 +1246,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
   const [uploadOntError, setUploadOntError]           = useState(null);   // file-naming validation errors for ONT uploads
   const [uploadIlluminaFastq, setUploadIlluminaFastq] = useState([]); // list of sanitized Illumina fastq filenames uploaded this session
   const [uploadIlluminaError, setUploadIlluminaError] = useState(null); // file-naming validation errors for Illumina uploads
+  const [uploadWarning, setUploadWarning]             = useState(null); // non-fatal upload warnings (e.g. FASTQs that were skipped but did not block loading)
+  const [uploadCopied, setUploadCopied]               = useState(false); // brief "copied" feedback for the upload error/warning file lists
   const [showDAG, setShowDAG]                         = useState(false);  // whether to show the DAG view
   const [pipelineDAG, setPipelineDAG]                 = useState(null);     // pipeline DAG from /pipeline/status
   const [pipelinePolling, setPipelinePolling]         = useState(false);    // whether polling is active
@@ -1614,6 +1618,17 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     }
   };
 
+  // Copy a list of filenames (one per line) from an upload error/warning box.
+  const copyUploadFileList = async (list) => {
+    try {
+      await navigator.clipboard.writeText((list ?? []).join("\n"));
+      setUploadCopied(true);
+      setTimeout(() => setUploadCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable — ignore */
+    }
+  };
+
   // ── Task log modal: live feed ──
   // While the modal is open on a task that hasn't exited yet, keep re-fetching its
   // log so the feed stays current. Depends only on primitives so data updates don't
@@ -1826,6 +1841,9 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     // Determine if the experiment type is ONT or Illumina
     const isOnt = experimentType.toLowerCase().endsWith("ont");
 
+    // Clear any warnings from a previous upload before recomputing.
+    setUploadWarning(null);
+
     // Sanitize: replace spaces with underscores
     const sanitized = files.map(f => f.name.replace(/\s+/g, "_"));
 
@@ -1862,30 +1880,46 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
 
     } else {
 
-      // Validate: Illumina filenames must contain _R1 or _R2
-      const invalidFiles = sanitized.filter(fname => {
+      // An _R1/_R2 read tag is a complete token when it is not immediately
+      // followed by another letter/digit — so trailing tags are allowed, e.g.
+      // SAMPLE_R1.filtered.fastq.gz or SAMPLE_R1_001.fastq.gz (but not SAMPLE_R12).
+      const R1_RE = /_R1(?![A-Za-z0-9])/i;
+      const R2_RE = /_R2(?![A-Za-z0-9])/i;
+
+      // Split uploads into usable (carry an _R1/_R2 tag) and unused. Unused files
+      // do not block loading — they are surfaced as a non-fatal warning instead.
+      const usableIdx = [];
+      const unusedFiles = [];
+      sanitized.forEach((fname, i) => {
         const base = fname.replace(/\.(fastq|fq)(\.gz)?$/i, "");
-        return !/_R1(?:_|$)/i.test(base) && !/_R2(?:_|$)/i.test(base);
+        if (R1_RE.test(base) || R2_RE.test(base)) usableIdx.push(i);
+        else unusedFiles.push(fname);
       });
-      if (invalidFiles.length > 0) {
-        setUploadIlluminaError({ items: [`For Illumina run, the FASTQ files must contain "_R1" or "_R2" in their filenames.`], missing: [...invalidFiles] });
-        return;
-      } else {
-        setUploadIlluminaError(null);
-      }
+
+      setUploadIlluminaError(null);
+      setUploadWarning(unusedFiles.length > 0
+        ? { items: [`These FASTQ files have no "_R1"/"_R2" read tag and were not added to the sample sheet:`], missing: [...unusedFiles] }
+        : null);
+
+      // Nothing usable — leave the sample sheet untouched.
+      if (usableIdx.length === 0) return;
+
+      const usableFiles = usableIdx.map(i => files[i]);
+      const usableSanitized = usableIdx.map(i => sanitized[i]);
 
       // Store File objects keyed by sanitized filename
       const fileMap = {};
-      files.forEach((f, i) => { fileMap[sanitized[i]] = f; });
+      usableFiles.forEach((f, i) => { fileMap[usableSanitized[i]] = f; });
       setUploadedIlluminaFileObjects(prev => ({ ...prev, ...fileMap }));
 
       // Pair R1 / R2 files by sample_id prefix
-      // Matches _R1_ (mid-filename) or _R1 at end, e.g. SAMPLE_R1_001 or SAMPLE_R1
+      // Matches _R1_ (mid-filename), _R1 at end, or _R1 before a trailing tag,
+      // e.g. SAMPLE_R1_001, SAMPLE_R1, or SAMPLE_R1.filtered
       const grouped = {};
-      sanitized.forEach(fname => {
+      usableSanitized.forEach(fname => {
         const base = fname.replace(/\.(fastq|fq)(\.gz)?$/i, "");
-        const r1 = base.match(/^(.+?)_R1(?:_|$)/i);
-        const r2 = base.match(/^(.+?)_R2(?:_|$)/i);
+        const r1 = base.match(/^(.+?)_R1(?![A-Za-z0-9])/i);
+        const r2 = base.match(/^(.+?)_R2(?![A-Za-z0-9])/i);
         let sampleId, read;
         if (r1) { sampleId = r1[1]; read = "R1"; }
         else if (r2) { sampleId = r2[1]; read = "R2"; }
@@ -1938,7 +1972,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       });
 
       // Accumulate uploaded Illumina fastq filenames
-      setUploadIlluminaFastq(prev => [...new Set([...prev, ...sanitized])]);
+      setUploadIlluminaFastq(prev => [...new Set([...prev, ...usableSanitized])]);
 
     }
   }, [experimentType, ontSampleRows, illuminaSampleRows, processOntFiles]);
@@ -2137,6 +2171,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     setFastqDragOver(false);
     setUploadOntError(null);
     setUploadIlluminaError(null);
+    setUploadWarning(null);
     setUploadOntFastq([]);
     setUploadIlluminaFastq([]);
     setPipelineDAG(null);
@@ -2222,6 +2257,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
     setUploadIlluminaFastq([]);
     setUploadOntError(null);
     setUploadIlluminaError(null);
+    setUploadWarning(null);
     setSampleSearch("");
     setSortConfig({ key: "sample_id", dir: "asc" });
     setConfirmRemoveIdx(null);
@@ -2735,6 +2771,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
 
       // Check if the run name already exists in the database (for new runs only)
       if (isNewRun === true && assembled === false) {
+        setSubmitStatus("Checking run name availability\u2026");
         const checkRes = await fetch(`${API.retrieveRun}?run_name=${encodeURIComponent(runName)}&experiment_type=${encodeURIComponent(experimentType)}`);
         const checkData = await checkRes.json();
         if (!checkRes.ok) throw new Error(checkData.detail || "Failed to check run name");
@@ -2747,6 +2784,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       }
 
       // ── Step 1: register the run in the database ──
+      setSubmitStatus("Registering run in the database\u2026");
       const res = await fetch(API.createRun, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2759,7 +2797,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       setIsNewRun(false);
 
       // ── Step 2.1: upload FASTQ files the user provided via the file picker ──
-      const filesToUpload = samplesheet.flatMap(r => {
+      const pickedFiles = samplesheet.flatMap(r => {
         if (isOnt) {
           return (Array.isArray(r.fastq) ? r.fastq : [r.fastq])
             .map(fq => fq && uploadedOntFileObjects[fq])
@@ -2771,20 +2809,63 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
           ].filter(Boolean);
         }
       });
+
+      // Skip re-uploading FASTQs that are already stored for this run (e.g. on a re-run).
+      let filesToUpload = pickedFiles;
+      if (pickedFiles.length > 0) {
+        try {
+          const presentRes = await fetch(`${API.listFastqs}?run_name=${encodeURIComponent(runName)}&experiment_type=${encodeURIComponent(experimentType)}`);
+          if (presentRes.ok) {
+            const presentData = await presentRes.json();
+            const present = new Set(presentData.present_fastq_files ?? []);
+            filesToUpload = pickedFiles.filter(f => !(present.has(f.name) || present.has(f.name.replace(/ /g, "_"))));
+          }
+        } catch { /* if the check fails, fall back to uploading everything */ }
+      }
       if (filesToUpload.length > 0) {
-        const form = new FormData();
-        form.append("run_name", runName);
-        form.append("experiment_type", experimentType);
-        filesToUpload.forEach(f => form.append("fastq_files", f));
-        const upRes = await fetch(API.uploadFastqs, { method: "POST", body: form });
-        if (!upRes.ok) {
-          const upErr = await upRes.json().catch(() => ({}));
-          throw new Error(upErr.detail || `File upload failed (HTTP ${upRes.status})`);
+        const totalFiles = filesToUpload.length;
+        // Upload in batches so each request finishes quickly (a single giant POST
+        // exceeds the dev-server's request timeout and 408s), and so we can show a counter.
+        const UPLOAD_BATCH_SIZE = 20;
+        let uploadedFiles = 0;
+        for (let start = 0; start < totalFiles; start += UPLOAD_BATCH_SIZE) {
+          const batch = filesToUpload.slice(start, start + UPLOAD_BATCH_SIZE);
+          const form = new FormData();
+          form.append("run_name", runName);
+          form.append("experiment_type", experimentType);
+          batch.forEach(f => form.append("fastq_files", f));
+
+          await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open("POST", API.uploadFastqs);
+            xhr.upload.onprogress = (e) => {
+              const batchFraction = e.lengthComputable ? e.loaded / e.total : 0;
+              const done = Math.min(totalFiles, Math.round(uploadedFiles + batchFraction * batch.length));
+              const overallPct = Math.round((done / totalFiles) * 100);
+              setSubmitStatus(`Uploading FASTQ files\u2026 ${done}/${totalFiles} (${overallPct}%)`);
+            };
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                resolve();
+              } else {
+                let detail;
+                try { detail = JSON.parse(xhr.responseText).detail; } catch { /* non-JSON error body */ }
+                reject(new Error(detail || `File upload failed (HTTP ${xhr.status})`));
+              }
+            };
+            xhr.onerror = () => reject(new Error("File upload failed (network error)"));
+            xhr.ontimeout = () => reject(new Error("File upload timed out"));
+            xhr.send(form);
+          });
+
+          uploadedFiles += batch.length;
+          setSubmitStatus(`Uploading FASTQ files\u2026 ${uploadedFiles}/${totalFiles} (${Math.round((uploadedFiles / totalFiles) * 100)}%)`);
         }
       }
 
       // ── Step 2.2: Upload the custom primer file if a new file was selected ──
       if (useCustomPrimers && customPrimersFile) {
+        setSubmitStatus("Uploading custom primer config\u2026");
         const primerForm = new FormData();
         primerForm.append("run_name", runName);
         primerForm.append("experiment_type", experimentType);
@@ -2795,6 +2876,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       }
 
       // ── Step 3.1: Validate samplesheet and fastq files exist for each sample ──
+      setSubmitStatus("Validating samplesheet and FASTQ files\u2026");
       const valRes = await fetch(`${API.validateRun}?run_name=${encodeURIComponent(runName)}&experiment_type=${encodeURIComponent(experimentType)}`);
       const valData = await valRes.json();
       if (!valRes.ok) throw new Error(valData.detail || "Validation failed");
@@ -2806,6 +2888,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       }
 
       // ── Step 3.2: Validate custom primers file if provided ──
+      setSubmitStatus("Validating custom primer config\u2026");
       const customValRes = await fetch(`${API.validateCustomConfigs}?run_name=${encodeURIComponent(runName)}&experiment_type=${encodeURIComponent(experimentType)}`);
       const customValData = await customValRes.json();
       if (!customValRes.ok) throw new Error(customValData.detail || "Custom configuration validation failed");
@@ -2817,6 +2900,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
       }
 
       // ── Step 4: Run MIRA assembly ──
+      setSubmitStatus("Launching MIRA assembly pipeline\u2026");
       const miraRes = await fetch(`${API.runMIRA}?run_name=${encodeURIComponent(runName)}&experiment_type=${encodeURIComponent(experimentType)}`);
       const miraData = await miraRes.json();
       if (!miraRes.ok) throw new Error(miraData.detail || "run Mira assembly failed");
@@ -2865,6 +2949,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
         setAssembled(false);
         setCancelRun(false);
         setShowDAG(true);
+        setSubmitStatus(null);
         setPipelinePolling(true);
 
         // Remember this run so it keeps processing (and stays cancellable) across browser reloads
@@ -2872,12 +2957,14 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
 
       } else {
         // No pid to poll — nothing further will clear the "Processing..." state, so reset it now.
+        setSubmitStatus(null);
         setSubmitting(false);
       }
 
     } catch (err) {
       setSubmitError({ title: "Assembly Error", items: [err.message], missing: null });
       setSubmitSuccess(null);
+      setSubmitStatus(null);
       setSubmitting(false);
     }
 
@@ -3106,7 +3193,16 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
 
                     {(experimentType.toLowerCase().endsWith("ont") ? uploadOntError : uploadIlluminaError) && (
                       <div className="rounded-lg border bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-800 px-3 py-2 space-y-1 text-xs mb-2 max-h-[150px] overflow-y-auto">
-                        <p className="font-semibold text-destructive mb-1">Upload Error:</p>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <p className="font-semibold text-destructive">Upload Error:</p>
+                          <button
+                            onClick={() => copyUploadFileList((experimentType.toLowerCase().endsWith("ont") ? uploadOntError : uploadIlluminaError).missing)}
+                            className="flex items-center gap-1 px-2 py-0.5 rounded-md border border-red-300 dark:border-red-700 text-[11px] text-destructive hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors shrink-0"
+                            title="Copy the file list to the clipboard"
+                          >
+                            <ClipboardList size={11} /> {uploadCopied ? "Copied" : "Copy"}
+                          </button>
+                        </div>
                         {(experimentType.toLowerCase().endsWith("ont") ? uploadOntError.items : uploadIlluminaError.items).map((msg, i) => (
                           <div key={i} className="flex items-start gap-2">
                             <AlertCircle size={12} className="shrink-0 mt-0.5 text-destructive" />
@@ -3120,6 +3216,33 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                               <AlertCircle size={12} className="shrink-0 mt-0.5 text-destructive" />
                               <span className="text-destructive font-mono">{msg}</span>
                             </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {uploadWarning && (
+                      <div className="rounded-lg border bg-warning/10 border-warning/40 px-3 py-2 space-y-1 text-xs mb-2 max-h-[150px] overflow-y-auto">
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <p className="font-semibold text-warning">Skipped Files (not loaded):</p>
+                          <button
+                            onClick={() => copyUploadFileList(uploadWarning.missing)}
+                            className="flex items-center gap-1 px-2 py-0.5 rounded-md border border-warning/40 text-[11px] text-warning hover:bg-warning/20 transition-colors shrink-0"
+                            title="Copy the file list to the clipboard"
+                          >
+                            <ClipboardList size={11} /> {uploadCopied ? "Copied" : "Copy"}
+                          </button>
+                        </div>
+                        {uploadWarning.items.map((msg, i) => (
+                          <div key={i} className="flex items-start gap-2">
+                            <AlertCircle size={12} className="shrink-0 mt-0.5 text-warning" />
+                            <span className="text-warning font-mono">{msg}</span>
+                          </div>
+                        ))}
+                        {uploadWarning.missing.map((msg, i) => (
+                          <div key={i} className="flex items-start gap-2">
+                            <AlertCircle size={12} className="shrink-0 mt-0.5 text-warning" />
+                            <span className="text-warning font-mono">{msg}</span>
                           </div>
                         ))}
                       </div>
@@ -3680,6 +3803,11 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                         </button>
                       )}
                     </div>
+                    {submitting && submitStatus && (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 border border-border rounded-lg px-3 py-2">
+                        <RefreshCw size={13} className="shrink-0 animate-spin" /> {submitStatus}
+                      </div>
+                    )}
                   </StepPanel>
                 )}
 
@@ -3763,7 +3891,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                           samples.sort((a, b) => a.localeCompare(b));
                           const knownSet = new Set(samples);
 
-                          // Rotated -80deg labels: vertical extent ≈ (char width) × length × sin(80°).
+                          // Rotated -90deg labels: vertical extent ≈ (char width) × length.
                           // At text-xs mono that's ~7px/char; add padding so the longest name fits comfortably.
                           const maxSampleLen = samples.reduce((m, s) => Math.max(m, String(s).length), 0);
                           const headerHeightPx = Math.max(56, Math.round(maxSampleLen * 7) + 40);
@@ -3811,19 +3939,20 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                             if (t.hash && (!prevT || rank[bucket] >= rank[prevT.bucket])) cellTaskMap.set(key, { task: t, bucket });
                           });
                           return (
-                            <div className="rounded-xl border border-border overflow-hidden">
+                            <div className="rounded-xl border border-border overflow-hidden w-full max-w-full min-w-0">
                               <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
                                 <p className="text-xs font-bold text-foreground uppercase tracking-wider">Task Progress</p>
                               </div>
-                              <div className="overflow-x-auto">
+                              <div className="overflow-x-auto max-w-full">
                                 <table className="text-xs border-collapse">
                                   <thead>
                                     <tr>
-                                      <th className="sticky left-0 top-0 z-20 bg-muted px-3 py-2 text-left align-bottom font-semibold text-muted-foreground border-b border-r border-border whitespace-nowrap">Task \ Sample</th>
+                                      <th className="sticky left-0 top-0 z-20 bg-muted px-2 py-2 text-left align-bottom font-semibold text-muted-foreground border-b border-r border-border whitespace-nowrap">Task \ Sample</th>
                                       {samples.map(s => (
-                                        <th key={s} style={{ height: `${headerHeightPx}px` }} className="sticky top-0 z-10 bg-muted border-b border-border p-0 align-bottom">
-                                          <div className="flex h-full items-end justify-center px-1 pb-8">
-                                            <span className="origin-bottom rotate-[-80deg] whitespace-nowrap font-mono font-semibold text-foreground leading-none">{s}</span>
+                                        <th key={s} style={{ height: `${headerHeightPx}px`, width: "18px" }} className="sticky top-0 z-10 bg-muted border-b border-border p-0 align-bottom">
+                                          {/* absolute label so its text length can't widen the column */}
+                                          <div className="relative h-full w-[18px]">
+                                            <span className="absolute bottom-1 left-1/2 origin-bottom-left rotate-[-90deg] whitespace-nowrap font-mono font-semibold text-foreground leading-none">{s}</span>
                                           </div>
                                         </th>
                                       ))}
@@ -3832,7 +3961,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                                   <tbody>
                                     {taskNames.map(p => (
                                       <tr key={p} className="border-b border-border/50">
-                                        <td className="sticky left-0 z-10 bg-background px-3 py-1.5 font-mono text-foreground border-r border-border whitespace-nowrap">{p}</td>
+                                        <td className="sticky left-0 z-10 bg-background px-2 py-1 font-mono text-foreground border-r border-border whitespace-nowrap">{p}</td>
                                         {samples.map(s => {
                                           const bucket = cellMap.get(`${p}||${s}`) ?? rowLevelMap.get(p);
                                           const failedTask = bucket === "failed"
@@ -3843,7 +3972,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden }) {
                                           return (
                                             <td
                                               key={s}
-                                              className={cn("px-3 py-1.5 text-center align-middle", canHover && "cursor-pointer")}
+                                              style={{ width: "18px" }}
+                                              className={cn("px-0 py-1 text-center align-middle", canHover && "cursor-pointer")}
                                               onMouseEnter={canHover ? (e) => openTaskHover(e, hoverTask, p, s) : undefined}
                                               onMouseLeave={canHover ? closeTaskHover : undefined}
                                               onClick={canHover && bucket !== "failed" ? () => openTaskLog(hoverTask, p, s, "stdout") : undefined}

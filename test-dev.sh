@@ -83,7 +83,6 @@ die()  { printf '%s\n' "${c_red}!! $*${c_rst}" >&2; exit 1; }
 [[ -n "$OXIDE_DIR" ]] || die "mira-oxide repo not found next to MIRA (expected $MIRA_DIR/../mira-oxide)"
 [[ -n "$MNF_DIR"   ]] || die "Mira-nf repo not found next to MIRA (expected $MIRA_DIR/../Mira-nf)"
 [[ -f "$COMPOSE_FILE" ]] || die "compose file not found: $COMPOSE_FILE"
-[[ -d "$DATA_ROOT/MIRA" ]] || die "no MIRA data under $DATA_ROOT/MIRA"
 command -v docker >/dev/null 2>&1 || die "docker not found on PATH"
 
 # experiment_type from <Pathogen>/<Platform>; SC2 defaults to Whole-Genome.
@@ -112,7 +111,7 @@ while IFS= read -r ss; do
   RUN_DIRS+=("$(dirname "$ss")")
 done < <(find "$DATA_ROOT/MIRA" -mindepth 4 -maxdepth 4 -name samplesheet.csv 2>/dev/null | sort)
 
-[[ ${#RUN_DIRS[@]} -gt 0 ]] || die "no runs (…/MIRA/<Pathogen>/<Platform>/<run>/samplesheet.csv) found under $DATA_ROOT"
+[[ ${#RUN_DIRS[@]} -gt 0 ]] || warn "no runs (…/MIRA/<Pathogen>/<Platform>/<run>/samplesheet.csv) found under $DATA_ROOT — will build and bring up the dev stack, then skip the rerun loop"
 
 say "MIRA repo   : $MIRA_DIR"
 say "mira-oxide  : $OXIDE_DIR"
@@ -125,6 +124,10 @@ echo
 # --list: print planned commands and exit
 #############################################
 if [[ "$DO_LIST" == 1 ]]; then
+  if [[ ${#RUN_DIRS[@]} -eq 0 ]]; then
+    warn "no runs to list under $DATA_ROOT"
+    exit 0
+  fi
   for run_dir in "${RUN_DIRS[@]}"; do
     run_id="$(basename "$run_dir")"
     [[ "$run_id" == $RUN_FILTER ]] || continue
@@ -199,6 +202,9 @@ SUMMARY_LOG="$MIRA_DIR/nf_status/test-dev_${STAMP}.log"
 n_ok=0; n_fail=0; n_skip=0
 declare -a FAILED=()
 
+if [[ ${#RUN_DIRS[@]} -eq 0 ]]; then
+  warn "no runs to rerun — dev stack is up; add runs under $DATA_ROOT/MIRA/<Pathogen>/<Platform>/<run>/samplesheet.csv and re-run"
+else
 for run_dir in "${RUN_DIRS[@]}"; do
   run_id="$(basename "$run_dir")"
   [[ "$run_id" == $RUN_FILTER ]] || continue
@@ -244,6 +250,7 @@ for run_dir in "${RUN_DIRS[@]}"; do
   fi
   echo
 done
+fi
 
 #############################################
 # 4) Summary / teardown

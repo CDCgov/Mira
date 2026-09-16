@@ -85,6 +85,7 @@ from .mira_handler import (
     retrieve_passed_amended_consensus,
     retrieve_nextclade_aligned_fasta,
     validate_samplesheet_and_fastqs_in_storage,
+    list_fastq_files_in_storage,
     validate_custom_configs_in_storage,
 )
 
@@ -769,7 +770,24 @@ async def validate_run(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
-    
+
+# ---------- List FASTQ files already present in a run's storage (to skip re-uploading on re-run). ----------
+@app.get("/list/fastqs", response_model=Dict[str, Any], summary="List FASTQ files already present in a run's storage", tags=["MIRA Workflows"])
+async def list_fastqs(req: RunRequest = Depends()):
+    """
+    Return the filenames of FASTQ files already stored for a given sequencing run.
+    """
+    try:
+        return await asyncio.to_thread(
+            list_fastq_files_in_storage,
+            run_name = req.run_name,
+            experiment_type = req.experiment_type,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
 @app.get("/validate/custom_configs", response_model=Dict[str, Any], summary="Validate custom primers, custom IRMA config, and custom QC settings exist for a given run if provided", tags=["MIRA Workflows"])
 async def validate_custom_configs(req: RunRequest = Depends()):
     """
