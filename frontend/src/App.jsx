@@ -223,6 +223,59 @@ const API = {
   retrieveSeqSenderVersion:          `${API_BASE}/seqsender/version`,
 };
 
+let startupVersionsRequest;
+
+async function requestVersion(endpoint) {
+  try {
+    const response = await fetch(endpoint);
+    return {
+      ok: response.ok,
+      data: response.ok ? await response.json().catch(() => null) : null,
+    };
+  } catch {
+    return { ok: false, data: null };
+  }
+}
+
+function loadStartupVersions() {
+  if (!startupVersionsRequest) {
+    startupVersionsRequest = Promise.all([
+      requestVersion(API.checkVersion),
+      requestVersion(API.retrieveSeqSenderVersion),
+    ]);
+  }
+  return startupVersionsRequest;
+}
+
+const listResourceCache = new Map();
+const listResourceRequests = new Map();
+
+async function fetchListResource(key, endpoint, responseKey, { force = false } = {}) {
+  if (!force && listResourceCache.has(key)) return listResourceCache.get(key);
+  if (listResourceRequests.has(key)) return listResourceRequests.get(key);
+
+  const request = (async () => {
+    const response = await fetch(endpoint);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `Failed to load ${key}.`);
+    const rows = Array.isArray(data[responseKey]) ? data[responseKey] : [];
+    listResourceCache.set(key, rows);
+    return rows;
+  })();
+
+  listResourceRequests.set(key, request);
+  try {
+    return await request;
+  } finally {
+    if (listResourceRequests.get(key) === request) listResourceRequests.delete(key);
+  }
+}
+
+const fetchRuns = (options) => fetchListResource("runs", API.listRuns, "run_info", options);
+const fetchSubmissions = (options) => fetchListResource("submissions", API.listSubmissions, "submission_info", options);
+const invalidateRuns = () => listResourceCache.delete("runs");
+const invalidateSubmissions = () => listResourceCache.delete("submissions");
+
 // Persist the in-flight MIRA run so it keeps processing (and stays cancellable) after the
 // user navigates away, closes the browser, and reopens it. The backend process is unaffected
 // by the browser; we only need to remember which run/PID to resume polling for.
@@ -558,7 +611,7 @@ function SubmissionTurnaroundChart({ data, loading }) {
   );
 }
 
-function HomeTab({ onNewRun, onLoadRun, onOpenSeqSender }) {
+function HomeTab({ onNewRun, onLoadRun, onOpenSeqSender, isActive }) {
   const [runCount, setRunCount] = useState(null);
   const [ncbiCount, setNcbiCount] = useState(null);     // sequences submitted to NCBI (GenBank + SRA)
   const [gisaidCount, setGisaidCount] = useState(null); // sequences submitted to GISAID
@@ -566,18 +619,20 @@ function HomeTab({ onNewRun, onLoadRun, onOpenSeqSender }) {
   const [submissionTurnaround, setSubmissionTurnaround] = useState(null);
 
   useEffect(() => {
+    if (!isActive) return undefined;
+
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(API.listSubmissions);
-        const data = res.ok ? await res.json() : null;
-        const rows = Array.isArray(data?.submission_info) ? data.submission_info : [];
+        const rows = await fetchSubmissions();
+        const activeRows = rows.filter((row) => String(row.database_status ?? "ACTIVE").toUpperCase() === "ACTIVE");
+        const submittedRows = activeRows.filter((row) => String(row.submission_status).toUpperCase() !== "CREATED");
         if (!cancelled) {
           // Each row is one (submission, database) pair — count NCBI (GenBank + SRA) and GISAID submissions separately.
-          setNcbiCount(rows.filter((r) => ["GENBANK", "SRA", "BIOSAMPLE"].includes((r.database ?? "").toUpperCase())).length);
-          setGisaidCount(rows.filter((r) => (r.database ?? "").toUpperCase() === "GISAID").length);
+          setNcbiCount(submittedRows.filter((r) => ["GENBANK", "SRA", "BIOSAMPLE"].includes((r.database ?? "").toUpperCase())).length);
+          setGisaidCount(submittedRows.filter((r) => (r.database ?? "").toUpperCase() === "GISAID").length);
           const latestBySubmissionDatabase = new Map();
-          rows.forEach((row) => {
+          activeRows.forEach((row) => {
             if (!row.submission_name || !row.database || !row.date_submitted || !row.date_updated) return;
             const submittedAt = Date.parse(`${row.date_submitted}T00:00:00Z`);
             const updatedAt = Date.parse(`${row.date_updated}T00:00:00Z`);
@@ -618,15 +673,15 @@ function HomeTab({ onNewRun, onLoadRun, onOpenSeqSender }) {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [isActive]);
 
   useEffect(() => {
+    if (!isActive) return undefined;
+
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(API.listRuns);
-        const data = res.ok ? await res.json() : null;
-        const runs = Array.isArray(data?.run_info) ? data.run_info : [];
+        const runs = await fetchRuns();
         const completed = runs.filter((r) => r.assembly_status === "COMPLETED");
         if (!cancelled) setRunCount(completed.length);
 
@@ -673,7 +728,7 @@ function HomeTab({ onNewRun, onLoadRun, onOpenSeqSender }) {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [isActive]);
 
   const segData = segmentsTrend ?? [];
   const medSegments = segData.length ? Math.round(median(segData.flatMap((d) => d.samples))) : "—";
@@ -2424,10 +2479,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden, onOpenSeqSe
     setLoadRunSelectedRow(null);
     setRunSearch("");
     try {
-      const res = await fetch(`${API.listRuns}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Failed to fetch runs");
-      setAvailableRuns(data.run_info ?? []);
+      setAvailableRuns(await fetchRuns());
     } catch (err) {
       if (err.name !== "AbortError") setLoadRunError(err.message);
     } finally {
@@ -2500,11 +2552,8 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden, onOpenSeqSe
     setExportSelectedRun(null);
     setExportRunSearch("");
     try {      
-      const res = await fetch(`${API.listRuns}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Failed to fetch runs");
       // Only completed runs have reports available to export
-      setAvailableRuns((data.run_info ?? []).filter((r) => r.assembly_status === "COMPLETED"));
+      setAvailableRuns((await fetchRuns()).filter((r) => r.assembly_status === "COMPLETED"));
     } catch (err) {
       if (err.name !== "AbortError") setExportRunError(err.message);
     } finally {
@@ -2559,10 +2608,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden, onOpenSeqSe
     setEditNewName("");
     setEditActionError(null);
     try {
-      const res = await fetch(`${API.listRuns}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Failed to fetch runs");
-      setAvailableRuns(data.run_info ?? []);
+      setAvailableRuns(await fetchRuns());
     } catch (err) {
       if (err.name !== "AbortError") setEditRunError(err.message);
     } finally {
@@ -2604,6 +2650,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden, onOpenSeqSe
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Failed to rename run");
+      invalidateRuns();
       // Keep the currently loaded run's session state in sync if it's the one being renamed
       if (selectedRun?.assembly_id === editSelectedRun.assembly_id) {
         setRunName(trimmed);
@@ -2639,10 +2686,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden, onOpenSeqSe
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Failed to copy run");
 
-      // Refresh the run list so the new copy shows up
-      const listRes = await fetch(`${API.listRuns}`);
-      const listData = await listRes.json();
-      if (listRes.ok) setAvailableRuns(listData.run_info ?? []);
+      setAvailableRuns(await fetchRuns({ force: true }));
 
       setEditMode(null);
       setEditNewName("");
@@ -2669,6 +2713,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden, onOpenSeqSe
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Failed to delete run");
+      invalidateRuns();
 
       // If the currently loaded run was deleted, reset the active session
       if (selectedRun?.assembly_id === editSelectedRun.assembly_id) {
@@ -5549,6 +5594,30 @@ const DB_LIST = [
   //{ key: "gisaid", value: "GISAID", label: "GISAID", url: "https://www.gisaid.org/"},
 ];
 
+const submitterListCache = new Map();
+const submitterListRequests = new Map();
+
+async function fetchSubmitters(portal, { force = false } = {}) {
+  if (!force && submitterListCache.has(portal)) return submitterListCache.get(portal);
+  if (submitterListRequests.has(portal)) return submitterListRequests.get(portal);
+
+  const request = (async () => {
+    const res = await fetch(`${API.listSubmitters}?submission_portal=${encodeURIComponent(portal)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || "Failed to load submitters.");
+    const submitters = Array.isArray(data.SubmitterInfo) ? data.SubmitterInfo : [];
+    submitterListCache.set(portal, submitters);
+    return submitters;
+  })();
+
+  submitterListRequests.set(portal, request);
+  try {
+    return await request;
+  } finally {
+    if (submitterListRequests.get(portal) === request) submitterListRequests.delete(portal);
+  }
+}
+
 // Collapsible section header — click to toggle the section's content below it.
 function SectionHeader({ title, icon: Icon, open, onToggle, widthClass = "w-full", id }) {
   return (
@@ -6039,7 +6108,9 @@ function StatusReportTable({ rows, onMessageChange }) {
 // ── SeqSender form — opened from the Step 5 action button ──
 const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
   const initialSubmission = props.initialSubmission ?? null;
-  const initialRows = initialSubmission?.rows ?? [];
+  const isActive = props.isActive ?? true;
+  const initialRows = (initialSubmission?.rows ?? [])
+    .filter((row) => String(row.database_status ?? "ACTIVE").toUpperCase() === "ACTIVE");
   const initialDatabases = new Set(initialRows.map((row) => row.database));
   const initialNcbiRow = initialRows.find((row) => row.submission_portal === "NCBI") ?? null;
   const initialGisaidRow = initialRows.find((row) => row.submission_portal === "GISAID") ?? null;
@@ -6311,6 +6382,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
 
     const parseMetadata = (file) => {
       Papa.parse(file, {
@@ -6343,7 +6415,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
           setMetadataPreview({ columns: [], rows: [], loading: false, error: "Metadata table preview supports CSV and TSV files." });
           return;
         }
-        setMetadataPreview((current) => ({ ...current, loading: true, error: null }));
+        setMetadataPreview({ columns: [], rows: [], loading: true, error: null });
         parseMetadata(metaFileObject);
         return;
       }
@@ -6351,20 +6423,27 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         setMetadataPreview({ columns: [], rows: [], loading: false, error: null });
         return;
       }
-      setMetadataPreview((current) => ({ ...current, loading: true, error: null }));
+      setMetadataPreview({ columns: [], rows: [], loading: true, error: null });
       try {
         // no-store: the stored metadata can change between opens of the same submission (e.g.
         // rows removed), but the request URL never changes, so the browser cache must be bypassed.
-        const response = await fetch(`${API.downloadSeqsenderMetadata}?${storedSubmissionQuery}`, { cache: "no-store" });
+        const response = await fetch(`${API.downloadSeqsenderMetadata}?${storedSubmissionQuery}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
         if (!response.ok) throw new Error("Stored metadata could not be loaded for preview.");
         parseMetadata(await response.blob());
       } catch (error) {
+        if (error.name === "AbortError") return;
         if (!cancelled) setMetadataPreview({ columns: [], rows: [], loading: false, error: error.message || "Failed to load stored metadata." });
       }
     };
 
     loadMetadata();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [metaFileObject, storedSubmissionQuery]);
 
   // Memoized so unrelated re-renders (typing in another field, status polling, etc.) don't hand
@@ -6514,16 +6593,13 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
   const [deleteSubmitterModal, setDeleteSubmitterModal] = useState(null); // "NCBI" | "GISAID" | null — which portal's confirmation modal is open
 
 
-  // Fetch the saved submitters for a portal (lazily, the first time "Existing User" is picked).
-  const loadSubmitters = useCallback(async (portal) => {
+  const loadSubmitters = useCallback(async (portal, options) => {
     const isNcbi = portal === "NCBI";
     (isNcbi ? setNcbiSubmittersLoading : setGisaidSubmittersLoading)(true);
     (isNcbi ? setNcbiSubmittersError : setGisaidSubmittersError)(null);
     try {
-      const res = await fetch(`${API.listSubmitters}?submission_portal=${encodeURIComponent(portal)}`);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || "Failed to load submitters.");
-      (isNcbi ? setNcbiSubmitters : setGisaidSubmitters)(Array.isArray(data.SubmitterInfo) ? data.SubmitterInfo : []);
+      const submitters = await fetchSubmitters(portal, options);
+      (isNcbi ? setNcbiSubmitters : setGisaidSubmitters)(submitters);
     } catch (err) {
       (isNcbi ? setNcbiSubmittersError : setGisaidSubmittersError)(err.message || "Failed to load submitters.");
     } finally {
@@ -6534,9 +6610,10 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
   // Fetch both portals' saved submitters up front — whether the New/Existing toggle is
   // shown at all depends on whether any submitters exist, so this can't be lazy.
   useEffect(() => {
+    if (!isActive) return;
     loadSubmitters("NCBI");
     loadSubmitters("GISAID");
-  }, [loadSubmitters]);
+  }, [isActive, loadSubmitters]);
   // For a brand-new submission (no initialSubmission to hydrate from), default straight to
   // "Existing User" the first time each portal's submitter list loads with entries, so
   // previously stored usernames are immediately available for selection instead of requiring
@@ -6715,7 +6792,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       clearNcbiFields();
       setNcbiDeleteStatus("idle");
       setDeleteSubmitterModal(null);
-      await loadSubmitters("NCBI");
+      await loadSubmitters("NCBI", { force: true });
     } catch (err) {
       setNcbiDeleteStatus("error");
       setNcbiDeleteError(err.message || "Failed to delete NCBI submitter.");
@@ -6740,7 +6817,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       clearGisaidFields();
       setGisaidDeleteStatus("idle");
       setDeleteSubmitterModal(null);
-      await loadSubmitters("GISAID");
+      await loadSubmitters("GISAID", { force: true });
     } catch (err) {
       setGisaidDeleteStatus("error");
       setGisaidDeleteError(err.message || "Failed to delete GISAID submitter.");
@@ -6831,7 +6908,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || "Failed to save NCBI credentials.");
       setNcbiSaveStatus("saved");
-      await loadSubmitters("NCBI");
+      await loadSubmitters("NCBI", { force: true });
     } catch (err) {
       setNcbiSaveStatus("error");
       setNcbiSaveError([err.message || "Failed to save NCBI credentials."]);
@@ -6867,7 +6944,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || "Failed to save GISAID credentials.");
       setGisaidSaveStatus("saved");
-      await loadSubmitters("GISAID");
+      await loadSubmitters("GISAID", { force: true });
     } catch (err) {
       setGisaidSaveStatus("error");
       setGisaidSaveError([err.message || "Failed to save GISAID credentials."]);
@@ -7177,8 +7254,8 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         if (!prepRes.ok) throw new Error(prepData.detail || "Failed to create submission files.");
         setCreateFilesResult(prepData);
 
-        if (ncbiActive) loadSubmitters("NCBI");
-        if (dbs.gisaid) loadSubmitters("GISAID");
+        if (ncbiActive) loadSubmitters("NCBI", { force: true });
+        if (dbs.gisaid) loadSubmitters("GISAID", { force: true });
         props.onSubmitted?.();
 
       } else {
@@ -7224,8 +7301,8 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         // so re-fetch from the backend rather than patching local state — a local patch only ever
         // carried submitter_name/ncbi_spuid_namespace, dropping every other field (org, address,
         // publication, etc.), so re-selecting that "just created" entry later showed blank fields.
-        if (ncbiActive) loadSubmitters("NCBI");
-        if (dbs.gisaid) loadSubmitters("GISAID");
+        if (ncbiActive) loadSubmitters("NCBI", { force: true });
+        if (dbs.gisaid) loadSubmitters("GISAID", { force: true });
 
         // Let the parent tab know a submission was just created/updated so the Past Submissions
         // panel refreshes even if it was already open (its own mount-time fetch won't rerun otherwise).
@@ -7709,6 +7786,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                     disabled={!canCreateOrSubmit}
                     onChange={(e) => {
                       const files = Array.from(e.target.files ?? []);
+                      e.target.value = "";
                       if (files.length) {
                         set(files.map(file => file.name).join(", "));
                         onFile?.(files);
@@ -7941,6 +8019,33 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
             </div>
           )}
 
+          {(() => {
+            const displayedStatus = refreshedSubmissionStatus ?? submissionProcessStatus;
+            const submissionName = submissionJob?.submission_name ?? initialSubmission?.submission_name ?? subName;
+            const submissionOrganism = submissionJob?.organism ?? initialSubmission?.organism ?? organism;
+            const overallStatus = displayedStatus?.status ?? "PENDING";
+            return (submitted || initialSubmission || submissionJob) && (
+              <div className="flex w-full flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase text-muted-foreground">Submission Name</p>
+                  <p className="truncate font-mono text-sm font-semibold text-foreground" title={submissionName}>{submissionName || "—"}</p>
+                </div>
+
+                <div className="flex flex-col items-start gap-0.5">
+                  <p className="text-[10px] font-semibold uppercase text-muted-foreground">Organism</p>
+                  <p className="font-mono text-sm font-semibold text-foreground">{submissionOrganism || "—"}</p>
+                </div>
+
+                <div className="flex flex-col items-start gap-0.5">
+                  <p className="text-[10px] font-semibold uppercase text-muted-foreground">Overall Status</p>
+                  <p className={cn("rounded-full px-2.5 py-1 font-mono text-xs font-semibold", SUBMISSION_STATUS_BADGE_STYLES[overallStatus] ?? "bg-muted text-muted-foreground")}>
+                    {overallStatus}
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* ── Latest submission status message — prefers a manual Refresh Status check over the process poller ────────────── */}
           {(() => {
             const displayedStatus = refreshedSubmissionStatus ?? submissionProcessStatus;
@@ -8166,7 +8271,7 @@ const PAST_SUBMISSIONS_COLUMNS = [
 // Table body rows beyond this count get a scrollable, sticky-header container instead of growing forever.
 const PAST_SUBMISSIONS_MAX_VISIBLE_ROWS = 20;
 
-function PastSubmissionsPanel({ onSelectSubmission }) {
+function PastSubmissionsPanel({ onSelectSubmission, onDeleteSubmission, isActive }) {
   const [submissions, setSubmissions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -8185,15 +8290,13 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
   const [cronJobSaving, setCronJobSaving] = useState(false);
   const [cronJobError, setCronJobError] = useState(null);
 
-  const loadSubmissions = useCallback(() => {
+  const loadSubmissions = useCallback((options) => {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetch(API.listSubmissions)
-      .then(async (response) => {
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || "Failed to load submissions.");
-        if (!cancelled) setSubmissions(Array.isArray(data.submission_info) ? data.submission_info : []);
+    fetchSubmissions(options)
+      .then((rows) => {
+        if (!cancelled) setSubmissions(rows);
       })
       .catch((fetchError) => {
         if (!cancelled) setError(fetchError.message || "Failed to load submissions.");
@@ -8204,7 +8307,10 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
     return () => { cancelled = true; };
   }, []);
 
-  useEffect(() => loadSubmissions(), [loadSubmissions]);
+  useEffect(() => {
+    if (!isActive) return undefined;
+    return loadSubmissions();
+  }, [isActive, loadSubmissions]);
 
   // The backend returns one flat row per (submission_name, database) pair — group them back
   // into a single entry per submission, the way each MIRA run is a single entry in Past Runs.
@@ -8261,7 +8367,7 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
       setActionMode(null);
       setCopyName("");
       setSelectedRow(null);
-      loadSubmissions();
+      loadSubmissions({ force: true });
     } catch (err) {
       setActionError(err.message || "Failed to copy submission.");
     } finally {
@@ -8285,9 +8391,10 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || "Failed to delete submission.");
+      onDeleteSubmission(selectedRow);
       setActionMode(null);
       setSelectedRow(null);
-      loadSubmissions();
+      loadSubmissions({ force: true });
     } catch (err) {
       setActionError(err.message || "Failed to delete submission.");
     } finally {
@@ -8317,7 +8424,7 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || data.message || "Failed to check submission status.");
       setStatusMessage({ type: "success", text: data.message || "Submission status updated." });
-      loadSubmissions();
+      loadSubmissions({ force: true });
     } catch (err) {
       setStatusMessage({ type: "error", text: err.message || "Failed to update submission status." });
     } finally {
@@ -8472,7 +8579,7 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
         <button
           type="button"
           title="Refresh"
-          onClick={loadSubmissions}
+          onClick={() => loadSubmissions({ force: true })}
           className="h-8 w-8 shrink-0 flex items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-primary hover:border-primary transition-colors"
         >
           <RefreshCw size={13} />
@@ -8795,10 +8902,9 @@ const formatVersionLabel = (version) => {
   return /^v/i.test(version) ? version : `v${version}`;
 };
 
-function SeqSenderTab({ onBack, showBackToMira, newSubmissionSignal }) {
+function SeqSenderTab({ onBack, showBackToMira, newSubmissionSignal, isActive, seqsenderVersion }) {
   const [panelSession, setPanelSession] = useState({ key: 0, submission: null });
   const panelRef = useRef(null);
-  const [seqsenderVersion, setSeqsenderVersion] = useState(null); // fetched from /seqsender/version on load
   const [submissionsRefreshKey, setSubmissionsRefreshKey] = useState(0); // bumped to force Past Submissions to refetch
   const [sectionNavCollapsed, setSectionNavCollapsed] = useState(false);
   const sectionNavRef = useRef(null);
@@ -8843,26 +8949,23 @@ function SeqSenderTab({ onBack, showBackToMira, newSubmissionSignal }) {
     setPanelSession(({ key }) => ({ key: key + 1, submission }));
   };
 
+  const handleSubmissionDeleted = (deletedSubmission) => {
+    setPanelSession((currentSession) => {
+      const loadedSubmission = currentSession.submission;
+      if (!loadedSubmission
+        || loadedSubmission.submission_name !== deletedSubmission.submission_name
+        || loadedSubmission.organism !== deletedSubmission.organism) {
+        return currentSession;
+      }
+      return { key: currentSession.key + 1, submission: null };
+    });
+  };
+
   // Also start a fresh submission (remounting SeqSenderPanel, which re-fetches submitters) when
   // the tab is entered via the Home/Assembly "New Submission" entry points, not just this tab's own pill.
   useEffect(() => {
     if (newSubmissionSignal) openNewSubmission();
   }, [newSubmissionSignal]);
-
-  // Fetch the SeqSender CLI version once on load to display next to the tab title.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(API.retrieveSeqSenderVersion);
-        const data = await res.json().catch(() => ({}));
-        if (!cancelled && res.ok) setSeqsenderVersion(data.version ?? null);
-      } catch {
-        /* leave version unset on failure */
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
 
   // Collapse the step-link row into a "Submission Steps" dropdown once the pills no longer fit.
   useLayoutEffect(() => {
@@ -9099,7 +9202,7 @@ function SeqSenderTab({ onBack, showBackToMira, newSubmissionSignal }) {
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mx-auto flex w-[min(550px,100%)] flex-col items-start gap-4">
-            <SeqSenderPanel key={panelSession.key} ref={panelRef} initialSubmission={panelSession.submission} onSubmitted={() => setSubmissionsRefreshKey((k) => k + 1)} />
+            <SeqSenderPanel key={panelSession.key} ref={panelRef} initialSubmission={panelSession.submission} isActive={isActive} onSubmitted={() => { invalidateSubmissions(); setSubmissionsRefreshKey((k) => k + 1); }} />
           </div>
         </div>
 
@@ -9122,7 +9225,12 @@ function SeqSenderTab({ onBack, showBackToMira, newSubmissionSignal }) {
                 </button>
               </div>
               <div className="flex-1 overflow-auto p-4">
-                <PastSubmissionsPanel key={submissionsRefreshKey} onSelectSubmission={openPastSubmission} />
+                <PastSubmissionsPanel
+                  key={submissionsRefreshKey}
+                  onSelectSubmission={openPastSubmission}
+                  onDeleteSubmission={handleSubmissionDeleted}
+                  isActive={isActive}
+                />
               </div>
             </aside>
           </>
@@ -9279,10 +9387,10 @@ function ResourcesTab() {
 }
 
 /* ── Placeholder tab content ─────────────────────── */
-function TabContent({ tab, navigateTo, loadRunSignal, newRunSignal, onLoadRun, onNewRun, onOpenSeqSender, seqSenderOrigin, newSubmissionSignal, setHeaderHidden }) {
-  if (tab.id === "home")       return <HomeTab onNewRun={onNewRun} onLoadRun={onLoadRun} onOpenSeqSender={() => onOpenSeqSender("home")} />;
+function TabContent({ tab, isActive, navigateTo, loadRunSignal, newRunSignal, onLoadRun, onNewRun, onOpenSeqSender, seqSenderOrigin, newSubmissionSignal, setHeaderHidden, seqsenderVersion }) {
+  if (tab.id === "home")       return <HomeTab onNewRun={onNewRun} onLoadRun={onLoadRun} onOpenSeqSender={() => onOpenSeqSender("home")} isActive={isActive} />;
   if (tab.id === "assembly")   return <AssemblyTab loadRunSignal={loadRunSignal} newRunSignal={newRunSignal} setHeaderHidden={setHeaderHidden} onOpenSeqSender={() => onOpenSeqSender("assembly")} />;
-  if (tab.id === "seqsender")  return <SeqSenderTab onBack={() => navigateTo("assembly")} showBackToMira={seqSenderOrigin === "assembly"} newSubmissionSignal={newSubmissionSignal} />;
+  if (tab.id === "seqsender")  return <SeqSenderTab onBack={() => navigateTo("assembly")} showBackToMira={seqSenderOrigin === "assembly"} newSubmissionSignal={newSubmissionSignal} isActive={isActive} seqsenderVersion={seqsenderVersion} />;
   return (
     <div className="p-6">
       <div className="rounded-xl border border-border bg-card p-8 text-left text-muted-foreground">
@@ -9305,6 +9413,7 @@ export default function App() {
   // State for the active tab and version info
   const [activeTab, setActiveTab] = useState(getInitialTab);
   const [versionInfo, setVersionInfo] = useState(null);
+  const [seqsenderVersion, setSeqsenderVersion] = useState(null);
   const [backendUp, setBackendUp] = useState(true); // assume healthy until the first check completes
   const [resourcesOpen, setResourcesOpen] = useState(false); // Resources overlay visibility
   const [loadRunSignal, setLoadRunSignal] = useState(0); // bumped to signal AssemblyTab to open its Load Run modal
@@ -9313,21 +9422,16 @@ export default function App() {
   const [seqSenderOrigin, setSeqSenderOrigin] = useState(null); // show Back to Mira only when SeqSender was launched from Assembly
   const [newSubmissionSignal, setNewSubmissionSignal] = useState(0); // bumped to signal SeqSenderTab to start a fresh submission (and re-fetch submitters)
 
-  // Check MIRA-NF version on app startup so we can alert users if it's out-of-date,
-  // and detect whether the backend API is reachable at all. Re-checked on demand
-  // (e.g. when the notifications button is clicked) rather than on a timer.
-  const checkBackend = useCallback(() => {
-    fetch(API.checkVersion)
-      .then((res) => {
-        setBackendUp(res.ok);
-        if (res.ok) res.json().then((data) => setVersionInfo(data)).catch(() => {});
-      })
-      .catch(() => setBackendUp(false));
-  }, []);
-
   useEffect(() => {
-    checkBackend();
-  }, [checkBackend]);
+    let cancelled = false;
+    loadStartupVersions().then(([miraResult, seqsenderResult]) => {
+      if (cancelled) return;
+      setBackendUp(miraResult.ok);
+      if (miraResult.data) setVersionInfo(miraResult.data);
+      if (seqsenderResult.data) setSeqsenderVersion(seqsenderResult.data.version ?? null);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // Update the URL hash when the active tab changes
   const updateUrl = (tabId) => {
@@ -9423,7 +9527,7 @@ export default function App() {
           <Dropdown
             panelClassName="w-80"
             trigger={
-              <button onClick={checkBackend} className="relative p-2 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition-colors">
+              <button className="relative p-2 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition-colors">
                 <Bell size={22} />
                 {versionInfo?.status === "out-of-date" && (
                   <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500" />
@@ -9525,7 +9629,7 @@ export default function App() {
         <main className="flex-1 overflow-hidden px-6">
           {TABS.map((tab) => (
             <div key={tab.id} className={cn("h-full", activeTab !== tab.id && "hidden")}>
-              <TabContent tab={tab} navigateTo={navigateTo} loadRunSignal={loadRunSignal} newRunSignal={newRunSignal} onLoadRun={openLoadRunFromHome} onNewRun={openNewRunFromHome} onOpenSeqSender={openSeqSender} seqSenderOrigin={seqSenderOrigin} newSubmissionSignal={newSubmissionSignal} setHeaderHidden={setHeaderHidden} />
+              <TabContent tab={tab} isActive={activeTab === tab.id} navigateTo={navigateTo} loadRunSignal={loadRunSignal} newRunSignal={newRunSignal} onLoadRun={openLoadRunFromHome} onNewRun={openNewRunFromHome} onOpenSeqSender={openSeqSender} seqSenderOrigin={seqSenderOrigin} newSubmissionSignal={newSubmissionSignal} setHeaderHidden={setHeaderHidden} seqsenderVersion={seqsenderVersion} />
             </div>
           ))}
         </main>

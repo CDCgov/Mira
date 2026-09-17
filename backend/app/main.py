@@ -2153,7 +2153,9 @@ async def get_submissions():
     try:
         db_submission_tbl = lookup_tbl_in_database(
             db_tbl_name = ["submission"],
-            return_var  = ["*"]
+            return_var = ["*"],
+            filter_coln_var = ["database_status"],
+            filter_coln_val = {"database_status": ["ACTIVE"]},
         )
         # If no submissions found, return an empty list
         if db_submission_tbl.shape[0] == 0:

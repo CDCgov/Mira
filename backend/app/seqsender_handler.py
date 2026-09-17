@@ -537,7 +537,40 @@ def update_submission_in_database(
                 compare_tbl = submission_tbl,
                 db_tbl = db_submission_tbl,
                 db_tbl_name = "submission"
-            )    
+            )
+
+        # Keep rows for databases removed from the current selection as history, but exclude
+        # them from future submission and status operations.
+        all_submission_rows = lookup_tbl_in_database(
+            db_tbl_name = ["submission"],
+            return_var = ["database"],
+            filter_coln_var = ["submission_name", "organism", "submission_type"],
+            filter_coln_val = {
+                "submission_name": [submission_name],
+                "organism": [organism],
+                "submission_type": [submission_type],
+            },
+            filter_var_by = ["AND", "AND", "AND"],
+        )
+        selected_databases = {str(value).strip().upper() for value in database}
+        archived_databases = [
+            value
+            for value in all_submission_rows.get_column("database").to_list()
+            if str(value).strip().upper() not in selected_databases
+        ]
+        if archived_databases:
+            update_tbl_in_database(
+                db_tbl_name = ["submission"],
+                table = pl.DataFrame({"database_status": ["ARCHIVED"]}),
+                filter_coln_var = ["submission_name", "organism", "database", "submission_type"],
+                filter_coln_val = {
+                    "submission_name": [submission_name],
+                    "organism": [organism],
+                    "database": archived_databases,
+                    "submission_type": [submission_type],
+                },
+                filter_var_by = ["AND", "AND", "AND", "AND"],
+            )
     except ValueError as err:
         raise ValueError(str(err))
     except Exception as err:

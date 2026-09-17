@@ -124,6 +124,8 @@ def update_all_submission_statuses() -> dict[str, Any]:
     submission_table = lookup_tbl_in_database(
         db_tbl_name=["submission"],
         return_var=["submission_name", "organism", "database", "submission_type", "submission_status"],
+        filter_coln_var=["database_status"],
+        filter_coln_val={"database_status": ["ACTIVE"]},
     )
     grouped: dict[tuple[str, str, str], set[str]] = {}
     skipped_created: set[tuple[str, str, str]] = set()

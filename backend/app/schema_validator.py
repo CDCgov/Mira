@@ -186,7 +186,7 @@ database_prefixes = {
     "GENBANK": "gb",
     "GISAID": "gs"
 }
-database_statuses = ["ACTIVE", "INACTIVE"]
+database_statuses = ["ACTIVE", "ARCHIVED"]
 submission_types = ["TEST", "PRODUCTION"]
 submission_portals = ["NCBI", "GISAID"]
 submission_statuses = [

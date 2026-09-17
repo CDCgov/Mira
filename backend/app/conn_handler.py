@@ -183,7 +183,70 @@ def _apply_migrations(connection: sqlite3.Connection) -> None:
             connection.execute(f'ALTER TABLE "{table}" RENAME COLUMN "{old_column}" TO "{new_column}"')
             connection.commit()
 
+    _migrate_submission_database_status(connection)
 
+
+# Migrate the submission table's database_status column from INACTIVE to ARCHIVED.
+def _migrate_submission_database_status(connection: sqlite3.Connection) -> None:
+    """Replace the legacy INACTIVE database status with ARCHIVED."""
+    table_row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='submission'"
+    ).fetchone()
+    if table_row is None or "INACTIVE" not in (table_row[0] or "").upper():
+        return
+
+    table_sql = table_row[0]
+    migrated_sql = re.sub(r"(['\"])INACTIVE\1", "'ARCHIVED'", table_sql, flags=re.IGNORECASE)
+    migrated_sql = re.sub(
+        r'^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"submission"|`submission`|\[submission\]|submission)',
+        'CREATE TABLE "submission_status_migration"',
+        migrated_sql,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    if migrated_sql == table_sql:
+        return
+
+    columns = [row[1] for row in connection.execute('PRAGMA table_info("submission")').fetchall()]
+    column_list = ", ".join(f'"{column}"' for column in columns)
+    select_list = ", ".join(
+        (
+            'CASE WHEN UPPER(TRIM("database_status")) = \'INACTIVE\' '
+            'THEN \'ARCHIVED\' ELSE "database_status" END'
+        ) if column == "database_status" else f'"{column}"'
+        for column in columns
+    )
+    schema_objects = connection.execute(
+        """
+        SELECT sql FROM sqlite_master
+        WHERE tbl_name = 'submission'
+          AND type IN ('index', 'trigger')
+          AND sql IS NOT NULL
+        """
+    ).fetchall()
+
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys = OFF;")
+    try:
+        connection.execute("BEGIN")
+        connection.execute('DROP TABLE IF EXISTS "submission_status_migration"')
+        connection.execute(migrated_sql)
+        connection.execute(
+            f'INSERT INTO "submission_status_migration" ({column_list}) '
+            f'SELECT {select_list} FROM "submission"'
+        )
+        connection.execute('DROP TABLE "submission"')
+        connection.execute('ALTER TABLE "submission_status_migration" RENAME TO "submission"')
+        for schema_object in schema_objects:
+            connection.execute(schema_object[0])
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.execute("PRAGMA foreign_keys = ON;")
+
+# Migrate the status_update_schedule table to allow one-to-four-hour intervals.
 def _migrate_status_update_schedule_intervals(connection: sqlite3.Connection) -> None:
     """Allow one-to-four-hour intervals while preserving an existing schedule."""
     table_row = connection.execute(

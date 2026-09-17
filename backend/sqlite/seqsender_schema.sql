@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS submission (
                             )),
   database_status           TEXT NOT NULL DEFAULT 'ACTIVE' 
                             CHECK (database_status IN (
-                              'ACTIVE', 'INACTIVE'
+                              'ACTIVE', 'ARCHIVED'
                             )),
   submission_type           TEXT NOT NULL DEFAULT 'TEST' 
                             CHECK (submission_type IN (
