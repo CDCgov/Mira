@@ -5759,6 +5759,40 @@ function SeqSenderMetadataTable({ title, columns, rows, onRemoveRows, onUndoRows
     setSelectedRows(new Set());
   };
 
+  const downloadMetadata = (format) => {
+    const fileStem = title.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+    const data = sortedRows.map((row) => Object.fromEntries(
+      columns.map((column) => [column, row[column] ?? ""])
+    ));
+    let blob;
+    let extension;
+
+    if (format === "csv") {
+      blob = new Blob([Papa.unparse({ fields: columns, data })], { type: "text/csv;charset=utf-8;" });
+      extension = "csv";
+    } else {
+      const escapeHtml = (value) => String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+      const html = `<html><head><meta charset="utf-8"></head><body><table><tr>${
+        columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")
+      }</tr>${
+        data.map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(row[column])}</td>`).join("")}</tr>`).join("")
+      }</table></body></html>`;
+      blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8;" });
+      extension = "xls";
+    }
+
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${fileStem || "metadata"}.${extension}`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
   useEffect(() => {
     setPage(0);
     setSelectedRows(new Set());
@@ -5771,9 +5805,27 @@ function SeqSenderMetadataTable({ title, columns, rows, onRemoveRows, onUndoRows
           <Database size={13} className="shrink-0 text-primary" />
           <p className="truncate text-xs font-bold text-foreground">{title}</p>
         </div>
-        <span className="shrink-0 text-[10px] text-muted-foreground">
-          {searchQuery ? `${filteredRows.length.toLocaleString()} of ` : ""}{rows.length.toLocaleString()} rows · {columns.length.toLocaleString()} columns
-        </span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span className="mr-1 text-[10px] text-muted-foreground">
+            {searchQuery ? `${filteredRows.length.toLocaleString()} of ` : ""}{rows.length.toLocaleString()} rows · {columns.length.toLocaleString()} columns
+          </span>
+          <button
+            type="button"
+            onClick={() => downloadMetadata("csv")}
+            disabled={sortedRows.length === 0 || columns.length === 0}
+            className="flex h-6 items-center gap-1 rounded border border-border px-2 text-[10px] text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Download size={10} /> CSV
+          </button>
+          <button
+            type="button"
+            onClick={() => downloadMetadata("excel")}
+            disabled={sortedRows.length === 0 || columns.length === 0}
+            className="flex h-6 items-center gap-1 rounded border border-border px-2 text-[10px] text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Download size={10} /> Excel
+          </button>
+        </div>
       </div>
       <div className="border-b border-border bg-muted/10 px-3 py-2">
         <div className="relative">
@@ -6453,8 +6505,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     .filter(({ key }) => dbs[key])
     .map((table) => {
       const columns = metadataPreview.columns.filter((column) => {
-        // "sequence_name" just repeats the FASTA link across every table — never database-specific.
-        if (column.toLowerCase() === "sequence_name") return false;
+        if (column.toLowerCase() === "sequence_name") return table.key === "genbank";
         const normalizedColumn = column.toLowerCase();
         const isShared = !SEQSENDER_DATABASE_PREFIXES.some((prefix) => normalizedColumn.startsWith(prefix));
         return isShared || table.prefixes.some((prefix) => normalizedColumn.startsWith(prefix));
