@@ -207,6 +207,9 @@ const API = {
   checkSeqsenderSubmissionProccess:  `${API_BASE}/check/submission/process`,
   checkSeqsenderSubmissionStatus:    `${API_BASE}/check/submission/status`,
   loadSeqsenderSubmissionStatus:     `${API_BASE}/load/submission/status`,
+  cronStatus:                        `${API_BASE}/cron/status`,
+  updateCronStatus:                  `${API_BASE}/cron/update/status`,
+  deleteCronStatus:                  `${API_BASE}/cron/delete/status`,
   listSeqSenderSubmissions:          `${API_BASE}/list/submissions`,
   retrieveSeqsenderSubmission:       `${API_BASE}/retrieve/submission`,
   retrieveSeqSenderConfig:           `${API_BASE}/retrieve/config`,
@@ -434,11 +437,133 @@ function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, u
   );
 }
 
+function SubmissionTurnaroundChart({ data, loading }) {
+  const hasData = Array.isArray(data) && data.length > 0;
+  const databaseOrder = ["GISAID", "BIOSAMPLE", "SRA", "GENBANK"];
+  const databases = [...new Set(data.map((row) => row.database))].sort((a, b) => {
+    const aIndex = databaseOrder.indexOf(a);
+    const bIndex = databaseOrder.indexOf(b);
+    if (aIndex === -1 && bIndex === -1) return a.localeCompare(b);
+    if (aIndex === -1) return 1;
+    if (bIndex === -1) return -1;
+    return aIndex - bIndex;
+  });
+  const submissions = [...new Set(data.map((row) => row.submissionName))]
+    .map((submissionName) => {
+      const dateSubmitted = data
+        .filter((row) => row.submissionName === submissionName)
+        .map((row) => row.dateSubmitted)
+        .sort()
+        .at(-1);
+      return { submissionName, dateSubmitted };
+    })
+    .sort((a, b) => Date.parse(b.dateSubmitted) - Date.parse(a.dateSubmitted));
+  const submissionNames = submissions.map((submission) => submission.submissionName);
+  const colors = {
+    BIOSAMPLE: "#0081A1",
+    GENBANK: "#722161",
+    SRA: "#2F6B3C",
+    GISAID: "#C45A16",
+  };
+  const fallbackColors = ["#466D8A", "#A13D63", "#557A46", "#B87824"];
+  const maxDays = hasData ? Math.max(...data.map((row) => row.days)) : 0;
+  const medianDays = hasData ? median(data.map((row) => row.days)) : null;
+  const chartConfig = {
+    ...PLOT_CONFIG,
+    toImageButtonOptions: { ...PLOT_CONFIG.toImageButtonOptions, filename: "Submission_Turnaround" },
+  };
+
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden flex flex-col min-h-0">
+      <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border bg-muted/20 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center justify-center h-7 w-7 rounded-lg bg-primary/10 text-primary shrink-0">
+            <Clock size={15} />
+          </div>
+          <h3 className="text-sm font-bold tracking-wide text-foreground truncate">Submission Turnaround</h3>
+        </div>
+        <div className="text-left shrink-0">
+          <p className="text-[12px] text-muted-foreground">Turnaround stats for 10 latest submissions</p>
+        </div>
+      </div>
+      <div className="flex-1 min-h-0 p-2">
+        {hasData ? (
+          <Suspense fallback={<div className="flex items-center justify-center h-full text-xs text-muted-foreground">Loading chart…</div>}>
+            <Plot
+              data={databases.map((database, index) => {
+                const rows = data.filter((row) => row.database === database);
+                return {
+                  x: rows.map((row) => row.submissionName),
+                  y: rows.map((row) => row.days),
+                  type: "bar",
+                  name: database,
+                  text: rows.map((row) => `${row.status}<br>(${row.sampleCount} sample${row.sampleCount === 1 ? "" : "s"})`),
+                  textposition: "outside",
+                  textfont: { size: 9 },
+                  cliponaxis: false,
+                  customdata: rows.map((row) => [row.database, row.status, row.sampleCount, row.dateSubmitted, row.dateUpdated]),
+                  marker: { color: colors[database] || fallbackColors[index % fallbackColors.length] },
+                  hovertemplate: "%{x}<br>%{customdata[0]}<br>Samples: %{customdata[2]}<br>Status: %{customdata[1]}<br>Submitted: %{customdata[3]}<br>Updated: %{customdata[4]}<br>Processing: %{y} days<extra></extra>",
+                };
+              })}
+              layout={{
+                autosize: true,
+                barmode: "group",
+                bargap: 0.25,
+                margin: { l: 46, r: 16, t: 28, b: 64 },
+                paper_bgcolor: "transparent",
+                plot_bgcolor: "transparent",
+                font: { size: 11 },
+                showlegend: true,
+                legend: { orientation: "h", x: 1, xanchor: "right", y: 1.18, font: { size: 10 } },
+                hovermode: "closest",
+                xaxis: {
+                  showgrid: false,
+                  automargin: true,
+                  categoryorder: "array",
+                  categoryarray: submissionNames,
+                  tickmode: "array",
+                  tickvals: submissionNames,
+                  ticktext: submissions.map(({ submissionName, dateSubmitted }) => `${submissionName}<br>${dateSubmitted}`),
+                  tickangle: -30,
+                },
+                yaxis: {
+                  title: { text: "Processing Days", font: { size: 11 }, standoff: 8 },
+                  range: [0, maxDays + 1],
+                  tickmode: "linear",
+                  tick0: 0,
+                  dtick: 1,
+                  tickformat: ",d",
+                  showgrid: true,
+                  gridcolor: "rgba(0,0,0,0.06)",
+                  zeroline: true,
+                  zerolinecolor: "rgba(0,0,0,0.15)",
+                  automargin: true,
+                },
+              }}
+              config={chartConfig}
+              style={{ width: "100%", height: "100%", minHeight: 200 }}
+              useResizeHandler
+            />
+          </Suspense>
+        ) : (
+          <div className="flex h-full items-center justify-center text-left px-6">
+            <p className="text-xs text-muted-foreground">
+              {loading ? "Loading submission data…" : "Turnaround appears after a submitted database receives a status update."}
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function HomeTab({ onNewRun, onLoadRun, onOpenSeqSender }) {
   const [runCount, setRunCount] = useState(null);
   const [ncbiCount, setNcbiCount] = useState(null);     // sequences submitted to NCBI (GenBank + SRA)
   const [gisaidCount, setGisaidCount] = useState(null); // sequences submitted to GISAID
   const [segmentsTrend, setSegmentsTrend] = useState(null); // null = loading, [] = no data
+  const [submissionTurnaround, setSubmissionTurnaround] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -451,9 +576,45 @@ function HomeTab({ onNewRun, onLoadRun, onOpenSeqSender }) {
           // Each row is one (submission, database) pair — count NCBI (GenBank + SRA) and GISAID submissions separately.
           setNcbiCount(rows.filter((r) => ["GENBANK", "SRA", "BIOSAMPLE"].includes((r.database ?? "").toUpperCase())).length);
           setGisaidCount(rows.filter((r) => (r.database ?? "").toUpperCase() === "GISAID").length);
+          const latestBySubmissionDatabase = new Map();
+          rows.forEach((row) => {
+            if (!row.submission_name || !row.database || !row.date_submitted || !row.date_updated) return;
+            const submittedAt = Date.parse(`${row.date_submitted}T00:00:00Z`);
+            const updatedAt = Date.parse(`${row.date_updated}T00:00:00Z`);
+            if (!Number.isFinite(submittedAt) || !Number.isFinite(updatedAt) || updatedAt < submittedAt) return;
+            const database = String(row.database).toUpperCase();
+            const chartRow = {
+              submissionName: row.submission_name,
+              database,
+              days: Math.round((updatedAt - submittedAt) / 86400000),
+              sampleCount: Number.isFinite(Number(row.number_of_samples)) ? Number(row.number_of_samples) : 0,
+              status: row.ncbi_submission_status || row.submission_status || "UNKNOWN",
+              dateSubmitted: row.date_submitted,
+              dateUpdated: row.date_updated,
+            };
+            const key = `${chartRow.submissionName}::${database}`;
+            const existing = latestBySubmissionDatabase.get(key);
+            if (!existing || chartRow.dateUpdated > existing.dateUpdated) latestBySubmissionDatabase.set(key, chartRow);
+          });
+          const chartRows = [...latestBySubmissionDatabase.values()];
+          const latestSubmissionNames = [...new Set(chartRows.map((row) => row.submissionName))]
+            .sort((a, b) => {
+              const latestSubmittedAt = (submissionName) => Math.max(
+                ...chartRows
+                  .filter((row) => row.submissionName === submissionName)
+                  .map((row) => Date.parse(`${row.dateSubmitted}T00:00:00Z`))
+              );
+              return latestSubmittedAt(b) - latestSubmittedAt(a);
+            })
+            .slice(0, 10);
+          setSubmissionTurnaround(
+            latestSubmissionNames.flatMap((submissionName) =>
+              chartRows.filter((row) => row.submissionName === submissionName)
+            )
+          );
         }
       } catch {
-        if (!cancelled) { setNcbiCount(0); setGisaidCount(0); }
+        if (!cancelled) { setNcbiCount(0); setGisaidCount(0); setSubmissionTurnaround([]); }
       }
     })();
     return () => { cancelled = true; };
@@ -592,17 +753,9 @@ function HomeTab({ onNewRun, onLoadRun, onOpenSeqSender }) {
           yTitle="Segment Count"
         />
 
-        {/* ── Turnaround time (pending metadata & SeqSender integration) ─── */}
-        <HomeChartCard
-          icon={Clock}
-          title="Turnaround Time"
-          statValue="—"
-          statLabel="median days: submission − collection"
-          data={[]}
-          emptyMessage="Turnaround time will populate once sample metadata and SeqSender submission dates are available."
-          color="#722161"
-          unit="days"
-          yTitle="Days"
+        <SubmissionTurnaroundChart
+          data={submissionTurnaround ?? []}
+          loading={submissionTurnaround === null}
         />
 
       </div>
@@ -8026,6 +8179,11 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState(null);
   const [statusMessage, setStatusMessage] = useState(null); // { type: "warning"|"error"|"success", text } feedback banner for the Update Status action
+  const [cronJobModalOpen, setCronJobModalOpen] = useState(false);
+  const [cronJobIntervalHours, setCronJobIntervalHours] = useState(1);
+  const [cronJobExists, setCronJobExists] = useState(false);
+  const [cronJobSaving, setCronJobSaving] = useState(false);
+  const [cronJobError, setCronJobError] = useState(null);
 
   const loadSubmissions = useCallback(() => {
     let cancelled = false;
@@ -8167,6 +8325,63 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
     }
   };
 
+  // Open the modal to view or edit the status update cron job.
+  const openCronJobModal = async () => {
+    setCronJobModalOpen(true);
+    setCronJobError(null);
+    try {
+      const response = await fetch(API.cronStatus);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Failed to load the cron job.");
+      setCronJobExists(Boolean(data.enabled));
+      const intervalHours = Number(data.interval_minutes) / 60;
+      setCronJobIntervalHours([1, 2, 3, 4].includes(intervalHours) ? intervalHours : 1);
+    } catch (err) {
+      setCronJobError(err.message || "Failed to load the cron job.");
+    }
+  };
+
+  // Save the status update cron job.
+  const saveCronJob = async () => {
+    setCronJobSaving(true);
+    setCronJobError(null);
+    try {
+      const response = await fetch(API.updateCronStatus, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          frequency: "hourly",
+          interval_hours: cronJobIntervalHours,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Failed to save the cron job.");
+      setCronJobExists(true);
+      setCronJobModalOpen(false);
+    } catch (err) {
+      setCronJobError(err.message || "Failed to save the cron job.");
+    } finally {
+      setCronJobSaving(false);
+    }
+  };
+
+  // Delete the status update cron job.
+  const deleteCronJob = async () => {
+    setCronJobSaving(true);
+    setCronJobError(null);
+    try {
+      const response = await fetch(API.deleteCronStatus, { method: "DELETE" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Failed to remove the cron job.");
+      setCronJobExists(false);
+      setCronJobModalOpen(false);
+    } catch (err) {
+      setCronJobError(err.message || "Failed to remove the cron job.");
+    } finally {
+      setCronJobSaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center gap-2 py-10 text-xs text-muted-foreground">
@@ -8244,7 +8459,7 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1">
           <FileSearch size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
           <input
@@ -8296,6 +8511,13 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
           className="flex items-center gap-1.5 px-3 py-1 rounded-md border border-border text-xs font-semibold text-foreground hover:border-primary hover:text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <RefreshCw size={12} className={actionLoading ? "animate-spin" : undefined} /> {actionLoading ? "Updating…" : "Update Status"}
+        </button>
+        <button
+          type="button"
+          onClick={openCronJobModal}
+          className="flex items-center gap-1.5 px-3 py-1 rounded-md border border-border text-xs font-semibold text-foreground hover:border-primary hover:text-primary transition-colors"
+        >
+          <Clock size={12} /> Cron Job
         </button>
       </div>
 
@@ -8468,6 +8690,96 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
               >
                 {actionLoading ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} />}
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Cron Job modal ── */}
+      {cronJobModalOpen && (
+        <div
+          role="presentation"
+          onClick={() => setCronJobModalOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="cron-job-title"
+            onClick={(event) => event.stopPropagation()}
+            className="bg-background border border-border rounded-xl p-6 max-w-md w-full mx-4 shadow-xl flex flex-col gap-5"
+          >
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <Clock size={16} />
+                </div>
+                <h3 id="cron-job-title" className="text-sm font-bold text-foreground">Schedule Status Updates</h3>
+              </div>
+              <button
+                type="button"
+                title="Close"
+                aria-label="Close cron job dialog"
+                onClick={() => setCronJobModalOpen(false)}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Run background status checks for all submissions at the selected interval while MIRA is running.
+            </p>
+
+            <div>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-semibold text-foreground">Frequency</span>
+                <select
+                  value={cronJobIntervalHours}
+                  onChange={(event) => setCronJobIntervalHours(Number(event.target.value))}
+                  className="h-9 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value={1}>Every hour</option>
+                  <option value={2}>Every 2 hours</option>
+                  <option value={3}>Every 3 hours</option>
+                  <option value={4}>Every 4 hours</option>
+                </select>
+              </label>
+            </div>
+
+            {cronJobError && (
+              <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-destructive dark:border-red-800 dark:bg-red-950/20">
+                <AlertCircle size={13} className="mt-0.5 shrink-0" /> {cronJobError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              {cronJobExists && (
+                <button
+                  type="button"
+                  disabled={cronJobSaving}
+                  onClick={deleteCronJob}
+                  className="mr-auto flex items-center gap-1.5 rounded-lg border border-border px-4 py-1.5 text-xs font-semibold text-destructive transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-red-950/20"
+                >
+                  <Trash2 size={11} /> Remove
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setCronJobModalOpen(false)}
+                className="px-4 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-muted/60 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={cronJobSaving}
+                onClick={saveCronJob}
+                className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-xs font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {cronJobSaving ? <RefreshCw size={11} className="animate-spin" /> : <Clock size={11} />}
+                {cronJobExists ? "Update Cron Job" : "Create Cron Job"}
               </button>
             </div>
           </div>

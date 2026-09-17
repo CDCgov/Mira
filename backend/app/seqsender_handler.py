@@ -253,6 +253,7 @@ def _update_database_submission_status(
             filter_var_by=["AND", "AND", "AND"],
         )
 
+
 # Function to read the error log of a SeqSender process.
 def _read_seqsender_error(log_path: str, max_bytes: int = 16_384) -> str:
     try:

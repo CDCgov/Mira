@@ -96,6 +96,19 @@ CREATE TABLE IF NOT EXISTS submission (
   UNIQUE (submission_name, organism, database, submission_type),
   FOREIGN KEY (submitter_name, organism, submission_portal) REFERENCES submitter (submitter_name, organism, submission_portal) ON DELETE CASCADE
 );
+
+-- One application-managed hourly schedule for refreshing all submission statuses.
+CREATE TABLE IF NOT EXISTS status_update_schedule (
+  schedule_id       INTEGER PRIMARY KEY CHECK (schedule_id = 1),
+  enabled           INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+  frequency         TEXT NOT NULL DEFAULT 'hourly' CHECK (frequency = 'hourly'),
+  interval_minutes  INTEGER NOT NULL DEFAULT 60 CHECK (interval_minutes IN (60, 120, 180, 240)),
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL,
+  last_run_at       TEXT DEFAULT NULL,
+  last_run_status   TEXT DEFAULT NULL,
+  last_run_message  TEXT DEFAULT NULL
+);
 --
 -- Table structure for table `metadata`
 --

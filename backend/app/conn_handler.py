@@ -1,5 +1,6 @@
 # Import future annotations for Pydantic models
 from __future__ import annotations
+from datetime import datetime, timezone
 from typing import Optional
 
 # Import general python packages
@@ -121,6 +122,8 @@ def init_connection() -> sqlite3.Connection:
 # columns added to schema.sql after a DB was first created are backfilled in place.
 def _apply_migrations(connection: sqlite3.Connection) -> None:
     """Add newer columns to pre-existing databases (no-op when already present)."""
+    _migrate_status_update_schedule_intervals(connection)
+
     # (table, column, definition) tuples to ensure exist
     _required_columns = [
         ("assembly", "created_at", "TEXT"),
@@ -179,6 +182,64 @@ def _apply_migrations(connection: sqlite3.Connection) -> None:
         if old_column in existing and new_column not in existing:
             connection.execute(f'ALTER TABLE "{table}" RENAME COLUMN "{old_column}" TO "{new_column}"')
             connection.commit()
+
+
+def _migrate_status_update_schedule_intervals(connection: sqlite3.Connection) -> None:
+    """Allow one-to-four-hour intervals while preserving an existing schedule."""
+    table_row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='status_update_schedule'"
+    ).fetchone()
+    if table_row is None:
+        return
+
+    columns = [row[1] for row in connection.execute('PRAGMA table_info("status_update_schedule")').fetchall()]
+    normalized_sql = " ".join((table_row[0] or "").lower().split())
+    if "interval_minutes" in columns and "interval_minutes in (60, 120, 180, 240)" in normalized_sql:
+        return
+
+    existing = connection.execute("SELECT * FROM status_update_schedule WHERE schedule_id = 1").fetchone()
+    existing_data = dict(existing) if existing is not None else None
+    interval_minutes = existing_data.get("interval_minutes", 60) if existing_data is not None else 60
+    if interval_minutes not in {60, 120, 180, 240}:
+        interval_minutes = 60
+    now = datetime.now(timezone.utc).isoformat()
+
+    connection.execute('ALTER TABLE "status_update_schedule" RENAME TO "status_update_schedule_daily"')
+    connection.execute(
+        """
+        CREATE TABLE status_update_schedule (
+          schedule_id       INTEGER PRIMARY KEY CHECK (schedule_id = 1),
+          enabled           INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+          frequency         TEXT NOT NULL DEFAULT 'hourly' CHECK (frequency = 'hourly'),
+          interval_minutes  INTEGER NOT NULL DEFAULT 60 CHECK (interval_minutes IN (60, 120, 180, 240)),
+          created_at        TEXT NOT NULL,
+          updated_at        TEXT NOT NULL,
+          last_run_at       TEXT DEFAULT NULL,
+          last_run_status   TEXT DEFAULT NULL,
+          last_run_message  TEXT DEFAULT NULL
+        )
+        """
+    )
+    if existing_data is not None:
+        connection.execute(
+            """
+            INSERT INTO status_update_schedule (
+                schedule_id, enabled, frequency, interval_minutes, created_at, updated_at,
+                last_run_at, last_run_status, last_run_message
+            ) VALUES (1, ?, 'hourly', ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                existing_data.get("enabled", 1),
+                interval_minutes,
+                existing_data.get("created_at") or now,
+                now,
+                existing_data.get("last_run_at"),
+                existing_data.get("last_run_status"),
+                existing_data.get("last_run_message"),
+            ),
+        )
+    connection.execute('DROP TABLE "status_update_schedule_daily"')
+    connection.commit()
 
 
 # Rebuild the "submission" table so date_submitted/date_updated become nullable (DEFAULT NULL),

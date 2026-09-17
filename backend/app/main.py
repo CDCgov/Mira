@@ -1,6 +1,9 @@
 # Import future annotations for Pydantic models
 from typing import List, Optional, Literal, Dict, Any
 
+# Import context manager for managing application lifespan
+from contextlib import asynccontextmanager
+
 # Import FastAPI and related packages
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +21,7 @@ import zipfile
 import requests
 from datetime import datetime
 
+# Import background task handling from Starlette
 from starlette.background import BackgroundTask
 
 # Import asyncio for running blocking operations in a thread
@@ -43,6 +47,7 @@ from .schema import (
     CreateSubmissionRequest,
     UpdateSubmissionCommentsRequest,
     UpdateSubmissionStatusReportMessagesRequest,
+    StatusUpdateCronRequest,
     ListSubmissionResponse,
     ListSubmitterResponse,
     SubmitterInfo,
@@ -149,8 +154,28 @@ from .sqlite_handler import (
 # Import shared logger (INFO/DEBUG -> stdout, WARNING/ERROR/CRITICAL -> stderr)
 from .logging_config import logger
 
-# Define FastAPI app
-app = FastAPI(title = "MIRA Backend")
+from .status_scheduler import (
+    delete_status_update_schedule,
+    get_status_update_schedule,
+    save_status_update_schedule,
+    start_status_update_scheduler,
+    stop_status_update_scheduler,
+    wake_status_update_scheduler,
+)
+
+# Define the lifespan context manager for the FastAPI app, 
+# which starts and stops the status update scheduler.
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    start_status_update_scheduler()
+    try:
+        yield
+    finally:
+        await stop_status_update_scheduler()
+
+
+# FastAPI application instance
+app = FastAPI(title = "MIRA Backend", lifespan=lifespan)
 
 # Compress responses >= 1 KB with gzip (reduces large JSON payloads 5-10x)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -305,11 +330,13 @@ def upload_fastq_files_to_storage(
 def _version_tuple(version: str) -> tuple:
     return tuple(int(part) for part in re.findall(r"\d+", version))
 
+
 ##############################################
 # 
 # MIRA HEALTH SECTION
 # 
 ##############################################
+
 
 # ---------- Health Check ----------
 @app.get("/health", tags=["Health"], summary="Health check", response_model=Dict[str, Any])
@@ -324,11 +351,13 @@ def health():
         logger.error("Health check: REACT_BASE_URL '%s' is unreachable: %s", _REACT_BASE_URL, err)
     return {"ok": True, "react_base_url": _REACT_BASE_URL, "react_reachable": react_reachable}
 
+
 ##############################################
 # 
 # MIRA UTILS SECTION
 # 
 ##############################################
+
 
 # --------- Get MIRA version ----------
 @app.get("/version", response_model=Dict[str, str], summary="Get MIRA version", tags=["MIRA Utils"])
@@ -394,6 +423,7 @@ async def check_mira_version():
     }
     return check_result
 
+
 # ---------- List all runs ----------
 @app.get("/list/runs", response_model=ListRunResponse, summary="List all assembly runs", tags=["MIRA Utils"])
 async def get_runs():
@@ -415,6 +445,7 @@ async def get_runs():
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Dashboard Summary Counts ----------
 @app.get("/stats/summary", response_model=Dict[str, int], summary="Dashboard summary counts (submitted sequences)", tags=["MIRA Utils"])
@@ -445,6 +476,7 @@ async def get_stats_summary():
         }
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Retrieve Specific Run Information ----------
 @app.get("/retrieve/run", response_model=Optional[Dict[str, Any]], summary="Retrieve a run information", tags=["MIRA Utils"])
@@ -463,12 +495,14 @@ async def get_run_info(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 ##############################################
 # 
 # MIRA WORKFLOWS SECTION
 # 
 ##############################################    
+
 
 # ---------- Create a MIRA run (with file uploads) ----------
 @app.post(
@@ -548,6 +582,7 @@ async def create_run_upload(
         raise HTTPException(status_code=422, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Create a MIRA assembly run ----------
 @app.post("/create/run", response_model=Dict[str, Any], summary="Create a MIRA run with appropriate samplesheet", tags=["MIRA Workflows"])
@@ -620,7 +655,8 @@ async def create_run(req: AssemblyRequest):
     except ValueError as err:
         raise HTTPException(status_code=422, detail=str(err))
     except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))        
+        raise HTTPException(status_code=500, detail=str(err))  
+          
 
 # ---------- Upload FASTQ files to storage ----------
 @app.post(
@@ -670,7 +706,8 @@ async def upload_fastqs(
     except ValueError as err:
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))    
+        raise HTTPException(status_code=500, detail=str(err))   
+     
 
 # Upload custom primger config file to storage location
 @app.post("/upload/custom_primer_config", response_model=Dict[str, Any], summary="Upload a custom primer config file to storage location", tags=["MIRA Workflows"])
@@ -719,6 +756,7 @@ async def upload_custom_primer_config(
         }
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))    
+    
 
 # Upload custom IRMA config file to storage location
 @app.post("/upload/custom_irma_config", response_model=Dict[str, Any], summary="Upload a custom IRMA config file to storage location", tags=["MIRA Workflows"])
@@ -767,6 +805,7 @@ async def upload_custom_irma_config(
         }
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # Upload custom QC settings file to storage location
 @app.post("/upload/custom_qc_settings", response_model=Dict[str, Any], summary="Upload a custom QC settings file to storage location", tags=["MIRA Workflows"])
@@ -815,6 +854,7 @@ async def upload_custom_qc_settings(
         }
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))    
+    
 
 # ---------- Validate samplesheet and all FASTQ files exist for a given sequencing run. ----------
 @app.get("/validate/run", response_model=Dict[str, Any], summary="Validate samplesheet and FASTQ files exist for a given run", tags=["MIRA Workflows"])
@@ -834,6 +874,7 @@ async def validate_run(req: RunRequest = Depends()):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
     
+    
 @app.get("/validate/custom_configs", response_model=Dict[str, Any], summary="Validate custom primers, custom IRMA config, and custom QC settings exist for a given run if provided", tags=["MIRA Workflows"])
 async def validate_custom_configs(req: RunRequest = Depends()):
     """
@@ -850,6 +891,7 @@ async def validate_custom_configs(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
     
 # ---------- Run MIRA Workflows ----------
 @app.get("/run/MIRA", response_model=Dict[str, Any], summary="Run MIRA assembly via Docker (Part 3)", tags=["MIRA Workflows"])
@@ -869,6 +911,7 @@ async def run_mira(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
      
 # ---------- Cancel MIRA run ----------
 @app.get("/cancel/MIRA", response_model=Dict[str, Any], summary="Cancel a MIRA run", tags=["MIRA Workflows"])
@@ -888,6 +931,7 @@ async def cancel_mira(req: RunStatusRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
     
 # ---------- Check MIRA status ----------
 @app.get("/MIRA/status", response_model=Dict[str, Any], summary="Check status process of a MIRA run", tags=["MIRA Workflows"])
@@ -909,6 +953,7 @@ async def get_mira_status(req: RunStatusRequest = Depends()):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))   
     
+    
 # ---------- Pipeline DAG / status ----------
 @app.get("/MIRA/DAG", response_model=Dict[str, Any], summary="Get MIRA DAG from assembly", tags=["MIRA Workflows"])
 async def get_mira_dag(req: RunRequest = Depends()):
@@ -927,6 +972,7 @@ async def get_mira_dag(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 @app.get("/MIRA/task_log", response_model=Dict[str, Any], summary="Get error log for a failed MIRA task", tags=["MIRA Workflows"])
 async def get_mira_task_log(req: TaskLogRequest = Depends()):
@@ -949,12 +995,14 @@ async def get_mira_task_log(req: TaskLogRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 ##############################################
 # 
 # MIRA RENAME AND COPY SECTION
 # 
 ##############################################    
+
     
 # ---------- Rename an existing MIRA run ----------
 @app.patch("/rename/run", response_model=Dict[str, Any], summary="Rename a run (updates DB record and on-disk run directory)", tags=["MIRA Rename & Copy"])
@@ -975,6 +1023,7 @@ async def rename_run(req: RenameRunRequest):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Copy an existing MIRA run ----------
 @app.post("/copy/run", response_model=Dict[str, Any], summary="Copy a run to a new name (duplicates DB record, samplesheet, FASTQs and outputs)", tags=["MIRA Rename & Copy"])
@@ -995,12 +1044,14 @@ async def copy_run(req: CopyRunRequest):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 ##############################################
 # 
 # MIRA RESULTS SECTION
 # 
 ##############################################       
+
 
 # ---------- Retrieve Barcode Assignments ----------
 @app.get("/retrieve/barcode_assignment", response_model=Optional[Dict[str, Any]], summary="Retrieve Barcode Assignments", tags=["MIRA Results"])
@@ -1020,6 +1071,7 @@ async def get_barcode_assignment(req: RunRequest = Depends()):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
     
+    
 # ---------- Retrieve QC statement ----------
 @app.get("/retrieve/qc_statement", response_model=Optional[Dict[str, Any]], summary="Retrieve QC Statement", tags=["MIRA Results"])
 async def get_qc_statement(req: RunRequest = Depends()):
@@ -1038,6 +1090,7 @@ async def get_qc_statement(req: RunRequest = Depends()):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
     
+    
 # ---------- Retrieve Quality Control Decisions ----------
 @app.get("/retrieve/quality_control_decisions", response_model=Optional[Dict[str, Any]], summary="Retrieve Quality Control Decisions", tags=["MIRA Results"])
 async def get_quality_control_decisions(req: RunRequest = Depends()):
@@ -1054,7 +1107,8 @@ async def get_quality_control_decisions(req: RunRequest = Depends()):
     except ValueError as err:
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))    
+        raise HTTPException(status_code=500, detail=str(err))   
+     
 
 # ---------- Retrieve MIRA Summary ----------
 @app.get("/retrieve/mira_summary", response_model=Optional[List[Dict[str, Any]]], summary="Retrieve MIRA Summary", tags=["MIRA Results"])
@@ -1074,6 +1128,7 @@ async def get_mira_summary(req: RunRequest = Depends()):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
     
+    
 # ---------- Retrieve Coverage Table----------
 @app.get("/retrieve/coverage_table", response_model=Optional[List[Dict[str, Any]]], summary="Retrieve Coverage Table", tags=["MIRA Results"])
 async def get_coverage(req: RunRequest = Depends()):
@@ -1092,6 +1147,7 @@ async def get_coverage(req: RunRequest = Depends()):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))   
     
+    
 # ---------- Retrieve Coverage Heatmap ----------
 @app.get("/retrieve/coverage_heatmap", response_model=Optional[Dict[str, Any]], summary="Retrieve Coverage Heatmap", tags=["MIRA Results"])
 async def get_coverage_heatmap(req: RunRequest = Depends()):
@@ -1109,6 +1165,7 @@ async def get_coverage_heatmap(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))  
+    
      
 # ---------- Retrieve Sample Coverage List ----------
 @app.get("/retrieve/sample_coverage_list", response_model=Optional[Dict[str, Any]], summary="Retrieve Sample Coverage List", tags=["MIRA Results"])
@@ -1127,6 +1184,7 @@ async def get_sample_coverage_list(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Retrieve Sample Coverage Sankey Figure ----------
 @app.get("/retrieve/sample_coverage_sankeyfig", response_model=Optional[Dict[str, Any]], summary="Retrieve Sample Coverage Sankey Figure", tags=["MIRA Results"])
@@ -1149,6 +1207,7 @@ async def get_sample_coverage_sankeyfig(
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Retrieve Sample Coverage Plot ----------
 @app.get("/retrieve/sample_coverage_plot", response_model=Optional[Dict[str, Any]], summary="Retrieve Sample Segment Coverage Plot", tags=["MIRA Results"])
@@ -1169,6 +1228,7 @@ async def get_sample_coverage_plot(
         return result
     except ValueError as err:
         raise HTTPException(status_code=404, detail=str(err))
+    
 
 # ---------- Retrieve Sample Combined (linear) Coverage Plot ----------
 @app.get("/retrieve/sample_coverage_linearfig", response_model=Optional[Dict[str, Any]], summary="Retrieve Sample Combined Coverage Plot", tags=["MIRA Results"])
@@ -1192,6 +1252,7 @@ async def get_sample_coverage_linearfig(
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
     
+    
 # ---------- Retrieve variants ----------
 @app.get("/retrieve/variants", response_model=Optional[List[Dict[str, Any]]], summary="Retrieve Variants", tags=["MIRA Results"])
 async def get_variants(req: RunRequest = Depends()):
@@ -1209,6 +1270,7 @@ async def get_variants(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
     
 # ---------- Retrieve minor snvs ----------
 @app.get("/retrieve/minor_snvs", response_model=Optional[List[Dict[str, Any]]], summary="Retrieve Minor SNVs", tags=["MIRA Results"])
@@ -1228,6 +1290,7 @@ async def get_minor_snvs(req: RunRequest = Depends()):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
     
+    
 # ---------- Retrieve indels ----------
 @app.get("/retrieve/indels", response_model=Optional[List[Dict[str, Any]]], summary="Retrieve Indels", tags=["MIRA Results"])
 async def get_indels(req: RunRequest = Depends()):
@@ -1245,6 +1308,7 @@ async def get_indels(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Retrieve Failed Amended Consensus ----------
 @app.get("/retrieve/failed_amended_consensus", response_model=Optional[Dict[str, Any]], summary="Retrieve Failed Amended Consensus", tags=["MIRA Results"])
@@ -1263,6 +1327,7 @@ async def get_failed_amended_consensus(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Retrieve Passed Amended Consensus ----------
 @app.get("/retrieve/passed_amended_consensus", response_model=Optional[Dict[str, Any]], summary="Retrieve Passed Amended Consensus", tags=["MIRA Results"])
@@ -1281,6 +1346,7 @@ async def get_passed_amended_consensus(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Retrieve AA Failed Fasta Location ----------
 @app.get("/retrieve/failed_amino_acid_consensus", response_model=Optional[Dict[str, Any]], summary="Retrieve Failed Amino Acid Consensus", tags=["MIRA Results"])
@@ -1299,6 +1365,7 @@ async def get_failed_amino_acid_consensus(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Retrieve AA Passed Fasta Location ----------
 @app.get("/retrieve/passed_amino_acid_consensus", response_model=Optional[Dict[str, Any]], summary="Retrieve Passed Amino Acid Consensus", tags=["MIRA Results"])
@@ -1316,7 +1383,8 @@ async def get_passed_amino_acid_consensus(req: RunRequest = Depends()):
     except ValueError as err:
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))        
+        raise HTTPException(status_code=500, detail=str(err))      
+      
 
 # ---------- Retrieve Nextclade Fasta Location ----------
 @app.get("/retrieve/nextclade_aligned_fasta", response_model=Optional[Dict[str, Any]], summary="Retrieve Nextclade Aligned Fasta", tags=["MIRA Results"])
@@ -1335,6 +1403,7 @@ async def get_nextclade_aligned_fasta(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 ##############################################
 # 
@@ -1342,80 +1411,113 @@ async def get_nextclade_aligned_fasta(req: RunRequest = Depends()):
 # 
 ##############################################        
 
+
 # ---------- Download NT Passed FASTA ----------
 @app.get("/download/nt_passed_fasta", summary="Download NT Passed FASTA", tags=["MIRA Downloads"])
 async def download_nt_passed_fasta(req: RunRequest = Depends()):
-    path = await asyncio.to_thread(retrieve_passed_amended_consensus, req.run_name, req.experiment_type)
-    if not path or not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="NT passed FASTA not found")
-    return FileResponse(path=path, filename=f"{req.run_name}_nt_passed.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    try:
+        path = await asyncio.to_thread(retrieve_passed_amended_consensus, req.run_name, req.experiment_type)
+        if not path or not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="NT passed FASTA not found")
+        return FileResponse(path=path, filename=f"{req.run_name}_nt_passed.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
 
 # ---------- Download NT Failed FASTA ----------
 @app.get("/download/nt_failed_fasta", summary="Download NT Failed FASTA", tags=["MIRA Downloads"])
 async def download_nt_failed_fasta(req: RunRequest = Depends()):
-    path = await asyncio.to_thread(retrieve_failed_amended_consensus, req.run_name, req.experiment_type)
-    if not path or not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="NT failed FASTA not found")
-    return FileResponse(path=path, filename=f"{req.run_name}_nt_failed.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    try:
+        path = await asyncio.to_thread(retrieve_failed_amended_consensus, req.run_name, req.experiment_type)
+        if not path or not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="NT failed FASTA not found")
+        return FileResponse(path=path, filename=f"{req.run_name}_nt_failed.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
+    
 # ---------- Download AA Passed FASTA ----------
 @app.get("/download/aa_passed_fasta", summary="Download AA Passed FASTA", tags=["MIRA Downloads"])
 async def download_aa_passed_fasta(req: RunRequest = Depends()):
-    path = await asyncio.to_thread(retrieve_passed_amino_acid_consensus, req.run_name, req.experiment_type)
-    if not path or not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="AA passed FASTA not found")
-    return FileResponse(path=path, filename=f"{req.run_name}_aa_passed.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    try:
+        path = await asyncio.to_thread(retrieve_passed_amino_acid_consensus, req.run_name, req.experiment_type)
+        if not path or not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="AA passed FASTA not found")
+        return FileResponse(path=path, filename=f"{req.run_name}_aa_passed.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ---------- Download AA Failed FASTA ----------
 @app.get("/download/aa_failed_fasta", summary="Download AA Failed FASTA", tags=["MIRA Downloads"])
 async def download_aa_failed_fasta(req: RunRequest = Depends()):
-    path = await asyncio.to_thread(retrieve_failed_amino_acid_consensus, req.run_name, req.experiment_type)
-    if not path or not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="AA failed FASTA not found")
-    return FileResponse(path=path, filename=f"{req.run_name}_aa_failed.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    try:
+        path = await asyncio.to_thread(retrieve_failed_amino_acid_consensus, req.run_name, req.experiment_type)
+        if not path or not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="AA failed FASTA not found")
+        return FileResponse(path=path, filename=f"{req.run_name}_aa_failed.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ---------- Download Custom Primer Config ----------
 @app.get("/download/custom_primer_config", summary="Download Custom Primer Config", tags=["MIRA Downloads"])
 async def download_custom_primer_config(req: RunRequest = Depends()):
-    pathogen = req.experiment_type.split("-")[0]
-    instrument = req.experiment_type.split("-")[-1]
-    path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, req.run_name, CUSTOM_PRIMER_CONFIG_FILENAME)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="Custom primer config file not found in storage. File may have been moved or deleted. Please re-upload a new custom primer config file if needed or turn off custom primer config.")
-    return FileResponse(path=path, filename=CUSTOM_PRIMER_CONFIG_FILENAME, media_type="application/octet-stream", content_disposition_type="attachment")
+    try:
+        pathogen = req.experiment_type.split("-")[0]
+        instrument = req.experiment_type.split("-")[-1]
+        path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, req.run_name, CUSTOM_PRIMER_CONFIG_FILENAME)
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="Custom primer config file not found in storage. File may have been moved or deleted. Please re-upload a new custom primer config file if needed or turn off custom primer config.")
+        return FileResponse(path=path, filename=CUSTOM_PRIMER_CONFIG_FILENAME, media_type="application/octet-stream", content_disposition_type="attachment")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ---------- Download Custom IRMA Config ----------
 @app.get("/download/custom_irma_config", summary="Download Custom IRMA Config", tags=["MIRA Downloads"])
 async def download_custom_irma_config(req: RunRequest = Depends()):
-    pathogen = req.experiment_type.split("-")[0]
-    instrument = req.experiment_type.split("-")[-1]
-    path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, req.run_name, CUSTOM_IRMA_CONFIG_FILENAME)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="Custom IRMA config file not found in storage. File may have been moved or deleted. Please re-upload a new custom IRMA config file if needed or turn off custom IRMA config.")
-    return FileResponse(path=path, filename=CUSTOM_IRMA_CONFIG_FILENAME, media_type="application/octet-stream", content_disposition_type="attachment")
+    try:
+        pathogen = req.experiment_type.split("-")[0]
+        instrument = req.experiment_type.split("-")[-1]
+        path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, req.run_name, CUSTOM_IRMA_CONFIG_FILENAME)
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="Custom IRMA config file not found in storage. File may have been moved or deleted. Please re-upload a new custom IRMA config file if needed or turn off custom IRMA config.")
+        return FileResponse(path=path, filename=CUSTOM_IRMA_CONFIG_FILENAME, media_type="application/octet-stream", content_disposition_type="attachment")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ---------- Download Custom QC Settings ----------
 @app.get("/download/custom_qc_settings", summary="Download Custom QC Settings", tags=["MIRA Downloads"])
 async def download_custom_qc_settings(req: RunRequest = Depends()):
-    pathogen = req.experiment_type.split("-")[0]
-    instrument = req.experiment_type.split("-")[-1]
-    path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, req.run_name, CUSTOM_QC_SETTINGS_FILENAME)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="Custom QC settings file not found in storage. File may have been moved or deleted. Please re-upload a new custom QC settings file if needed or turn off custom QC settings.")
-    return FileResponse(path=path, filename=CUSTOM_QC_SETTINGS_FILENAME, media_type="application/octet-stream", content_disposition_type="attachment")
+    try:
+        pathogen = req.experiment_type.split("-")[0]
+        instrument = req.experiment_type.split("-")[-1]
+        path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, req.run_name, CUSTOM_QC_SETTINGS_FILENAME)
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="Custom QC settings file not found in storage. File may have been moved or deleted. Please re-upload a new custom QC settings file if needed or turn off custom QC settings.")
+        return FileResponse(path=path, filename=CUSTOM_QC_SETTINGS_FILENAME, media_type="application/octet-stream", content_disposition_type="attachment")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ---------- Download Nextclade FASTA (single file by key) ----------
 @app.get("/download/nextclade_fasta", summary="Download Nextclade FASTA", tags=["MIRA Downloads"])
 async def download_nextclade_fasta(req: DownloadFastaRequest = Depends()):
-    files = await asyncio.to_thread(retrieve_nextclade_aligned_fasta, req.run_name, req.experiment_type)
-    if not files:
-        raise HTTPException(status_code=404, detail=f"No Nextclade FASTA files found for run '{req.run_name}' and experiment type '{req.experiment_type}' and key '{req.key}'.")
-    all_keys = list(files.keys())
-    path = files.get(req.key) if req.key else None
-    if not path or not os.path.exists(path):
-        raise HTTPException(status_code=404, detail=f"Invalid fasta keys. Available keys: {all_keys}")
-    safe_key = req.key if req.key else all_keys[0]
-    return FileResponse(path=path, filename=f"{req.run_name}_nextclade_{safe_key}.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    try:
+        files = await asyncio.to_thread(retrieve_nextclade_aligned_fasta, req.run_name, req.experiment_type)
+        if not files:
+            raise HTTPException(status_code=404, detail=f"No Nextclade FASTA files found for run '{req.run_name}' and experiment type '{req.experiment_type}' and key '{req.key}'.")
+        all_keys = list(files.keys())
+        path = files.get(req.key) if req.key else None
+        if not path or not os.path.exists(path):
+            raise HTTPException(status_code=404, detail=f"Invalid fasta keys. Available keys: {all_keys}")
+        safe_key = req.key if req.key else all_keys[0]
+        return FileResponse(path=path, filename=f"{req.run_name}_nextclade_{safe_key}.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ---------- Export MIRA Reports ----------
 @app.get("/download/mira_reports", summary="Export MIRA Reports", tags=["MIRA Downloads"])
@@ -1453,11 +1555,13 @@ async def download_mira_reports(req: RunRequest = Depends()):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
 
+
 ##############################################
 # 
 # MIRA DELETE SECTION
 # 
 ##############################################
+
 
 # ---------- Delete a single sample from a run's samplesheet ----------
 @app.delete("/delete/sample", response_model=Dict[str, Any], summary="Remove a sample from a run's samplesheet", tags=["MIRA Delete"])
@@ -1889,6 +1993,42 @@ async def monitor_submission_status(
         return status
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Manage the hourly submission status schedule
+@app.get("/cron/status", response_model=Dict[str, Any], summary="Get the hourly submission status schedule", tags=["SeqSender Workflows"])
+async def get_status_update_cron():
+    try:
+        return await asyncio.to_thread(get_status_update_schedule)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/cron/update/status", response_model=Dict[str, Any], summary="Create or update the hourly submission status schedule", tags=["SeqSender Workflows"])
+async def create_status_update_cron(req: StatusUpdateCronRequest):
+    try:
+        schedule = await asyncio.to_thread(save_status_update_schedule, req.interval_hours)
+        start_status_update_scheduler()
+        wake_status_update_scheduler()
+        return {
+            "message": "Hourly submission status updates scheduled.",
+            "schedule": schedule,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Delete the hourly submission status schedule
+@app.delete("/cron/delete/status", response_model=Dict[str, Any], summary="Remove the hourly submission status schedule", tags=["SeqSender Workflows"])
+async def delete_status_update_cron():
+    try:
+        await asyncio.to_thread(delete_status_update_schedule)
+        wake_status_update_scheduler()
+        return {"message": "Hourly submission status updates disabled."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Check status of a SeqSender submission
@@ -1909,7 +2049,10 @@ async def retrieve_submission_status(
         )
         return status
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))    
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
     
 # ---------- List all submissions ----------
 @app.get("/list/submitters", response_model=ListSubmitterResponse, summary="List all submitters", tags=["Submitter Utils"])
@@ -2415,16 +2558,19 @@ async def download_metadata(
     Download metadata file for a given organism and database. 
     The function will return a dictionary containing the details of the metadata file location.
     """
-    file_path = await asyncio.to_thread(
-        retrieve_seqsender_metadata,
-        submission_name = submission_name,
-        organism = organism,
-        database = database,
-        submission_type = submission_type
-    )
-    if file_path is None or not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail=f"Metadata file not found.")
-    return FileResponse(path=file_path, filename=f"{submission_name}_{METADATA_FILENAME}", media_type="application/octet-stream", content_disposition_type="attachment") 
+    try:
+        file_path = await asyncio.to_thread(
+            retrieve_seqsender_metadata,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        if file_path is None or not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"Metadata file not found.")
+        return FileResponse(path=file_path, filename=f"{submission_name}_{METADATA_FILENAME}", media_type="application/octet-stream", content_disposition_type="attachment") 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Download fasta file for a given organism and database
@@ -2439,16 +2585,19 @@ async def download_fasta(
     Download fasta file for a given organism and database. 
     The function will return a dictionary containing the details of the fasta file location.
     """
-    file_path = await asyncio.to_thread(
-        retrieve_seqsender_fasta,
-        submission_name = submission_name,
-        organism = organism,
-        database = database,
-        submission_type = submission_type
-    )
-    if file_path is None or not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail=f"FASTA file not found.")
-    return FileResponse(path=file_path, filename=f"{submission_name}_{FASTA_FILENAME}", media_type="application/octet-stream", content_disposition_type="attachment") 
+    try:
+        file_path = await asyncio.to_thread(
+            retrieve_seqsender_fasta,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        if file_path is None or not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"FASTA file not found.")
+        return FileResponse(path=file_path, filename=f"{submission_name}_{FASTA_FILENAME}", media_type="application/octet-stream", content_disposition_type="attachment") 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Download all raw read files for a given submission as a ZIP archive
@@ -2467,26 +2616,28 @@ async def download_raw_reads(
             database = database,
             submission_type = submission_type
         )
-    except ValueError as err:
-        raise HTTPException(status_code=404, detail=str(err))
 
-    temp_file = tempfile.NamedTemporaryFile(prefix="seqsender_raw_reads_", suffix=".zip", delete=False)
-    temp_file.close()
-    try:
-        with zipfile.ZipFile(temp_file.name, "w", compression=zipfile.ZIP_STORED) as archive:
-            for file_path in file_paths:
-                archive.write(file_path, arcname=os.path.basename(file_path))
-    except Exception:
-        os.unlink(temp_file.name)
-        raise
+        # Create a temporary ZIP file to store the raw read files
+        temp_file = tempfile.NamedTemporaryFile(prefix="seqsender_raw_reads_", suffix=".zip", delete=False)
+        temp_file.close()
+        try:
+            with zipfile.ZipFile(temp_file.name, "w", compression=zipfile.ZIP_STORED) as archive:
+                for file_path in file_paths:
+                    archive.write(file_path, arcname=os.path.basename(file_path))
+        except Exception:
+            os.unlink(temp_file.name)
+            raise
 
-    return FileResponse(
-        path=temp_file.name,
-        filename=f"{submission_name}_raw_reads.zip",
-        media_type="application/zip",
-        content_disposition_type="attachment",
-        background=BackgroundTask(os.unlink, temp_file.name)
-    )
+        # Return the ZIP file as a response
+        return FileResponse(
+            path=temp_file.name,
+            filename=f"{submission_name}_raw_reads.zip",
+            media_type="application/zip",
+            content_disposition_type="attachment",
+            background=BackgroundTask(os.unlink, temp_file.name)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Download gff file for a given organism and database
@@ -2501,16 +2652,19 @@ async def download_gff(
     Download gff file for a given organism and database. 
     The function will return a dictionary containing the details of the gff file location.
     """
-    file_path = await asyncio.to_thread(
-        retrieve_seqsender_gff,
-        submission_name = submission_name,
-        organism = organism,
-        database = database,
-        submission_type = submission_type
-    )
-    if file_path is None or not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail=f"GFF file not found.")
-    return FileResponse(path=file_path, filename=f"{submission_name}_{GFF_FILENAME}", media_type="application/octet-stream", content_disposition_type="attachment") 
+    try:
+        file_path = await asyncio.to_thread(
+            retrieve_seqsender_gff,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        if file_path is None or not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"GFF file not found.")
+        return FileResponse(path=file_path, filename=f"{submission_name}_{GFF_FILENAME}", media_type="application/octet-stream", content_disposition_type="attachment") 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Download table2asn file for a given organism and database
@@ -2525,13 +2679,16 @@ async def download_table2asn(
     Download table2asn file for a given organism and database. 
     The function will return a dictionary containing the details of the table2asn file location.
     """
-    file_path = await asyncio.to_thread(
-        retrieve_seqsender_table2asn,
-        submission_name = submission_name,
-        organism = organism,
-        database = database,
-        submission_type = submission_type
-    )
-    if file_path is None or not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail=f"table2asn file not found.")
-    return FileResponse(path=file_path, filename=f"{submission_name}_{TABLE2ASN_FILENAME}", media_type="application/octet-stream", content_disposition_type="attachment") 
+    try:
+        file_path = await asyncio.to_thread(
+            retrieve_seqsender_table2asn,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        if file_path is None or not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"table2asn file not found.")
+        return FileResponse(path=file_path, filename=f"{submission_name}_{TABLE2ASN_FILENAME}", media_type="application/octet-stream", content_disposition_type="attachment") 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

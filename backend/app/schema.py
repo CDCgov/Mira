@@ -238,6 +238,10 @@ class SubmissionRequest(BaseModel):
     database: List[_DatabaseTargets] = Field(..., description="One or more databases to submit to.")
     submission_type: _SubmissionTypes = Field(..., description="Type of submission.")
 
+class StatusUpdateCronRequest(BaseModel):
+    frequency: Literal["hourly"] = Field("hourly", description="How often submission statuses are updated.")
+    interval_hours: Literal[1, 2, 3, 4] = Field(1, description="Number of hours between status updates.")
+
 # ------  DELETE SUBMISSION REQUEST (REQUIRED: SUBMISSION NAME, ORGANISM) ----------
 class DeleteSubmissionRequest(BaseModel):
     submission_name: str = Field(..., description="Name of the submission.")
