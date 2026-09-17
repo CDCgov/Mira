@@ -11,3 +11,4 @@ frontend/dist/
 data/nf_status
 Mira.code-workspace
 .DS_Store
+nf_status/
