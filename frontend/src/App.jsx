@@ -885,11 +885,31 @@ function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colo
   // 1. filter — global search + per-column filters (all AND-combined)
   const q = searchQuery.trim().toLowerCase();
   const activeColFilters = Object.entries(colFilters).filter(([, v]) => (v ?? "").trim() !== "");
+  const matchColFilter = (cell, fv) => {
+    const trimmed = fv.trim();
+    // numeric comparison: >, <, >=, <=, =, != followed by a number
+    const m = trimmed.match(/^(>=|<=|!=|>|<|=)\s*(-?\d*\.?\d+)$/);
+    if (m) {
+      const cellNum = Number(cell);
+      if (cell == null || cell === "" || isNaN(cellNum)) return false;
+      const rhs = Number(m[2]);
+      switch (m[1]) {
+        case ">": return cellNum > rhs;
+        case "<": return cellNum < rhs;
+        case ">=": return cellNum >= rhs;
+        case "<=": return cellNum <= rhs;
+        case "=": return cellNum === rhs;
+        case "!=": return cellNum !== rhs;
+        default: return false;
+      }
+    }
+    return (cell == null ? "" : String(cell)).toLowerCase().includes(trimmed.toLowerCase());
+  };
   const filtered = (q || activeColFilters.length > 0)
     ? data.filter(row => {
         if (q && !cols.some(c => (row[c] == null ? "" : String(row[c])).toLowerCase().includes(q))) return false;
         for (const [c, fv] of activeColFilters) {
-          if (!(row[c] == null ? "" : String(row[c])).toLowerCase().includes(fv.trim().toLowerCase())) return false;
+          if (!matchColFilter(row[c], fv)) return false;
         }
         return true;
       })
@@ -1050,7 +1070,8 @@ function ResultTable({ title, data: rawData, page, setPage, pageSize = 100, colo
                     <input
                       value={colFilters[c] ?? ""}
                       onChange={(e) => setColFilter(c, e.target.value)}
-                      placeholder="Filter…"
+                      placeholder="Filter… (>, <, >=, <=)"
+                      title="Text matches substrings. For numbers use >, <, >=, <=, =, != (e.g. >100)"
                       className="w-full h-6 px-1.5 rounded border border-border bg-background text-[11px] font-normal font-mono focus:outline-none focus:ring-1 focus:ring-ring"
                     />
                   </th>
