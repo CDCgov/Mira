@@ -314,9 +314,9 @@ const TABS = [
 
 /* ── Home Tab ────────────────────────────────────── */
 const STATS = [
-  { label: "Sequencing Runs",          value: "…",  hover: "Click here to see past runs",  icon: Cpu,        color: "text-teal-600"     },
-  { label: "Sequences to NCBI",        value: "…", sub: "",  icon: Cloud,   color: "text-purple-500"     },
-  { label: "Sequences to GISAID",      value: "…", sub: "",         icon: Cloud,   color: "text-purple-500" },
+  { tag: "mira", label: "Sequencing Runs", value: "…",  hover: "Click here to see past runs",  icon: Cpu, color: "text-teal-600" },
+  { tag: "seqsender-ncbi", label: "Submissions to NCBI", value: "…", sub: "",  icon: Cloud,   color: "text-purple-500" },
+  { tag: "seqsender-gisaid", label: "Submissions to GISAID", value: "…", sub: "", icon: Cloud,   color: "text-purple-500" },
 ];
 
 const FEATURES = [
@@ -533,7 +533,7 @@ function HomeTab({ onNewRun, onLoadRun, onOpenSeqSender }) {
               <PlusCircle size={22} className="shrink-0" />
               <p className="whitespace-nowrap text-xl font-bold leading-none">New Run</p>
             </button>
-            {STATS.filter(({ label }) => label === "Sequencing Runs").map(({ label, icon: Icon, color }) => (
+            {STATS.filter(({ tag }) => tag === "mira").map(({ label, icon: Icon, color }) => (
               <button
                 key={label}
                 onClick={onLoadRun}
@@ -556,8 +556,8 @@ function HomeTab({ onNewRun, onLoadRun, onOpenSeqSender }) {
               <Send size={22} className="shrink-0 text-sky-700" />
               <p className="whitespace-nowrap text-xl font-bold leading-none">New Submission</p>
             </button>
-            {STATS.filter(({ label }) => label !== "Sequencing Runs" && label !== "Sequences to GISAID").map(({ label, sub, icon: Icon, color }) => {
-              const displayValue = label === "Sequences to NCBI"
+            {STATS.filter(({ tag }) => tag !== "mira" && tag !== "seqsender-gisaid").map(({ tag, label, sub, icon: Icon, color }) => {
+              const displayValue = tag === "seqsender-ncbi"
                 ? (ncbiCount === null ? "…" : ncbiCount.toLocaleString())
                 : (gisaidCount === null ? "…" : gisaidCount.toLocaleString());
               return (
