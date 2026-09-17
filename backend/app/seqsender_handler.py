@@ -552,6 +552,8 @@ def update_submission_in_database(
             },
             filter_var_by = ["AND", "AND", "AND"],
         )
+
+        # Determine which databases have been selected and which have been archived.
         selected_databases = {str(value).strip().upper() for value in database}
         archived_databases = [
             value
@@ -1623,13 +1625,19 @@ def submit_ncbi_submission(
         db_submission_tbl = lookup_tbl_in_database(
             db_tbl_name = ["submission"],
             return_var = ["*"],
-            filter_coln_var = ["submission_name", "organism", "database", "submission_type"],
-            filter_coln_val = {"submission_name": [submission_name], "organism": [organism], "database": selected_databases, "submission_type": [submission_type]},
-            filter_var_by = ["AND", "AND", "AND", "AND"]
+            filter_coln_var = ["submission_name", "organism", "database", "submission_type", "database_status"],
+            filter_coln_val = {"submission_name": [submission_name], "organism": [organism], "database": selected_databases, "submission_type": [submission_type], "database_status": ["ACTIVE"]},
+            filter_var_by = ["AND", "AND", "AND", "AND", "AND"]
         )
-        # Check if submission exists in the database
+        # Check if the submission has any active database targets.
         if db_submission_tbl.shape[0] == 0:
-           raise ValueError(f"Submission '{submission_name}' does not exist in the database.")
+           raise ValueError(f"Submission '{submission_name}' does not have any active databases.")
+
+        # Normalize and sort the list of selected databases from the submission table.
+        selected_databases = sorted({
+            _normalize_seqsender_database(value)
+            for value in db_submission_tbl.get_column("database").to_list()
+        })
 
         # Define the submission directory as seen by this backend process (used for local
         # file-existence checks, Popen's cwd, and the stdout log file).
@@ -1714,13 +1722,13 @@ def submit_ncbi_submission(
             cmd.extend(["--table2asn"])
 
         # Check if BioSample is in the database list
-        if "BIOSAMPLE" in [db.strip().upper() for db in database]:
+        if "BIOSAMPLE" in selected_databases:
             cmd.extend(["--biosample"])
         # Check if SRA is in the database list
-        if "SRA" in [db.strip().upper() for db in database]:
+        if "SRA" in selected_databases:
             cmd.extend(["--sra"])
         # Check if GenBank is in the database list
-        if "GENBANK" in [db.strip().upper() for db in database]:
+        if "GENBANK" in selected_databases:
             cmd.extend(["--genbank"])
         # Check submission type
         if "TEST" == submission_type.strip().upper():
@@ -1738,9 +1746,9 @@ def submit_ncbi_submission(
             (f" --fasta_file {fasta_file}\n" if "GENBANK" in selected_databases else "") +
             (f" --gff_file {gff_file_path}\n" if gff_file else "") +
             (f" --table2asn\n" if table2asn else "") +
-            (f" --biosample\n" if "BIOSAMPLE" in [db.strip().upper() for db in database] else "") +
-            (f" --sra\n" if "SRA" in [db.strip().upper() for db in database] else "") +
-            (f" --genbank\n" if "GENBANK" in [db.strip().upper() for db in database] else "") +
+            (f" --biosample\n" if "BIOSAMPLE" in selected_databases else "") +
+            (f" --sra\n" if "SRA" in selected_databases else "") +
+            (f" --genbank\n" if "GENBANK" in selected_databases else "") +
             (f" --test\n" if "TEST" == submission_type.strip().upper() else "")
         )    
 
@@ -1768,7 +1776,7 @@ def submit_ncbi_submission(
                 "identity": _seqsender_process_identity(
                     submission_name,
                     organism,
-                    database,
+                    selected_databases,
                     submission_type,
                 ),
                 "log_path": seqsender_stdout_path,
@@ -1809,14 +1817,14 @@ def submit_gisaid_submission(
         db_submission_tbl = lookup_tbl_in_database(
             db_tbl_name = ["submission"],
             return_var = ["*"],
-            filter_coln_var = ["submission_name", "organism", "database", "submission_type"],
-            filter_coln_val = {"submission_name": [submission_name], "organism": [organism], "database": [database], "submission_type": [submission_type]},
-            filter_var_by = ["AND", "AND", "AND", "AND"]
+            filter_coln_var = ["submission_name", "organism", "database", "submission_type", "database_status"],
+            filter_coln_val = {"submission_name": [submission_name], "organism": [organism], "database": [database], "submission_type": [submission_type], "database_status": ["ACTIVE"]},
+            filter_var_by = ["AND", "AND", "AND", "AND", "AND"]
         )
 
-        # Check if submission exists in the database
+        # Check if the submission database is active.
         if db_submission_tbl.shape[0] == 0:
-           raise ValueError(f"Submission '{submission_name}' does not exist in the database.")
+           raise ValueError(f"Submission '{submission_name}' does not have an active '{database}' database.")
 
         # Retrieve submitter from submission table
         submitter = db_submission_tbl.select("submitter").to_series().to_list()[0]
@@ -1973,13 +1981,19 @@ def prep_seqsender_submission(
         db_submission_tbl = lookup_tbl_in_database(
             db_tbl_name = ["submission"],
             return_var = ["*"],
-            filter_coln_var = ["submission_name", "organism", "database", "submission_type"],
-            filter_coln_val = {"submission_name": [submission_name], "organism": [organism], "database": selected_databases, "submission_type": [submission_type]},
-            filter_var_by = ["AND", "AND", "AND", "AND"]
+            filter_coln_var = ["submission_name", "organism", "database", "submission_type", "database_status"],
+            filter_coln_val = {"submission_name": [submission_name], "organism": [organism], "database": selected_databases, "submission_type": [submission_type], "database_status": ["ACTIVE"]},
+            filter_var_by = ["AND", "AND", "AND", "AND", "AND"]
         )
-        # Check if submission exists in the database
+        # Check if the submission has any active database targets.
         if db_submission_tbl.shape[0] == 0:
-           raise ValueError(f"Submission '{submission_name}' does not exist in the database.")
+           raise ValueError(f"Submission '{submission_name}' does not have any active databases.")
+
+        # Normalize and sort the list of selected databases from the submission table.
+        selected_databases = sorted({
+            _normalize_seqsender_database(value)
+            for value in db_submission_tbl.get_column("database").to_list()
+        })
 
         # Define the submission directory as seen by this backend process.
         submission_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism))
@@ -2235,22 +2249,30 @@ def check_seqsender_submission(
     submission_type: str
 ) -> Dict[str, Any]:
 
-    # Look up the submission record in the database.
+    # Look up only active database targets for the submission.
+    selected_databases = [_normalize_seqsender_database(db) for db in database]
     db_submission_tbl = lookup_tbl_in_database(
         db_tbl_name=["submission"],
         return_var=["*"],
-        filter_coln_var=["submission_name", "organism", "database", "submission_type"],
+        filter_coln_var=["submission_name", "organism", "database", "submission_type", "database_status"],
         filter_coln_val={
             "submission_name": [submission_name],
             "organism": [organism],
-            "database": database,
+            "database": selected_databases,
             "submission_type": [submission_type],
+            "database_status": ["ACTIVE"],
         },
-        filter_var_by=["AND", "AND", "AND", "AND"],
+        filter_var_by=["AND", "AND", "AND", "AND", "AND"],
     )
-    # Raise an error if the submission does not exist in the database.
+    # Raise an error if the submission has no active database targets.
     if db_submission_tbl.is_empty():
-        raise ValueError(f"Submission '{submission_name}' does not exist in the database.")
+        raise ValueError(f"Submission '{submission_name}' does not have any active databases.")
+
+    # Normalize and sort the list of selected databases from the submission table.
+    selected_databases = sorted({
+        _normalize_seqsender_database(value)
+        for value in db_submission_tbl.get_column("database").to_list()
+    })
 
     # Ensure the submission directory exists.
     submission_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism))
@@ -2289,7 +2311,7 @@ def check_seqsender_submission(
     submission_status = load_submission_status(
         submission_name=submission_name,
         organism=organism,
-        database=database,
+        database=selected_databases,
         submission_type=submission_type,
     )
 

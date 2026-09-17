@@ -134,8 +134,10 @@ def update_all_submission_statuses() -> dict[str, Any]:
         key = (row["submission_name"], row["organism"], row["submission_type"])
         if str(row["submission_status"]).strip().upper() == "CREATED":
             skipped_created.add(key)
+            grouped.pop(key, None)
             continue
-        grouped.setdefault(key, set()).add(row["database"])
+        if key not in skipped_created:
+            grouped.setdefault(key, set()).add(row["database"])
 
     succeeded = 0
     failures: list[str] = []
