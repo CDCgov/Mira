@@ -5,7 +5,7 @@ x-mira-nf-image:
 
 x-seqsender-image:
   &seqsender-image
-  ghcr.io/cdcgov/seqsender:v1.5.1
+  ghcr.io/cdcgov/seqsender:v1.3.93
 
 x-data-storage-path:
   &data-storage-path
@@ -39,6 +39,7 @@ services:
     privileged: true
     ports:
       - 5174:5175
+      - 8080:8080
     restart: always
     volumes:
       - type: bind

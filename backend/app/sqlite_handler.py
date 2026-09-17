@@ -281,7 +281,7 @@ def delete_val_in_database(
         raise ValueError("The length of 'delete_coln_var' must equal to the length of 'delete_coln_val'.")
     elif any([var not in delete_coln_val.keys() for var in delete_coln_var]):
         raise ValueError("'delete_coln_val' must a dictionary with names or labels that match the values of 'delete_coln_var'.")
-    elif len(delete_coln_var) > 1 and len(delete_var_by) <= (len(delete_coln_var) - 1):
+    elif len(delete_coln_var) > 1 and not (delete_var_by and (len(delete_coln_var) - 1) <= len(delete_var_by) <= len(delete_coln_var)):
         raise ValueError("The length of 'delete_var_by' must be one less or equal to the length of 'delete_coln_var'.")
     elif len(delete_coln_var) > 1 and any([val.upper() not in ["OR", "AND"] for val in delete_var_by]):
         raise ValueError("'delete_var_by' must contain a list of AND/OR logical operators.")

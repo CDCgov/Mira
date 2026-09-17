@@ -4,13 +4,13 @@ Submission:
     Password: 
     Spuid_Namespace: 
     BioSample_Package: Pathogen.cl.1.0
-    GenBank_Auto_Remove_Failed_Samples: true
     Publication_Title: 
     Publication_Status: Unpublished
-    Submission_Position: 1
     Specified_Release_Date: 
+    GenBank_Auto_Remove_Failed_Samples: false
     Link_Sample_Between_NCBI_Databases: true
     Add_Definition_Line_Accessions: true
+    Submission_Position: 1
     Description:
       Organization:
         Role: 

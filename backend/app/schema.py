@@ -169,8 +169,14 @@ class SubmissionInfo(BaseModel):
     submitter_name: Optional[str] = Field(None, description="Submitter name for the submission.")
     ncbi_publication_title: Optional[str] = Field(None, description="NCBI publication title.")
     ncbi_publication_status: _NcbiPublicationStatuses = Field(..., description="NCBI publication status.")
-    ncbi_release_date: Optional[str] = Field(None, description="NCBI release date.")    
+    ncbi_release_date: Optional[str] = Field(None, description="NCBI release date.")
+    number_of_samples: Optional[int] = Field(None, description="Number of samples in the submission's metadata/FASTA.")
+    ncbi_submission_id: Optional[str] = Field(None, description="Accession/ID returned by the submission portal.")
+    ncbi_submission_status: Optional[str] = Field(None, description="Raw status reported by the submission portal.")
     submission_status: _SubmissionStatuses = Field(..., description="Status of the submission.")
+    comments: Optional[str] = Field(None, description="Additional comments for the submission.")
+    date_submitted: Optional[str] = Field(None, description="Date the submission was created.")
+    date_updated: Optional[str] = Field(None, description="Date the submission was last updated.")
     @model_validator(mode='after')
     def validate_against_submission_schema(self) -> 'SubmissionInfo':
         tbl = pl.DataFrame([self.model_dump()])
@@ -221,11 +227,41 @@ class DBSubmitterInfo(SubmitterInfo):
 class ListSubmitterResponse(BaseModel):
     SubmitterInfo: Optional[List[DBSubmitterInfo]] = Field(None, description="Information about the submitters.")
 
+# ------  DELETE SUBMITTER REQUEST (REQUIRED: SUBMITTER NAME, SUBMISSION PORTAL) ----------
+class DeleteSubmitterRequest(BaseModel):
+    submitter_name: str = Field(..., description="Name of the submitter.")
+    submission_portal: _SubmissionPortals = Field(..., description="Submission portal (NCBI or GISAID).")
+
 class SubmissionRequest(BaseModel):
     submission_name: str = Field(..., description="Name of the submission.")
     organism: _Organisms = Field(..., description="Organism for which to send sequences.")
     database: List[_DatabaseTargets] = Field(..., description="One or more databases to submit to.")
     submission_type: _SubmissionTypes = Field(..., description="Type of submission.")
+
+# ------  DELETE SUBMISSION REQUEST (REQUIRED: SUBMISSION NAME, ORGANISM) ----------
+class DeleteSubmissionRequest(BaseModel):
+    submission_name: str = Field(..., description="Name of the submission.")
+    organism: _Organisms = Field(..., description="Organism for which to send sequences.")
+
+# ------  COPY SUBMISSION REQUEST (REQUIRED: SUBMISSION NAME, ORGANISM, NEW SUBMISSION NAME) ----------
+class CopySubmissionRequest(DeleteSubmissionRequest):
+    new_submission_name: str = Field(..., description="Name for the duplicated submission.")
+
+# ------  UPDATE SUBMISSION COMMENTS REQUEST ----------
+class UpdateSubmissionCommentsRequest(BaseModel):
+    submission_name: str = Field(..., description="Name of the submission.")
+    organism: _Organisms = Field(..., description="Organism for which to send sequences.")
+    database: _DatabaseTargets = Field(..., description="Database whose row's comments should be updated.")
+    submission_type: _SubmissionTypes = Field(..., description="Type of submission.")
+    comments: Optional[str] = Field(None, description="Additional comments for the submission.")
+
+# ------  UPDATE SUBMISSION STATUS REPORT MESSAGES REQUEST ----------
+class UpdateSubmissionStatusReportMessagesRequest(BaseModel):
+    submission_name: str = Field(..., description="Name of the submission.")
+    organism: _Organisms = Field(..., description="Organism for which to send sequences.")
+    database: _DatabaseTargets = Field(..., description="Database whose status report messages should be updated.")
+    submission_type: _SubmissionTypes = Field(..., description="Type of submission.")
+    messages: Dict[str, Optional[str]] = Field(default_factory=dict, description="Mapping of sample_name -> edited message for this database's status report rows.")
 
 class CreateSubmissionRequest(SubmissionRequest):
     ncbi_submitter_info: Optional[SubmitterInfo] = Field(None, description="NCBI submitter information for the submission.")

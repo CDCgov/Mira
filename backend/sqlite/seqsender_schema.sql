@@ -37,8 +37,8 @@ CREATE TABLE IF NOT EXISTS submitter (
   ncbi_submitter_alt_email  TEXT DEFAULT NULL,
   ncbi_submitter_first_name TEXT DEFAULT NULL,
   ncbi_submitter_last_name  TEXT DEFAULT NULL,
-  created_date              TEXT NOT NULL DEFAULT (date('now')),
-  updated_date              TEXT NOT NULL DEFAULT (date('now')),
+  created_date              TEXT DEFAULT NULL,
+  updated_date              TEXT DEFAULT NULL,
   UNIQUE (submitter_name, organism, submission_portal)
 );
 --
@@ -88,75 +88,13 @@ CREATE TABLE IF NOT EXISTS submission (
                             )),
   submission_status         TEXT NOT NULL DEFAULT 'CREATED' 
                             CHECK (submission_status IN (
-                              'CREATED', 'SUBMITTED', 'PROCESSING', 
-                              'CANCELED', 'FAILED', 'COMPLETED'
+                              'CREATED', 'SUBMITTED', 'PROCESSING', 'FAILED', 'COMPLETED'
                             )),
-  date_submitted            TEXT NOT NULL DEFAULT (date('now')),
-  date_updated              TEXT NOT NULL DEFAULT (date('now')),
+  comments                  TEXT DEFAULT NULL,
+  date_submitted            TEXT DEFAULT NULL,
+  date_updated              TEXT DEFAULT NULL,
   UNIQUE (submission_name, organism, database, submission_type),
   FOREIGN KEY (submitter_name, organism, submission_portal) REFERENCES submitter (submitter_name, organism, submission_portal) ON DELETE CASCADE
-);
---
--- Table structure for table `bs_submission_status`
---
-CREATE TABLE IF NOT EXISTS bs_submission_status (
-  submission_id                         INTEGER NOT NULL REFERENCES submission(submission_id) ON DELETE CASCADE,
-  num_of_samples                        INTEGER NOT NULL DEFAULT 0 CHECK (num_of_samples >= 0),
-  bs_sample_name                        TEXT NOT NULL,
-  biosample_status                      TEXT DEFAULT NULL,
-  biosample_accession                   TEXT DEFAULT NULL,
-  biosample_message                     TEXT DEFAULT NULL,
-  comments                              TEXT DEFAULT NULL,
-  date_submitted                        TEXT DEFAULT (date('now')),
-  date_updated                          TEXT DEFAULT (date('now')),
-  UNIQUE(submission_id, bs_sample_name)
-);
---
--- Table structure for table `sra_submission_status`
---
-CREATE TABLE IF NOT EXISTS sra_submission_status (
-  submission_id                         INTEGER NOT NULL REFERENCES submission(submission_id) ON DELETE CASCADE,
-  num_of_samples                        INTEGER NOT NULL DEFAULT 0 CHECK (num_of_samples >= 0),
-  sra_sample_name                       TEXT NOT NULL,
-  sra_status                            TEXT DEFAULT NULL,
-  sra_accession                         TEXT DEFAULT NULL,
-  sra_message                           TEXT DEFAULT NULL,
-  comments                              TEXT DEFAULT NULL,
-  date_submitted                        TEXT DEFAULT (date('now')),
-  date_updated                          TEXT DEFAULT (date('now')),
-  UNIQUE(submission_id, sra_sample_name)
-);
---
--- Table structure for table `gb_submission_status`
---
-CREATE TABLE IF NOT EXISTS gb_submission_status (
-  submission_id                         INTEGER NOT NULL REFERENCES submission(submission_id) ON DELETE CASCADE,
-  num_of_samples                        INTEGER NOT NULL DEFAULT 0 CHECK (num_of_samples >= 0),
-  gb_sample_name                        TEXT NOT NULL,
-  genbank_status                        TEXT DEFAULT NULL,
-  genbank_accession                     TEXT DEFAULT NULL,
-  genbank_message                       TEXT DEFAULT NULL,
-  comments                              TEXT DEFAULT NULL,
-  date_submitted                        TEXT DEFAULT (date('now')),
-  date_updated                          TEXT DEFAULT (date('now')),
-  UNIQUE(submission_id, gb_sample_name)
-);
---
--- Table structure for table `gs_submission_status`
---
-CREATE TABLE IF NOT EXISTS gs_submission_status (
-  submission_id                         INTEGER NOT NULL REFERENCES submission(submission_id) ON DELETE CASCADE,
-  num_of_samples                        INTEGER NOT NULL DEFAULT 0 CHECK (num_of_samples >= 0),
-  gs_sample_name                        TEXT NOT NULL,
-  gs_segment_name                       TEXT NOT NULL,
-  gs_status                             TEXT DEFAULT NULL,
-  gisaid_accession_epi_isl_id           TEXT DEFAULT NULL,
-  gisaid_segment_accession_epi_isl_id   TEXT DEFAULT NULL,
-  gisaid_message                        TEXT DEFAULT NULL,
-  comments                              TEXT DEFAULT NULL,
-  date_submitted                        TEXT DEFAULT (date('now')),
-  date_updated                          TEXT DEFAULT (date('now')),
-  UNIQUE(submission_id, gs_sample_name, gs_segment_name)
 );
 --
 -- Table structure for table `metadata`

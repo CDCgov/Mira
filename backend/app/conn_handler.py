@@ -131,12 +131,16 @@ def _apply_migrations(connection: sqlite3.Connection) -> None:
         ("submission", "database_status", "TEXT NOT NULL DEFAULT 'ACTIVE'"),
         ("submission", "gff_file", "BOOLEAN NOT NULL DEFAULT 0"),
         ("submission", "table2asn", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("submission", "number_of_samples", "INTEGER NOT NULL DEFAULT 0"),
         ("submission", "submitter_name", "TEXT NOT NULL"),
         ("submission", "ncbi_publication_title", "TEXT DEFAULT NULL"),
         ("submission", "ncbi_publication_status", "TEXT NOT NULL DEFAULT 'Unpublished'"),
         ("submission", "ncbi_release_date", "TEXT DEFAULT NULL"),
         ("submission", "ncbi_submission_id", "TEXT DEFAULT NULL"),
         ("submission", "ncbi_submission_status", "TEXT DEFAULT NULL"),
+        ("submission", "date_submitted", "TEXT DEFAULT NULL"),
+        ("submission", "date_updated", "TEXT DEFAULT NULL"),
+        ("submission", "comments", "TEXT DEFAULT NULL")
     ]
     # A stale "submission_id" TEXT column (an old external-accession field) collides with the
     # surrogate integer primary key the current schema expects under that same name — drop the
@@ -147,6 +151,18 @@ def _apply_migrations(connection: sqlite3.Connection) -> None:
             connection.execute('ALTER TABLE "submission" DROP COLUMN "submission_id"')
         connection.execute('ALTER TABLE "submission" RENAME COLUMN "submission_id_pk" TO "submission_id"')
         connection.commit()
+
+    # date_submitted/date_updated were originally NOT NULL DEFAULT date('now'); relax them to
+    # nullable (DEFAULT NULL) so a freshly copied submission (never submitted/checked yet) can
+    # start out with no dates. SQLite can't alter a column's NOT NULL/DEFAULT in place, so the
+    # table is rebuilt when either column is still found to be NOT NULL.
+    date_col_notnull = {
+        row[1]: row[3]
+        for row in connection.execute('PRAGMA table_info("submission")').fetchall()
+        if row[1] in ("date_submitted", "date_updated")
+    }
+    if any(date_col_notnull.values()):
+        _relax_submission_date_columns(connection)
     for table, column, definition in _required_columns:
         existing = [row[1] for row in connection.execute(f'PRAGMA table_info("{table}")').fetchall()]
         # Only migrate when the table exists but the column is missing
@@ -163,6 +179,34 @@ def _apply_migrations(connection: sqlite3.Connection) -> None:
         if old_column in existing and new_column not in existing:
             connection.execute(f'ALTER TABLE "{table}" RENAME COLUMN "{old_column}" TO "{new_column}"')
             connection.commit()
+
+
+# Rebuild the "submission" table so date_submitted/date_updated become nullable (DEFAULT NULL),
+# replacing their original NOT NULL DEFAULT (date('now')) definition. SQLite has no ALTER COLUMN,
+# so the table is renamed aside, recreated from its own (patched) DDL, repopulated, and dropped.
+def _relax_submission_date_columns(connection: sqlite3.Connection) -> None:
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='submission'"
+    ).fetchone()
+    if row is None:
+        return
+    relaxed_sql = re.sub(
+        r"(date_submitted|date_updated)\s+TEXT\s+NOT\s+NULL\s+DEFAULT\s*\(\s*date\(\s*['\"]now['\"]\s*\)\s*\)",
+        r"\1 TEXT DEFAULT NULL",
+        row[0],
+        flags=re.IGNORECASE,
+    )
+    if relaxed_sql == row[0]:
+        return
+    columns = [col[1] for col in connection.execute('PRAGMA table_info("submission")').fetchall()]
+    column_list = ", ".join(f'"{col}"' for col in columns)
+    connection.execute("PRAGMA foreign_keys = OFF;")
+    connection.execute('ALTER TABLE "submission" RENAME TO "submission_pre_relax"')
+    connection.execute(relaxed_sql)
+    connection.execute(f'INSERT INTO "submission" ({column_list}) SELECT {column_list} FROM "submission_pre_relax"')
+    connection.execute('DROP TABLE "submission_pre_relax"')
+    connection.execute("PRAGMA foreign_keys = ON;")
+    connection.commit()
 
 
 

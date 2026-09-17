@@ -4,7 +4,7 @@ ARG MICROMAMBA_IMAGE=${MICROMAMBA_IMAGE:-mambaorg/micromamba:2.8.0}
 
 # Create an argument to pull a particular version of seqsender image (backend only)
 ARG SEQSENDER_IMAGE
-ARG SEQSENDER_IMAGE=${SEQSENDER_IMAGE:-ghcr.io/cdcgov/seqsender:v1.5.1}
+ARG SEQSENDER_IMAGE=${SEQSENDER_IMAGE:-ghcr.io/cdcgov/seqsender:v1.3.93}
 
 # Define the base image shared by both the backend and frontend stages
 ARG MIRA_NF_IMAGE
@@ -41,11 +41,6 @@ ENV SEQSENDER_DIR=/seqsender
 
 # Copy SeqSender binary from the seqsender image
 COPY --from=seqsender ${SEQSENDER_DIR} ${SEQSENDER_DIR}
-
-# SeqSender v1.5.1's prep dispatcher omits the required decrypt_key argument.
-# Prep has no --key option, and its config loader accepts None for keyless preparation.
-RUN sed -i '/if command == "prep"/{n;s/table2asn=args.table2asn, /table2asn=args.table2asn, decrypt_key=None, /;}' ${SEQSENDER_DIR}/seqsender.py \
-  && grep -F 'table2asn=args.table2asn, decrypt_key=None' ${SEQSENDER_DIR}/seqsender.py
 
 # Create the isolated SeqSender environment from its image manifest
 RUN micromamba create --yes --name seqsender -f ${SEQSENDER_DIR}/env.yaml \
@@ -112,7 +107,6 @@ ENV DATA_DIR=/data
 VOLUME ${DATA_DIR}
 
 ############# MIRA DESCRIPTION ##################
-
 COPY DESCRIPTION ${MIRA_DIR}/DESCRIPTION
 
 ############# MIRA Backend ##################

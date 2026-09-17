@@ -38,9 +38,15 @@ from .schema import (
     RenameRunRequest,
     CopyRunRequest,
     SubmissionRequest,
+    DeleteSubmissionRequest,
+    CopySubmissionRequest,
     CreateSubmissionRequest,
+    UpdateSubmissionCommentsRequest,
+    UpdateSubmissionStatusReportMessagesRequest,
     ListSubmissionResponse,
     ListSubmitterResponse,
+    SubmitterInfo,
+    DeleteSubmitterRequest,
 )
 
 # Import schema validation
@@ -62,7 +68,6 @@ from .schema_validator import (
     illumina_samplesheet_pa_schema, 
     CONFIG_TEMPLATE_PATH,
     CONFIG_FILENAME,
-    METADATA_TEMPLATE_PATH,
     METADATA_FILENAME,
     FASTA_FILENAME,
     GFF_FILENAME,
@@ -109,11 +114,22 @@ from .mira_handler import (
 
 # Import SeqSender handler
 from .seqsender_handler import (
+    _get_seqsender_version,
     retrieve_submission,
     create_seqsender_submission,
-    submit_seqsender_submission,
+    delete_seqsender_submission,
+    copy_seqsender_submission,
+    update_seqsender_submission_comments,
+    update_seqsender_submission_status_report_messages,
+    save_submitter,
+    delete_submitter,
+    submit_ncbi_submission,
+    prep_seqsender_submission,
+    check_seqsender_submission,
+    load_submission_status,
     retrieve_seqsender_config,
     retrieve_seqsender_metadata,
+    retrieve_seqsender_metadata_template,
     retrieve_seqsender_fasta,
     retrieve_seqsender_raw_reads,
     validate_seqsender_uploaded_files,
@@ -1490,6 +1506,17 @@ async def delete_run(req: RunRequest):
 # 
 ##############################################
 
+# ---------- List all submissions ----------
+@app.get("/seqsender/version", response_model=Dict[str, str], summary="Get SeqSender version", tags=["SeqSender Utils"])
+async def get_seqsender_version():
+    try:
+        version = _get_seqsender_version()
+        return {"version": version}
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
 # Upload config file to SeqSender storage location
 @app.post("/upload/seqsender/config", response_model=Dict[str, Any], summary="Upload a config file to SeqSender storage location", tags=["SeqSender Workflows"])
 async def upload_seqsender_config(
@@ -1711,132 +1738,6 @@ async def upload_seqsender_gff(
         raise HTTPException(status_code=500, detail=str(err)) 
     
 
-# ---------- List all submissions ----------
-@app.get("/list/submitters", response_model=ListSubmitterResponse, summary="List all submitters", tags=["SeqSender Utils"])
-async def get_submitters(
-    submission_portal: Optional[Literal[tuple(submission_portals)]] = Query(None, description="Submission portal (NCBI or GISAID).")
-):
-    """
-    Return a list of submitters in the database, optionally filtered by submission_portal
-    ("NCBI" or "GISAID"), including saved passwords so users can verify or update them.
-    """
-    try:
-        db_submitter_tbl = lookup_tbl_in_database(
-            db_tbl_name = ["submitter"],
-            return_var  = ["*"],
-            filter_coln_var = ["submission_portal"] if submission_portal else None,
-            filter_coln_val = {"submission_portal": [submission_portal]} if submission_portal else None,
-            filter_var_by = ["AND"] if submission_portal else None
-        )
-        if db_submitter_tbl.shape[0] == 0:
-            return {"SubmitterInfo": []}
-        else:
-            return {"SubmitterInfo": db_submitter_tbl.to_dicts()}
-    except ValueError as err:
-        raise HTTPException(status_code=404, detail=str(err))
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))
-
-
-@app.get("/retrieve/submitter", response_model=ListSubmitterResponse, summary="Retrieve information about a given submitter", tags=["SeqSender Utils"])
-async def get_submitter_info(
-    submitter_name: str = Query(..., description="Name of the submitter."),
-    submission_portal: Literal[tuple(submission_portals)] = Query(..., description="Submission portal (NCBI or GISAID).")
-):
-    """
-    Return a submitter matching the given name and submission portal, including the saved
-    password so the user can verify or update it.
-    """
-    try:
-        db_submitter_tbl = lookup_tbl_in_database(
-            db_tbl_name = ["submitter"],
-            return_var  = ["*"],
-            filter_coln_var = ["submitter_name", "submission_portal"],
-            filter_coln_val = {"submitter_name": [submitter_name], "submission_portal": [submission_portal]},
-            filter_var_by = ["AND", "AND"],
-        )
-        if db_submitter_tbl.shape[0] == 0:
-            return {"SubmitterInfo": []}
-        else:
-            return {"SubmitterInfo": db_submitter_tbl.to_dicts()}
-    except ValueError as err:
-        raise HTTPException(status_code=404, detail=str(err))
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))    
-    
-
-@app.get("/list/submissions", response_model=ListSubmissionResponse, summary="List all submissions", tags=["SeqSender Utils"])
-async def get_submissions():
-    """
-    Return a list of submissions in database.
-    """
-    # Query for all assembly runs
-    try:
-        db_submission_tbl = lookup_tbl_in_database(
-            db_tbl_name = ["submission"],
-            return_var  = ["*"]
-        )
-        # If no submissions found, return an empty list
-        if db_submission_tbl.shape[0] == 0:
-            return {"submission_info": []}
-        else:
-            return {"submission_info": db_submission_tbl.to_dicts()}
-    except ValueError as err:
-        raise HTTPException(status_code=404, detail=str(err))
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))
-    
-
-# ---------- Retrieve SeqSender submission details ----------    
-@app.get("/retrieve/submission", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender submission details", tags=["SeqSender Utils"])
-async def get_submission_info(
-    submission_name: str = Query(..., description="Name of the submission."),
-    organism: Literal[tuple(organisms)] = Query(..., description="Type of organisms to submit."),
-    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
-    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission.")
-):
-    """
-    Retrieve SeqSender submission details for a given submission name, organism, database, and submission type. 
-    The function will return a list of dictionaries containing the details of the submission.
-    """
-    try:
-        result = await asyncio.to_thread(
-            retrieve_submission,
-            submission_name = submission_name,
-            organism = organism,
-            database = database,
-            submission_type = submission_type
-        )
-        return result
-    except ValueError as err:
-        raise HTTPException(status_code=404, detail=str(err))
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))    
-
-
-@app.get("/validate/seqsender/files", response_model=Dict[str, Any], summary="Validate files for an existing SeqSender submission", tags=["SeqSender Utils"])
-async def validate_submission_files(
-    submission_name: str = Query(..., description="Name of the submission."),
-    organism: Literal[tuple(organisms)] = Query(..., description="Type of organisms to submit."),
-    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
-    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
-    gff_file: bool = Query(False, description="Whether a stored GFF file is required."),
-):
-    try:
-        return await asyncio.to_thread(
-            validate_seqsender_uploaded_files,
-            submission_name=submission_name,
-            organism=organism,
-            database=database,
-            submission_type=submission_type,
-            require_gff=gff_file,
-        )
-    except ValueError as err:
-        raise HTTPException(status_code=404, detail=str(err))
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))
-    
-    
 # ---------- Create SeqSender submission ----------
 @app.post("/create/submission", response_model=Dict[str, Any], summary="Create a SeqSender submission", tags=["SeqSender Workflows"])
 async def create_submission(req: CreateSubmissionRequest):
@@ -1877,6 +1778,363 @@ async def create_submission(req: CreateSubmissionRequest):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))       
       
+
+@app.get("/validate/seqsender/files", response_model=Dict[str, Any], summary="Validate files for an existing SeqSender submission", tags=["SeqSender Workflows"])
+async def validate_submission_files(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Type of organisms to submit."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+    gff_file: bool = Query(False, description="Whether a stored GFF file is required."),
+):
+    try:
+        return await asyncio.to_thread(
+            validate_seqsender_uploaded_files,
+            submission_name=submission_name,
+            organism=organism,
+            database=database,
+            submission_type=submission_type,
+            require_gff=gff_file,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+   
+
+# Submit a submission to NCBI or GISAID using SeqSender
+@app.post("/submit/submission", response_model=Dict[str, Any], summary="Submit a SeqSender submission to NCBI or GISAID", tags=["SeqSender Workflows"])
+async def submit_submission(req: SubmissionRequest):
+    """
+    Submit a SeqSender submission to NCBI or GISAID for a given submission name, organism, database, and submission type. 
+    The function will return a dictionary containing the details of the submission process.
+    """
+    try:
+        result = await asyncio.to_thread(
+            submit_ncbi_submission,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+# Create the per-database submission files for a stored submission without submitting to any portal
+@app.post("/create/submission/files", response_model=Dict[str, Any], summary="Create SeqSender submission files without submitting", tags=["SeqSender Workflows"])
+async def create_submission_files(req: SubmissionRequest):
+    """
+    Generate the per-database submission files (BioSample/SRA/GenBank/GISAID) for a stored
+    submission using SeqSender's "prep" command, without launching an actual submission to
+    any portal. Returns a dictionary containing the status, message, and created file locations.
+    """
+    try:
+        result = await asyncio.to_thread(
+            prep_seqsender_submission,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+ 
+@app.get("/check/submission/process", response_model=Dict[str, Any], summary="Check a running SeqSender submission", tags=["SeqSender Workflows"])
+async def get_seqsender_process_status(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which sequences are being sent."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more submission databases."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+    pid: int = Query(..., gt=0, description="Process ID returned when the submission was launched."),
+):
+    try:
+        return await asyncio.to_thread(
+            retrieve_seqsender_process_status,
+            submission_name=submission_name,
+            organism=organism,
+            database=database,
+            submission_type=submission_type,
+            pid=pid,
+        )
+    except (ValueError, FileNotFoundError) as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+# Check status of a SeqSender submission
+@app.get("/check/submission/status", response_model=Dict[str, Any], summary="Check submission status for a given organism and database", tags=["SeqSender Workflows"])
+async def monitor_submission_status(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    try:
+        status = await asyncio.to_thread(
+            check_seqsender_submission,
+            submission_name=submission_name,
+            organism=organism,
+            database=database,
+            submission_type=submission_type
+        )
+        return status
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+# Check status of a SeqSender submission
+@app.get("/load/submission/status", response_model=Dict[str, Any], summary="Load submission status for a given organism and database", tags=["SeqSender Workflows"])
+async def retrieve_submission_status(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    try:
+        status = await asyncio.to_thread(
+            load_submission_status,
+            submission_name=submission_name,
+            organism=organism,
+            database=database,
+            submission_type=submission_type
+        )
+        return status
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))    
+    
+# ---------- List all submissions ----------
+@app.get("/list/submitters", response_model=ListSubmitterResponse, summary="List all submitters", tags=["Submitter Utils"])
+async def get_submitters(
+    submission_portal: Optional[Literal[tuple(submission_portals)]] = Query(None, description="Submission portal (NCBI or GISAID).")
+):
+    """
+    Return a list of submitters in the database, optionally filtered by submission_portal
+    ("NCBI" or "GISAID"), including saved passwords so users can verify or update them.
+    """
+    try:
+        db_submitter_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["submitter"],
+            return_var  = ["*"],
+            filter_coln_var = ["submission_portal"] if submission_portal else None,
+            filter_coln_val = {"submission_portal": [submission_portal]} if submission_portal else None,
+            filter_var_by = ["AND"] if submission_portal else None
+        )
+        if db_submitter_tbl.shape[0] == 0:
+            return {"SubmitterInfo": []}
+        else:
+            return {"SubmitterInfo": db_submitter_tbl.to_dicts()}
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+@app.get("/retrieve/submitter", response_model=ListSubmitterResponse, summary="Retrieve information about a given submitter", tags=["Submitter Utils"])
+async def get_submitter_info(
+    submitter_name: str = Query(..., description="Name of the submitter."),
+    submission_portal: Literal[tuple(submission_portals)] = Query(..., description="Submission portal (NCBI or GISAID).")
+):
+    """
+    Return a submitter matching the given name and submission portal, including the saved
+    password so the user can verify or update it.
+    """
+    try:
+        db_submitter_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["submitter"],
+            return_var  = ["*"],
+            filter_coln_var = ["submitter_name", "submission_portal"],
+            filter_coln_val = {"submitter_name": [submitter_name], "submission_portal": [submission_portal]},
+            filter_var_by = ["AND", "AND"],
+        )
+        if db_submitter_tbl.shape[0] == 0:
+            return {"SubmitterInfo": []}
+        else:
+            return {"SubmitterInfo": db_submitter_tbl.to_dicts()}
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))    
+
+
+# Save (create or update) a submitter's credentials without creating a submission
+@app.post("/save/submitter", response_model=Dict[str, Any], summary="Save a submitter's credentials for future use", tags=["Submitter Utils"])
+async def save_submitter_endpoint(req: SubmitterInfo):
+    """
+    Save (insert or update) a submitter's credentials for a given portal (NCBI or GISAID) so
+    they can be reused on future submissions without needing to submit a full submission.
+    """
+    try:
+        submitter_tbl = pl.DataFrame([req.model_dump()])
+        result = await asyncio.to_thread(save_submitter, submitter_tbl)
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+# ---------- Delete a saved submitter ----------
+@app.delete("/delete/submitter", response_model=Dict[str, Any], summary="Delete a saved submitter's credentials", tags=["Submitter Utils"])
+async def delete_submitter_endpoint(req: DeleteSubmitterRequest):
+    """
+    Remove a saved submitter's credentials (identified by name + submission portal) from the database.
+    """
+    try:
+        result = await asyncio.to_thread(
+            delete_submitter,
+            submitter_name = req.submitter_name,
+            submission_portal = req.submission_portal,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+@app.get("/list/submissions", response_model=ListSubmissionResponse, summary="List all submissions", tags=["Submission Utils"])
+async def get_submissions():
+    """
+    Return a list of submissions in database.
+    """
+    # Query for all assembly runs
+    try:
+        db_submission_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["submission"],
+            return_var  = ["*"]
+        )
+        # If no submissions found, return an empty list
+        if db_submission_tbl.shape[0] == 0:
+            return {"submission_info": []}
+        else:
+            return {"submission_info": db_submission_tbl.to_dicts()}
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))    
+
+    
+# ---------- Retrieve SeqSender submission details ----------    
+@app.get("/retrieve/submission", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender submission details", tags=["Submission Utils"])
+async def get_submission_info(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Type of organisms to submit."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission.")
+):
+    """
+    Retrieve SeqSender submission details for a given submission name, organism, database, and submission type. 
+    The function will return a list of dictionaries containing the details of the submission.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_submission,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))    
+
+
+# ---------- Copy an existing SeqSender submission ----------
+@app.post("/copy/submission", response_model=Dict[str, Any], summary="Copy a SeqSender submission to a new name", tags=["Submission Utils"])
+async def copy_submission(req: CopySubmissionRequest):
+    """
+    Duplicate an existing SeqSender submission — including its database rows and
+    on-disk submission folder (config, metadata, FASTA, raw reads, etc.) — under a new name.
+    """
+    try:
+        result = await asyncio.to_thread(
+            copy_seqsender_submission,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            new_submission_name = req.new_submission_name,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+# ---------- Update a SeqSender submission's comments ----------
+@app.patch("/update/submission/comments", response_model=Dict[str, Any], summary="Update the comments for a SeqSender submission's database row", tags=["Submission Utils"])
+async def update_submission_comments(req: UpdateSubmissionCommentsRequest):
+    """
+    Update the free-text comments field for a single database row of a stored submission.
+    """
+    try:
+        result = await asyncio.to_thread(
+            update_seqsender_submission_comments,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type,
+            comments = req.comments,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+# ---------- Update a SeqSender submission's status report messages ----------
+@app.patch("/update/submission/status_report/messages", response_model=Dict[str, Any], summary="Update the user-edited messages in a SeqSender submission's status report", tags=["Submission Utils"])
+async def update_submission_status_report_messages(req: UpdateSubmissionStatusReportMessagesRequest):
+    """
+    Persist edited Message values from the status report table back into the stored
+    submission_status_report.csv for one database, keyed by each row's sample_name.
+    """
+    try:
+        result = await asyncio.to_thread(
+            update_seqsender_submission_status_report_messages,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type,
+            messages = req.messages,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+# ---------- Delete an existing SeqSender submission ----------
+@app.delete("/delete/submission", response_model=Dict[str, Any], summary="Delete a SeqSender submission from database and disk records", tags=["Submission Utils"])
+async def delete_submission(req: DeleteSubmissionRequest):
+    """
+    Remove a submission's database rows (every database target) and its on-disk
+    submission folder (config, metadata, FASTA, raw reads, etc.).
+    """
+    try:
+        result = await asyncio.to_thread(
+            delete_seqsender_submission,
+            submission_name = req.submission_name,
+            organism = req.organism,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
 
 @app.get("/retrieve/config", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender config file location", tags=["SeqSender Results"])
 async def get_config(
@@ -2086,53 +2344,8 @@ async def get_submission_status(
         raise HTTPException(status_code=500, detail=str(err))    
     
 
-# Submit a submission to NCBI or GISAID using SeqSender
-@app.post("/submit/submission", response_model=Dict[str, Any], summary="Submit a SeqSender submission to NCBI or GISAID", tags=["SeqSender Workflows"])
-async def submit_submission(req: SubmissionRequest):
-    """
-    Submit a SeqSender submission to NCBI or GISAID for a given submission name, organism, database, and submission type. 
-    The function will return a dictionary containing the details of the submission process.
-    """
-    try:
-        result = await asyncio.to_thread(
-            submit_seqsender_submission,
-            submission_name = req.submission_name,
-            organism = req.organism,
-            database = req.database,
-            submission_type = req.submission_type
-        )
-        return result
-    except ValueError as err:
-        raise HTTPException(status_code=404, detail=str(err))
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))
-
-
-@app.get("/submit/submission/status", response_model=Dict[str, Any], summary="Check a running SeqSender submission", tags=["SeqSender Workflows"])
-async def get_seqsender_process_status(
-    submission_name: str = Query(..., description="Name of the submission."),
-    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which sequences are being sent."),
-    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more submission databases."),
-    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
-    pid: int = Query(..., gt=0, description="Process ID returned when the submission was launched."),
-):
-    try:
-        return await asyncio.to_thread(
-            retrieve_seqsender_process_status,
-            submission_name=submission_name,
-            organism=organism,
-            database=database,
-            submission_type=submission_type,
-            pid=pid,
-        )
-    except (ValueError, FileNotFoundError) as err:
-        raise HTTPException(status_code=404, detail=str(err))
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))
-
-
 # Download config template
-@app.get("/download/seqsender/config_template", response_model=Dict[str, Any], summary="Download config template for a given organism and database", tags=["SeqSender Utils"])
+@app.get("/download/seqsender/config_template", response_model=Dict[str, Any], summary="Download config template for a given organism and database", tags=["SeqSender Downloads"])
 async def download_config_template():
     """
     Download config template for a given organism and database. 
@@ -2144,19 +2357,30 @@ async def download_config_template():
 
 
 # Download metadata template 
-@app.get("/download/seqsender/metadata_template", response_model=Dict[str, Any], summary="Download metadata template for a given organism and database", tags=["SeqSender Utils"])
-async def download_metadata_template():
+@app.get("/download/seqsender/metadata_template", summary="Download a SeqSender-generated metadata template for a given organism and database", tags=["SeqSender Downloads"])
+async def download_metadata_template(
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to generate the metadata template."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases the metadata template should cover."),
+):
     """
-    Download metadata template for a given organism and database. 
-    The function will return a dictionary containing the details of the metadata template file location.
+    Generate (via SeqSender's own `test_data` command) and download a metadata template
+    shaped for the selected organism and database targets.
     """
-    if not os.path.exists(METADATA_TEMPLATE_PATH):
-        raise HTTPException(status_code=404, detail=f"Metadata template not found.")
-    return FileResponse(path=METADATA_TEMPLATE_PATH, filename="metadata_template.csv", media_type="application/octet-stream", content_disposition_type="attachment")
+    try:
+        file_path = await asyncio.to_thread(
+            retrieve_seqsender_metadata_template,
+            organism = organism,
+            database = database,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+    return FileResponse(path=file_path, filename=f"{organism.lower()}_metadata_template.csv", media_type="application/octet-stream", content_disposition_type="attachment")
 
 
 # Download config file for a given organism and database
-@app.get("/download/seqsender/config", response_model=Dict[str, Any], summary="Download config file for a given organism and database", tags=["SeqSender Utils"])
+@app.get("/download/seqsender/config", response_model=Dict[str, Any], summary="Download config file for a given organism and database", tags=["SeqSender Downloads"])
 async def download_config(
     submission_name: str = Query(..., description="Name of the submission."),
     organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
@@ -2180,7 +2404,7 @@ async def download_config(
 
 
 # Download metadata file for a given organism and database
-@app.get("/download/seqsender/metadata", response_model=Dict[str, Any], summary="Download metadata file for a given organism and database", tags=["SeqSender Utils"])
+@app.get("/download/seqsender/metadata", response_model=Dict[str, Any], summary="Download metadata file for a given organism and database", tags=["SeqSender Downloads"])
 async def download_metadata(
     submission_name: str = Query(..., description="Name of the submission."),
     organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
@@ -2204,7 +2428,7 @@ async def download_metadata(
 
 
 # Download fasta file for a given organism and database
-@app.get("/download/seqsender/fasta", response_model=Dict[str, Any], summary="Download fasta file for a given organism and database", tags=["SeqSender Utils"])
+@app.get("/download/seqsender/fasta", response_model=Dict[str, Any], summary="Download fasta file for a given organism and database", tags=["SeqSender Downloads"])
 async def download_fasta(
     submission_name: str = Query(..., description="Name of the submission."),
     organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
@@ -2228,7 +2452,7 @@ async def download_fasta(
 
 
 # Download all raw read files for a given submission as a ZIP archive
-@app.get("/download/seqsender/raw_reads", summary="Download raw read files for a given submission", tags=["SeqSender Utils"])
+@app.get("/download/seqsender/raw_reads", summary="Download raw read files for a given submission", tags=["SeqSender Downloads"])
 async def download_raw_reads(
     submission_name: str = Query(..., description="Name of the submission."),
     organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
@@ -2266,7 +2490,7 @@ async def download_raw_reads(
 
 
 # Download gff file for a given organism and database
-@app.get("/download/seqsender/gff", response_model=Dict[str, Any], summary="Download gff file for a given organism and database", tags=["SeqSender Utils"])
+@app.get("/download/seqsender/gff", response_model=Dict[str, Any], summary="Download gff file for a given organism and database", tags=["SeqSender Downloads"])
 async def download_gff(
     submission_name: str = Query(..., description="Name of the submission."),
     organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
@@ -2290,7 +2514,7 @@ async def download_gff(
 
 
 # Download table2asn file for a given organism and database
-@app.get("/download/seqsender/table2asn", response_model=Dict[str, Any], summary="Download table2asn file for a given organism and database", tags=["SeqSender Utils"])
+@app.get("/download/seqsender/table2asn", response_model=Dict[str, Any], summary="Download table2asn file for a given organism and database", tags=["SeqSender Downloads"])
 async def download_table2asn(
     submission_name: str = Query(..., description="Name of the submission."),
     organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
@@ -2311,4 +2535,3 @@ async def download_table2asn(
     if file_path is None or not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail=f"table2asn file not found.")
     return FileResponse(path=file_path, filename=f"{submission_name}_{TABLE2ASN_FILENAME}", media_type="application/octet-stream", content_disposition_type="attachment") 
-

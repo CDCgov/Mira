@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, lazy, Suspense, Fragment, forwardRef, useImperativeHandle } from "react";
 import { createPortal } from "react-dom";
+import Papa from "papaparse";
 const Plot = lazy(() => import("react-plotly.js"));
 import {
   Dna,
@@ -52,6 +53,7 @@ import {
   X,
   Square,
   Trash2,
+  Undo2,
   Pencil,
   CloudFog,
   CloudBackup,
@@ -59,6 +61,8 @@ import {
   BadgeQuestionMark,
   Settings2,
   Menu,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 
 /* ── utility ─────────────────────────────────────── */
@@ -177,13 +181,16 @@ const API = {
   downloadAaFailedFasta:        `${API_BASE}/download/aa_failed_fasta`,
   downloadNextcladeFasta:       `${API_BASE}/download/nextclade_fasta`,
   downloadMiraReports:          `${API_BASE}/download/mira_reports`,
+  listSubmitters:                    `${API_BASE}/list/submitters`,
+  saveSubmitter:                     `${API_BASE}/save/submitter`,
+  deleteSubmitter:                   `${API_BASE}/delete/submitter`,
   downloadSeqsenderConfigTemplate:   `${API_BASE}/download/seqsender/config_template`,
   downloadSeqsenderMetadataTemplate: `${API_BASE}/download/seqsender/metadata_template`,
   downloadSeqsenderMetadata:         `${API_BASE}/download/seqsender/metadata`,
   downloadSeqsenderFasta:            `${API_BASE}/download/seqsender/fasta`,
   downloadSeqsenderGff:              `${API_BASE}/download/seqsender/gff`,
-  downloadSeqsenderRawReads:          `${API_BASE}/download/seqsender/raw_reads`,
-  validateSeqsenderFiles:             `${API_BASE}/validate/seqsender/files`,
+  downloadSeqsenderRawReads:         `${API_BASE}/download/seqsender/raw_reads`,
+  validateSeqsenderFiles:            `${API_BASE}/validate/seqsender/files`,
   uploadSeqsenderMetadata:           `${API_BASE}/upload/seqsender/metadata`,
   uploadSeqsenderFasta:              `${API_BASE}/upload/seqsender/fasta`,
   uploadSeqsenderRawReads:           `${API_BASE}/upload/seqsender/raw_reads`,
@@ -191,10 +198,16 @@ const API = {
   uploadSeqsenderGff:                `${API_BASE}/upload/seqsender/gff`,
   createSeqsenderConfig:             `${API_BASE}/create/config`,
   createSeqsenderSubmission:         `${API_BASE}/create/submission`,
+  createSeqsenderSubmissionFiles:    `${API_BASE}/create/submission/files`,
+  copySeqsenderSubmission:           `${API_BASE}/copy/submission`,
+  deleteSeqsenderSubmission:         `${API_BASE}/delete/submission`,
+  updateSeqsenderSubmissionComments: `${API_BASE}/update/submission/comments`,
+  updateSeqsenderSubmissionStatusReportMessages: `${API_BASE}/update/submission/status_report/messages`,
   submitSeqsenderSubmission:         `${API_BASE}/submit/submission`,
-  seqsenderSubmissionProcessStatus:  `${API_BASE}/submit/submission/status`,
+  checkSeqsenderSubmissionProccess:  `${API_BASE}/check/submission/process`,
+  checkSeqsenderSubmissionStatus:    `${API_BASE}/check/submission/status`,
+  loadSeqsenderSubmissionStatus:     `${API_BASE}/load/submission/status`,
   listSeqSenderSubmissions:          `${API_BASE}/list/submissions`,
-  listSubmitters:                    `${API_BASE}/list/submitters`,
   retrieveSeqsenderSubmission:       `${API_BASE}/retrieve/submission`,
   retrieveSeqSenderConfig:           `${API_BASE}/retrieve/config`,
   retrieveSeqSenderMetadata:         `${API_BASE}/retrieve/metadata`,
@@ -204,6 +217,7 @@ const API = {
   retrieveSeqSenderTable2asn:        `${API_BASE}/retrieve/table2asn`,
   retrieveSeqSenderSubmissionLog:    `${API_BASE}/retrieve/submission_log`,
   retrieveSeqSenderSubmissionStatus: `${API_BASE}/retrieve/submission_status`,
+  retrieveSeqSenderVersion:          `${API_BASE}/seqsender/version`,
 };
 
 // Persist the in-flight MIRA run so it keeps processing (and stays cancellable) after the
@@ -301,8 +315,8 @@ const TABS = [
 /* ── Home Tab ────────────────────────────────────── */
 const STATS = [
   { label: "Sequencing Runs",          value: "…",  hover: "Click here to see past runs",  icon: Cpu,        color: "text-teal-600"     },
-  { label: "Sequences to NCBI",        value: "…", sub: "GenBank + SRA combined",  icon: Cloud,   color: "text-purple-500"     },
-  { label: "Sequences to GISAID",      value: "…", sub: "EpiFlu + EpiCoV",         icon: Cloud,   color: "text-purple-500" },
+  { label: "Sequences to NCBI",        value: "…", sub: "",  icon: Cloud,   color: "text-purple-500"     },
+  { label: "Sequences to GISAID",      value: "…", sub: "",         icon: Cloud,   color: "text-purple-500" },
 ];
 
 const FEATURES = [
@@ -430,11 +444,13 @@ function HomeTab({ onNewRun, onLoadRun, onOpenSeqSender }) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(API.statsSummary);
+        const res = await fetch(API.listSubmissions);
         const data = res.ok ? await res.json() : null;
+        const rows = Array.isArray(data?.submission_info) ? data.submission_info : [];
         if (!cancelled) {
-          setNcbiCount(Number.isFinite(data?.ncbi_sequences) ? data.ncbi_sequences : 0);
-          setGisaidCount(Number.isFinite(data?.gisaid_sequences) ? data.gisaid_sequences : 0);
+          // Each row is one (submission, database) pair — count NCBI (GenBank + SRA) and GISAID submissions separately.
+          setNcbiCount(rows.filter((r) => ["GENBANK", "SRA", "BIOSAMPLE"].includes((r.database ?? "").toUpperCase())).length);
+          setGisaidCount(rows.filter((r) => (r.database ?? "").toUpperCase() === "GISAID").length);
         }
       } catch {
         if (!cancelled) { setNcbiCount(0); setGisaidCount(0); }
@@ -540,7 +556,7 @@ function HomeTab({ onNewRun, onLoadRun, onOpenSeqSender }) {
               <Send size={22} className="shrink-0 text-sky-700" />
               <p className="whitespace-nowrap text-xl font-bold leading-none">New Submission</p>
             </button>
-            {STATS.filter(({ label }) => label !== "Sequencing Runs").map(({ label, sub, icon: Icon, color }) => {
+            {STATS.filter(({ label }) => label !== "Sequencing Runs" && label !== "Sequences to GISAID").map(({ label, sub, icon: Icon, color }) => {
               const displayValue = label === "Sequences to NCBI"
                 ? (ncbiCount === null ? "…" : ncbiCount.toLocaleString())
                 : (gisaidCount === null ? "…" : gisaidCount.toLocaleString());
@@ -638,6 +654,32 @@ function ResultSection({ id, children }) {
 
 function FieldLabel({ children }) {
   return <p className="text-xs font-semibold text-foreground mb-1">{children}</p>;
+}
+
+// Password input with a toggle to reveal/hide the typed value.
+function PasswordInput({ value, onChange, autoComplete = "new-password", className = "", disabled = false }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        type={visible ? "text" : "password"}
+        value={value}
+        onChange={onChange}
+        autoComplete={autoComplete}
+        disabled={disabled}
+        className={cn("w-full h-9 px-3 pr-9 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted", className)}
+      />
+      <button
+        type="button"
+        onClick={() => setVisible((v) => !v)}
+        disabled={disabled}
+        title={visible ? "Hide password" : "Show password"}
+        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+      >
+        {visible ? <EyeOff size={15} /> : <Eye size={15} />}
+      </button>
+    </div>
+  );
 }
 
 // Hover menu that flows a vertical cascade of result-section link pills out of a
@@ -5373,7 +5415,7 @@ function SectionHeader({ title, icon: Icon, open, onToggle, widthClass = "w-full
 
 // Pick an existing submitter (by portal), used by the NCBI/GISAID credential
 // blocks' "Existing User" mode.
-function ExistingSubmitterPicker({ submitters, loading, error, selectedId, onSelect, placeholder }) {
+function ExistingSubmitterPicker({ submitters, loading, error, selectedId, onSelect, placeholder, disabled = false }) {
   return (
     <div>
       <select
@@ -5382,7 +5424,7 @@ function ExistingSubmitterPicker({ submitters, loading, error, selectedId, onSel
           const selected = submitters.find((submitter) => String(submitter.submitter_id) === e.target.value);
           if (selected) onSelect(selected);
         }}
-        disabled={loading || !!error || submitters.length === 0}
+        disabled={disabled || loading || !!error || submitters.length === 0}
         className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
       >
         <option value="">{loading ? "Loading submitters…" : placeholder}</option>
@@ -5400,6 +5442,279 @@ function ExistingSubmitterPicker({ submitters, loading, error, selectedId, onSel
   );
 }
 
+// Badge color classes for a submission/database status value, shared by the Submission Status cards.
+const SUBMISSION_STATUS_BADGE_STYLES = {
+  PENDING:    "bg-muted text-muted-foreground",
+  CREATED:    "bg-muted text-muted-foreground",
+  PROCESSING: "bg-sky-100 text-sky-700 dark:bg-sky-900/20 dark:text-sky-400",
+  SUBMITTED:  "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400",
+  COMPLETED:  "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400",
+  FAILED:     "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400",
+  CANCELED:   "bg-muted text-muted-foreground",
+};
+
+const SEQSENDER_METADATA_TABLES = [
+  { key: "biosample", title: "BioSample Metadata", prefixes: ["bs-"], sampleNameColumn: "bs-sample_name" },
+  { key: "sra", title: "SRA Metadata", prefixes: ["sra-"], sampleNameColumn: "sra-sample_name" },
+  { key: "genbank", title: "GenBank Metadata", prefixes: ["gb-", "src-", "cmt-"], sampleNameColumn: "gb-sample_name" },
+  { key: "gisaid", title: "GISAID Metadata", prefixes: ["gs-"], sampleNameColumn: "gs-sample_name" },
+];
+
+const SEQSENDER_DATABASE_PREFIXES = SEQSENDER_METADATA_TABLES.flatMap(({ prefixes }) => prefixes);
+
+function SeqSenderMetadataTable({ title, columns, rows, onRemoveRows, onUndoRows, canUndo = false, editable = true, sampleNameColumn }) {
+  const pageSize = 10;
+  const [page, setPage] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortColumn, setSortColumn] = useState(null);
+  const [sortDirection, setSortDirection] = useState("asc");
+  const [selectedRows, setSelectedRows] = useState(() => new Set());
+
+  const filteredRows = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return rows;
+    return rows.filter((row) => columns.some((column) =>
+      String(row[column] ?? "").toLowerCase().includes(query)
+    ));
+  }, [columns, rows, searchQuery]);
+
+  const sortedRows = useMemo(() => {
+    if (!sortColumn) return filteredRows;
+    return [...filteredRows].sort((firstRow, secondRow) => {
+      const firstValue = firstRow[sortColumn] ?? "";
+      const secondValue = secondRow[sortColumn] ?? "";
+      const firstNumber = Number(firstValue);
+      const secondNumber = Number(secondValue);
+      const bothNumeric = firstValue !== "" && secondValue !== "" && Number.isFinite(firstNumber) && Number.isFinite(secondNumber);
+      const comparison = bothNumeric
+        ? firstNumber - secondNumber
+        : String(firstValue).localeCompare(String(secondValue), undefined, { numeric: true, sensitivity: "base" });
+      return sortDirection === "asc" ? comparison : -comparison;
+    });
+  }, [filteredRows, sortColumn, sortDirection]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
+  const pageRows = sortedRows.slice(page * pageSize, (page + 1) * pageSize);
+  const allPageRowsSelected = pageRows.length > 0 && pageRows.every((row) => selectedRows.has(row));
+  const somePageRowsSelected = pageRows.some((row) => selectedRows.has(row)) && !allPageRowsSelected;
+
+  const handleSort = (column) => {
+    if (sortColumn === column) {
+      if (sortDirection === "asc") {
+        setSortDirection("desc");
+      } else {
+        setSortColumn(null);
+        setSortDirection("asc");
+      }
+    } else {
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+    setPage(0);
+  };
+
+  const toggleRow = (row) => {
+    setSelectedRows((current) => {
+      const next = new Set(current);
+      if (next.has(row)) next.delete(row);
+      else next.add(row);
+      return next;
+    });
+  };
+
+  const togglePageRows = () => {
+    setSelectedRows((current) => {
+      const next = new Set(current);
+      if (allPageRowsSelected) pageRows.forEach((row) => next.delete(row));
+      else pageRows.forEach((row) => next.add(row));
+      return next;
+    });
+  };
+
+  const removeSelectedRows = () => {
+    if (!selectedRows.size) return;
+    onRemoveRows?.([...selectedRows], sampleNameColumn);
+    setSelectedRows(new Set());
+  };
+
+  useEffect(() => {
+    setPage(0);
+    setSelectedRows(new Set());
+  }, [editable, rows]);
+
+  return (
+    <div className="w-full overflow-hidden rounded-lg border border-border">
+      <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/20 px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <Database size={13} className="shrink-0 text-primary" />
+          <p className="truncate text-xs font-bold text-foreground">{title}</p>
+        </div>
+        <span className="shrink-0 text-[10px] text-muted-foreground">
+          {searchQuery ? `${filteredRows.length.toLocaleString()} of ` : ""}{rows.length.toLocaleString()} rows · {columns.length.toLocaleString()} columns
+        </span>
+      </div>
+      <div className="border-b border-border bg-muted/10 px-3 py-2">
+        <div className="relative">
+          <FileSearch size={12} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(event) => {
+              setSearchQuery(event.target.value);
+              setPage(0);
+            }}
+            placeholder={`Search ${title}…`}
+            aria-label={`Search ${title}`}
+            className="h-7 w-full rounded-md border border-border bg-background pl-7 pr-7 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              title="Clear search"
+              aria-label={`Clear ${title} search`}
+              onClick={() => {
+                setSearchQuery("");
+                setPage(0);
+              }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <X size={11} />
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="max-h-72 overflow-auto">
+        <table className="min-w-max border-collapse text-xs">
+          <thead className="sticky top-0 z-10 bg-muted">
+            <tr>
+              {editable && (
+                <th className="w-9 border-b border-r border-border px-3 py-2">
+                  <input
+                    ref={(input) => {
+                      if (input) input.indeterminate = somePageRowsSelected;
+                    }}
+                    type="checkbox"
+                    checked={allPageRowsSelected}
+                    disabled={pageRows.length === 0}
+                    onChange={togglePageRows}
+                    aria-label={`Select all ${title} rows on this page`}
+                    className="block accent-primary disabled:cursor-not-allowed"
+                  />
+                </th>
+              )}
+              {columns.map((column) => (
+                <th key={column} className="max-w-52 whitespace-nowrap border-b border-r border-border p-0 text-left font-mono text-[10px] font-semibold text-muted-foreground last:border-r-0">
+                  <button
+                    type="button"
+                    title={`Sort by ${column}`}
+                    aria-label={`Sort ${title} by ${column}${sortColumn === column ? `, currently ${sortDirection}ending` : ""}`}
+                    onClick={() => handleSort(column)}
+                    className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/70 hover:text-foreground"
+                  >
+                    <span className="truncate">{column}</span>
+                    {sortColumn === column
+                      ? sortDirection === "asc"
+                        ? <ArrowUp size={10} className="shrink-0 text-primary" />
+                        : <ArrowDown size={10} className="shrink-0 text-primary" />
+                      : <ArrowUpDown size={10} className="shrink-0 opacity-35" />}
+                  </button>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {pageRows.map((row, rowIndex) => (
+              <tr
+                key={rows.indexOf(row)}
+                aria-selected={editable ? selectedRows.has(row) : undefined}
+                onClick={editable ? () => toggleRow(row) : undefined}
+                className={cn(
+                  editable && "cursor-pointer transition-colors hover:bg-muted/20",
+                  editable && selectedRows.has(row) && "bg-primary/10 hover:bg-primary/15"
+                )}
+              >
+                {editable && (
+                  <td className="w-9 border-r border-border px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedRows.has(row)}
+                      onChange={() => toggleRow(row)}
+                      onClick={(event) => event.stopPropagation()}
+                      aria-label={`Select ${title} row ${page * pageSize + rowIndex + 1}`}
+                      className="block accent-primary"
+                    />
+                  </td>
+                )}
+                {columns.map((column) => (
+                  <td key={column} title={String(row[column] ?? "")} className="max-w-52 truncate whitespace-nowrap border-r border-border px-3 py-2 font-mono text-[11px] text-foreground last:border-r-0">
+                    {row[column] || <span className="text-muted-foreground/50">—</span>}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            {pageRows.length === 0 && (
+              <tr>
+                <td colSpan={Math.max(1, columns.length + (editable ? 1 : 0))} className="px-3 py-8 text-center text-xs text-muted-foreground">
+                  {searchQuery ? `No metadata rows match “${searchQuery}”.` : "No metadata rows remain."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className={cn("flex items-center gap-3 border-t border-border bg-muted/10 px-3 py-1.5", editable ? "justify-between" : "justify-end")}>
+        {editable && (
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={selectedRows.size === 0}
+              onClick={removeSelectedRows}
+              className="flex h-6 items-center gap-1 rounded border border-red-200 px-2 text-[10px] font-medium text-destructive transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-red-800 dark:hover:bg-red-950/20"
+            >
+              <Trash2 size={11} />
+              Remove{selectedRows.size > 0 ? ` (${selectedRows.size})` : ""}
+            </button>
+            <button
+              type="button"
+              disabled={!canUndo}
+              onClick={onUndoRows}
+              title="Restore the original metadata worksheet"
+              className="flex h-6 items-center gap-1 rounded border border-border px-2 text-[10px] font-medium text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Undo2 size={11} />
+              Undo
+            </button>
+          </div>
+        )}
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-muted-foreground">Page {page + 1} of {totalPages}</span>
+          <button type="button" title="Previous page" disabled={page === 0} onClick={() => setPage((value) => value - 1)} className="flex h-6 w-6 items-center justify-center rounded border border-border text-muted-foreground hover:text-primary disabled:cursor-not-allowed disabled:opacity-40">
+            <ChevronLeft size={12} />
+          </button>
+          <button type="button" title="Next page" disabled={page >= totalPages - 1} onClick={() => setPage((value) => value + 1)} className="flex h-6 w-6 items-center justify-center rounded border border-border text-muted-foreground hover:text-primary disabled:cursor-not-allowed disabled:opacity-40">
+            <ChevronRight size={12} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Roll up a submission's per-database rows into a single overall status/message,
+// used to seed and refresh the Submission Status banner for a selected past submission.
+function deriveOverallSubmissionStatus(rows) {
+  if (!rows || rows.length === 0) return null;
+  const statuses = rows.map((row) => row.submission_status);
+  const status = statuses.includes("FAILED")
+    ? "FAILED"
+    : statuses.includes("PROCESSING")
+      ? "PROCESSING"
+      : statuses.every((s) => s === "SUBMITTED" || s === "COMPLETED")
+        ? "SUBMITTED"
+        : statuses[0] ?? "CREATED";
+  return { status, pid: null, return_code: null};
+}
+
 // Section keys/labels/icons for the SeqSender "Jump To" step links, shared by SeqSenderTab and SeqSenderPanel.
 const SEQSENDER_SECTIONS = [
   { key: "database",    label: "Database Targets",       icon: Database },
@@ -5410,6 +5725,163 @@ const SEQSENDER_SECTIONS = [
   { key: "submit",      label: "Review & Submit",        icon: Rocket },
   { key: "status",      label: "Submission Status",      icon: ClipboardList },
 ];
+
+// Normalize a collection_date value into ISO 8601 (YYYY-MM-DD) so SeqSender's metadata
+// validator accepts it regardless of the format it was entered/uploaded in (e.g. MM/DD/YYYY).
+// Values already in ISO form (YYYY-MM-DD, YYYY-MM, or YYYY) and unrecognized formats are left
+// untouched so SeqSender can surface a clear validation error for anything we can't confidently convert.
+const normalizeCollectionDate = (value) => {
+  const raw = String(value ?? "").trim();
+  if (!raw || /^\d{4}(-\d{2}(-\d{2})?)?$/.test(raw)) return raw;
+  // MM/DD/YYYY or M/D/YYYY (also accepts "-" or "." as the separator).
+  let match = raw.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/);
+  if (match) {
+    const [, month, day, year] = match;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+  // YYYY/MM/DD or YYYY.MM.DD (year-first, but not already dash-separated ISO).
+  match = raw.match(/^(\d{4})[/.](\d{1,2})[/.](\d{1,2})$/);
+  if (match) {
+    const [, year, month, day] = match;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+  return raw;
+};
+
+// Per-database submission status report (Sample/Status/Accession/Message) — sortable by any
+// column, with an editable Message column (local edits only; reset whenever a fresh status
+// check replaces the underlying rows).
+const STATUS_REPORT_COLUMNS = [
+  { key: "sample_name", label: "Sample" },
+  { key: "status", label: "Status" },
+  { key: "accession", label: "Accession" },
+  { key: "message", label: "Message" },
+];
+
+function StatusReportTable({ rows, onMessageChange }) {
+  const [sortColumn, setSortColumn] = useState(null);
+  const [sortDir, setSortDir] = useState("asc");
+  const [editedMessages, setEditedMessages] = useState({}); // row index (within `rows`) -> edited message text
+
+  // A fresh status check replaced the underlying rows — drop any local message edits.
+  useEffect(() => { setEditedMessages({}); }, [rows]);
+
+  const handleSort = (key) => {
+    if (sortColumn === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortColumn(key);
+      setSortDir("asc");
+    }
+  };
+
+  // Sort a copy that still carries each row's original index, so edits stay tied to the right row after sorting.
+  const sortedRows = rows
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      if (!sortColumn) return 0;
+      const av = String(a.row[sortColumn] ?? "").toLowerCase();
+      const bv = String(b.row[sortColumn] ?? "").toLowerCase();
+      const comparison = av.localeCompare(bv, undefined, { numeric: true, sensitivity: "base" });
+      return sortDir === "asc" ? comparison : -comparison;
+    });
+
+  // The Message column reflects any local edits, so exports match what's currently shown.
+  const messageFor = (row, index) => editedMessages[index] ?? row.message ?? "";
+
+  const downloadCSV = () => {
+    const csv = [
+      STATUS_REPORT_COLUMNS.map(({ label }) => `"${label}"`).join(","),
+      ...sortedRows.map(({ row, index }) => STATUS_REPORT_COLUMNS.map(({ key }) => {
+        const v = key === "message" ? messageFor(row, index) : (row[key] ?? "");
+        return `"${String(v).replace(/"/g, '""')}"`;
+      }).join(",")),
+    ].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "status_report.csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadExcel = () => {
+    const html = `<html><head><meta charset="utf-8"></head><body><table><tr>${
+      STATUS_REPORT_COLUMNS.map(({ label }) => `<th>${label}</th>`).join("")
+    }</tr>${
+      sortedRows.map(({ row, index }) => `<tr>${
+        STATUS_REPORT_COLUMNS.map(({ key }) => `<td>${key === "message" ? messageFor(row, index) : (row[key] ?? "")}</td>`).join("")
+      }</tr>`).join("")
+    }</table></body></html>`;
+    const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "status_report.xls"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="rounded-lg border border-border overflow-hidden">
+      <div className="flex items-center gap-1.5 px-2 py-1 border-b border-border bg-muted/20">
+        <button
+          type="button"
+          onClick={downloadCSV}
+          className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+        >
+          <Download size={10} /> CSV
+        </button>
+        <button
+          type="button"
+          onClick={downloadExcel}
+          className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+        >
+          <Download size={10} /> Excel
+        </button>
+      </div>
+      <div className="overflow-auto max-h-48">
+        <table className="w-full text-[11px]">
+          <thead className="sticky top-0 bg-muted text-foreground">
+            <tr>
+              {STATUS_REPORT_COLUMNS.map(({ key, label }) => (
+                <th key={key} className="px-2 py-1 text-left font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => handleSort(key)}
+                    className="flex items-center gap-1 hover:text-primary transition-colors"
+                  >
+                    {label}
+                    {sortColumn === key
+                      ? sortDir === "asc" ? <ArrowUp size={9} className="text-primary shrink-0" /> : <ArrowDown size={9} className="text-primary shrink-0" />
+                      : <ArrowUpDown size={9} className="opacity-30 shrink-0" />}
+                  </button>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {sortedRows.map(({ row, index }) => (
+              <tr key={index}>
+                <td className="px-2 py-1 font-mono text-foreground whitespace-nowrap align-top">{row.sample_name || "—"}</td>
+                <td className="px-2 py-1 font-mono text-foreground whitespace-nowrap align-top">{row.status || "—"}</td>
+                <td className="px-2 py-1 font-mono text-foreground whitespace-nowrap align-top">{row.accession || "—"}</td>
+                <td className="px-2 py-1 text-muted-foreground align-top">
+                  <textarea
+                    value={editedMessages[index] ?? row.message ?? ""}
+                    onChange={(e) => {
+                      const message = e.target.value;
+                      setEditedMessages((prev) => ({ ...prev, [index]: message }));
+                      if (row.sample_name) onMessageChange?.(row.sample_name, message);
+                    }}
+                    placeholder="—"
+                    rows={1}
+                    className="w-full min-w-[140px] resize-y rounded border border-border bg-transparent px-1 py-0.5 text-[11px] leading-snug text-muted-foreground whitespace-pre-wrap break-words focus:border-primary focus:bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 // ── SeqSender form — opened from the Step 5 action button ──
 const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
@@ -5434,7 +5906,137 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     Object.entries(extraParams).forEach(([key, value]) => params.set(key, value));
     return `${endpoint}?${params.toString()}`;
   };
-  const [dbs, setDbs]                     = useState(() => initialSubmission ? {
+  const [storedDownloadError, setStoredDownloadError] = useState(null); // { field, message } for a failed stored-file download
+  const [storedDownloading, setStoredDownloading] = useState(null); // field currently downloading
+  const [existingRows, setExistingRows] = useState(initialRows); // per-database status rows for a selected past submission, refetchable
+  const [existingStatusRefreshing, setExistingStatusRefreshing] = useState(false);
+  const [existingStatusError, setExistingStatusError] = useState(null);
+  const [metadataPreview, setMetadataPreview] = useState({ columns: [], rows: [], loading: false, error: null });
+
+  // Ask SeqSender to check the remote submission portals and return the latest status.
+  const refreshSubmissionStatus = async () => {
+    const params = submissionJob
+      ? (() => {
+          const query = new URLSearchParams();
+          query.set("submission_name", submissionJob.submission_name);
+          query.set("organism", submissionJob.organism);
+          submissionJob.database.forEach((database) => query.append("database", database));
+          query.set("submission_type", submissionJob.submission_type);
+          return query;
+        })()
+      : new URLSearchParams(storedSubmissionQuery);
+    if (!params.get("submission_name")) return;
+    setExistingStatusRefreshing(true);
+    setExistingStatusError(null);
+    try {
+      const res = await fetch(`${API.checkSeqsenderSubmissionStatus}?${params.toString()}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || data.message || "Failed to refresh submission status.");
+      setRefreshedSubmissionStatus(data);
+      setSubmissionStatusError(null);
+      if (data.database_statuses && typeof data.database_statuses === "object") {
+        setExistingRows((rows) => rows.map((row) => {
+          const entry = data.database_statuses[row.database];
+          return {
+            ...row,
+            submission_status: entry?.status ?? row.submission_status,
+            ncbi_submission_id: entry?.accession || row.ncbi_submission_id,
+          };
+        }));
+      }
+      // The status report table was just re-pulled from SeqSender — drop any unsaved local
+      // message edits for those databases so stale edits aren't later saved over fresh rows.
+      if (data.submission_status_report && typeof data.submission_status_report === "object") {
+        setStatusReportMessageEdits((prev) => {
+          const next = { ...prev };
+          Object.keys(data.submission_status_report).forEach((database) => { next[database] = {}; });
+          return next;
+        });
+      }
+      props.onSubmitted?.();
+    } catch (err) {
+      setExistingStatusError(err.message || "Failed to refresh submission status.");
+    } finally {
+      setExistingStatusRefreshing(false);
+    }
+  };
+
+  // Load whatever submission/status info is already stored locally for a selected past
+  // submission — no external SeqSender CLI call, so this is fast and safe to run on open.
+  const loadSubmissionStatus = async () => {
+    if (!storedSubmissionQuery) return;
+    setExistingStatusRefreshing(true);
+    setExistingStatusError(null);
+    try {
+      const [submissionRes, statusRes] = await Promise.all([
+        fetch(`${API.retrieveSeqsenderSubmission}?${storedSubmissionQuery}`),
+        fetch(`${API.loadSeqsenderSubmissionStatus}?${storedSubmissionQuery}`),
+      ]);
+      const submissionData = await submissionRes.json().catch(() => ({}));
+      if (submissionRes.ok && Array.isArray(submissionData?.submission_info) && submissionData.submission_info.length) {
+        setExistingRows(submissionData.submission_info);
+        // Populate each database's Comments box from the freshly loaded submission record.
+        setComments((prev) => {
+          const next = { ...prev };
+          submissionData.submission_info.forEach((row) => { if (row.database) next[row.database] = row.comments ?? ""; });
+          return next;
+        });
+      }
+      const data = await statusRes.json().catch(() => ({}));
+      if (!statusRes.ok) throw new Error(data.detail || data.message || "Failed to load submission status.");
+      // This is a silent background load (not a user-initiated "Refresh Status" click), so
+      // suppress the status message banner on success — only surface it via refreshSubmissionStatus.
+      setRefreshedSubmissionStatus({ ...data, message: null });
+      setSubmissionStatusError(null);
+      if (data.database_statuses && typeof data.database_statuses === "object") {
+        setExistingRows((rows) => rows.map((row) => {
+          const entry = data.database_statuses[row.database];
+          return {
+            ...row,
+            submission_status: entry?.status ?? row.submission_status,
+            ncbi_submission_id: entry?.accession || row.ncbi_submission_id,
+          };
+        }));
+      }
+    } catch (err) {
+      setExistingStatusError(err.message || "Failed to load submission status.");
+    } finally {
+      setExistingStatusRefreshing(false);
+    }
+  };
+
+  // Fetch a stored submission file and either trigger its download or surface the API's error message —
+  // a plain <a download> can't show why a download failed (e.g. the file was moved/deleted).
+  const downloadStoredFile = async (url, field, fallbackName) => {
+    if (!url) return;
+    setStoredDownloadError(null);
+    setStoredDownloading(field);
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setStoredDownloadError({ field, message: data.detail || `Failed to download file (HTTP ${res.status})` });
+        return;
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition") || "";
+      const match = disposition.match(/filename\*?="?([^";]+)"?/i);
+      const filename = match ? match[1] : fallbackName;
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      setStoredDownloadError({ field, message: err.message || "Failed to download file." });
+    } finally {
+      setStoredDownloading(null);
+    }
+  };
+  const [dbs, setDbs] = useState(() => initialSubmission ? {
     biosample: initialDatabases.has("BIOSAMPLE"),
     sra: initialDatabases.has("SRA"),
     genbank: initialDatabases.has("GENBANK"),
@@ -5457,12 +6059,249 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
   const [testMode, setTestMode]             = useState(initialSubmission ? initialSubmission.submission_type === "TEST" : true);
   const [submitted, setSubmitted]           = useState(false);
   const [submissionJob, setSubmissionJob]   = useState(null);
-  const [submissionProcessStatus, setSubmissionProcessStatus] = useState(null);
+
+  // Whether the loaded past submission's rows (or, for this session's own submission,
+  // its confirmed "SUBMITTED" status) still allow editing the metadata table.
+  const canEditSubmission = (!initialSubmission || (
+    existingRows.length > 0
+    && existingRows.every((row) => ["FAILED", "CREATED"].includes(row.submission_status))
+  )) && !submitted;
+
+  // Stricter than canEditSubmission: Create Files / Submit are only offered for a brand-new
+  // submission, or a past submission that's still entirely CREATED (never actually submitted).
+  // Once this session's own submission is confirmed SUBMITTED, lock the whole form.
+  const canCreateOrSubmit = (!initialSubmission || (
+    existingRows.length > 0
+    && existingRows.every((row) => row.submission_status === "CREATED")
+  )) && !submitted;
+
+  // Seed from the selected past submission's stored per-database rows so the status banner/cards
+  // reflect it immediately, without waiting for a fresh submit or a manual "Refresh Status" click.
+  const [submissionProcessStatus, setSubmissionProcessStatus] = useState(() => deriveOverallSubmissionStatus(initialRows));
+  // Result of an explicit "Refresh Status" check, kept separate so it doesn't clobber
+  // submissionProcessStatus (also written by the live-submission process poller).
+  const [refreshedSubmissionStatus, setRefreshedSubmissionStatus] = useState(null);
   const [submissionPolling, setSubmissionPolling] = useState(false);
   const [submissionStatusError, setSubmissionStatusError] = useState(null);
   const [submitError, setSubmitError]       = useState(null); // missing required field messages, shown before final submit
   const [uploadingFiles, setUploadingFiles] = useState(false); // uploading submission files to the backend
   const [uploadError, setUploadError]       = useState(null);
+  // "Create submission files" — preps SeqSender's per-database submission files without actually submitting.
+  const [creatingFiles, setCreatingFiles]   = useState(false);
+  const [createFilesResult, setCreateFilesResult] = useState(null); // { status, message, databases }
+  const [createFilesError, setCreateFilesError]   = useState(null);
+
+  // Free-text comments attached to a submission, editable per-database below each status card.
+  const [comments, setComments] = useState(() => {
+    const map = {};
+    initialRows.forEach((row) => { if (row.database) map[row.database] = row.comments ?? ""; });
+    return map;
+  });
+  const [commentsSaveStatus, setCommentsSaveStatus] = useState({}); // database -> "idle" | "saving" | "saved" | "error"
+  const [commentsSaveError, setCommentsSaveError] = useState({}); // database -> error message
+  const [statusReportMessageEdits, setStatusReportMessageEdits] = useState({}); // database -> sample_name -> edited message
+
+  // Persist the Message edits typed into a database's StatusReportTable, keyed by sample_name,
+  // into the on-disk submission_status_report.csv (separate from the submission's own comments).
+  const saveStatusReportMessages = async (database, messagesBySample) => {
+    const submissionNameForReport = submissionJob?.submission_name ?? initialSubmission?.submission_name ?? subName;
+    const organismForReport = submissionJob?.organism ?? initialSubmission?.organism ?? organism;
+    const submissionTypeForReport = submissionJob?.submission_type ?? initialSubmission?.submission_type ?? (testMode ? "TEST" : "PRODUCTION");
+    if (!submissionNameForReport || Object.keys(messagesBySample).length === 0) return;
+    const res = await fetch(API.updateSeqsenderSubmissionStatusReportMessages, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        submission_name: submissionNameForReport,
+        organism: organismForReport,
+        database,
+        submission_type: submissionTypeForReport,
+        messages: messagesBySample,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || "Failed to save status report messages.");
+  };
+
+  const saveSubmissionComments = async (database) => {
+    const submissionNameForComments = submissionJob?.submission_name ?? initialSubmission?.submission_name ?? subName;
+    const organismForComments = submissionJob?.organism ?? initialSubmission?.organism ?? organism;
+    const submissionTypeForComments = submissionJob?.submission_type ?? initialSubmission?.submission_type ?? (testMode ? "TEST" : "PRODUCTION");
+    if (!submissionNameForComments) return;
+    setCommentsSaveStatus((prev) => ({ ...prev, [database]: "saving" }));
+    setCommentsSaveError((prev) => ({ ...prev, [database]: null }));
+    try {
+      const res = await fetch(API.updateSeqsenderSubmissionComments, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          submission_name: submissionNameForComments,
+          organism: organismForComments,
+          database,
+          submission_type: submissionTypeForComments,
+          comments: comments[database] ?? "",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || data.message || "Failed to save comments.");
+      await saveStatusReportMessages(database, statusReportMessageEdits[database] ?? {});
+      setCommentsSaveStatus((prev) => ({ ...prev, [database]: "saved" }));
+      setExistingRows((rows) => rows.map((row) => (row.database === database ? { ...row, comments: comments[database] ?? "" } : row)));
+      setStatusReportMessageEdits((prev) => ({ ...prev, [database]: {} }));
+      // Refresh the Past Submissions list so its cached rows (used to seed this panel on reopen) aren't stale.
+      props.onSubmitted?.();
+    } catch (err) {
+      setCommentsSaveStatus((prev) => ({ ...prev, [database]: "error" }));
+      setCommentsSaveError((prev) => ({ ...prev, [database]: err.message || "Failed to save comments." }));
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const parseMetadata = (file) => {
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: "greedy",
+        transformHeader: (header) => header.replace(/^\uFEFF/, "").trim(),
+        complete: ({ data, meta, errors }) => {
+          if (cancelled) return;
+          const columns = (meta.fields ?? []).filter(Boolean);
+          const rows = data
+            .filter((row) => columns.some((column) => String(row[column] ?? "").trim()))
+            .map((row) => ("collection_date" in row ? { ...row, collection_date: normalizeCollectionDate(row.collection_date) } : row));
+          const fatalError = errors.find(({ code }) => code === "UndetectableDelimiter" || code === "MissingQuotes");
+          setMetadataPreview({
+            columns,
+            rows,
+            loading: false,
+            error: fatalError?.message ?? (!columns.length ? "The metadata file does not contain a header row." : null),
+          });
+        },
+        error: (error) => {
+          if (!cancelled) setMetadataPreview({ columns: [], rows: [], loading: false, error: error.message || "Failed to read metadata." });
+        },
+      });
+    };
+
+    const loadMetadata = async () => {
+      if (metaFileObject) {
+        if (/\.xlsx?$/i.test(metaFileObject.name)) {
+          setMetadataPreview({ columns: [], rows: [], loading: false, error: "Metadata table preview supports CSV and TSV files." });
+          return;
+        }
+        setMetadataPreview((current) => ({ ...current, loading: true, error: null }));
+        parseMetadata(metaFileObject);
+        return;
+      }
+      if (!storedSubmissionQuery) {
+        setMetadataPreview({ columns: [], rows: [], loading: false, error: null });
+        return;
+      }
+      setMetadataPreview((current) => ({ ...current, loading: true, error: null }));
+      try {
+        // no-store: the stored metadata can change between opens of the same submission (e.g.
+        // rows removed), but the request URL never changes, so the browser cache must be bypassed.
+        const response = await fetch(`${API.downloadSeqsenderMetadata}?${storedSubmissionQuery}`, { cache: "no-store" });
+        if (!response.ok) throw new Error("Stored metadata could not be loaded for preview.");
+        parseMetadata(await response.blob());
+      } catch (error) {
+        if (!cancelled) setMetadataPreview({ columns: [], rows: [], loading: false, error: error.message || "Failed to load stored metadata." });
+      }
+    };
+
+    loadMetadata();
+    return () => { cancelled = true; };
+  }, [metaFileObject, storedSubmissionQuery]);
+
+  // Memoized so unrelated re-renders (typing in another field, status polling, etc.) don't hand
+  // SeqSenderMetadataTable a brand-new `rows` array reference each time — that would trip its
+  // "rows changed" effect and silently clear the user's row selection before Remove is clicked.
+  const selectedMetadataTables = useMemo(() => SEQSENDER_METADATA_TABLES
+    .filter(({ key }) => dbs[key])
+    .map((table) => {
+      const columns = metadataPreview.columns.filter((column) => {
+        // "sequence_name" just repeats the FASTA link across every table — never database-specific.
+        if (column.toLowerCase() === "sequence_name") return false;
+        const normalizedColumn = column.toLowerCase();
+        const isShared = !SEQSENDER_DATABASE_PREFIXES.some((prefix) => normalizedColumn.startsWith(prefix));
+        return isShared || table.prefixes.some((prefix) => normalizedColumn.startsWith(prefix));
+      });
+      // Collapse duplicate rows for the same sample (this database's own sample_name column)
+      // down to one row per sample, keeping the most recently seen values.
+      const rows = Array.from(
+        metadataPreview.rows.reduce((map, row) => map.set(row[table.sampleNameColumn], row), new Map()).values()
+      );
+      return {
+        ...table,
+        columns,
+        rows,
+      };
+    }), [metadataPreview.columns, metadataPreview.rows, dbs]);
+
+  // Snapshot of the metadata worksheet as it stood just before the first row removal, so
+  // "Undo" can restore it. Cleared once restored, or when a genuinely new file is browsed.
+  const [metadataUndoSnapshot, setMetadataUndoSnapshot] = useState(null);
+
+  const removeMetadataRows = (rowsToRemove, sampleNameColumn) => {
+    // Filter the master metadata by this database's own sample_name value (not object identity)
+    // so the removal reliably matches rows even if they were re-parsed into new row objects.
+    const removedSampleNames = new Set(
+      rowsToRemove
+        .map((row) => row[sampleNameColumn])
+        .filter((value) => value !== undefined && value !== null && String(value).trim() !== "")
+    );
+    const removalSet = new Set(rowsToRemove);
+    const remainingRows = (sampleNameColumn && removedSampleNames.size > 0)
+      ? metadataPreview.rows.filter((row) => !removedSampleNames.has(row[sampleNameColumn]))
+      : metadataPreview.rows.filter((row) => !removalSet.has(row));
+    const isTsv = /\.tsv$/i.test(metaFileObject?.name ?? "");
+    const fileName = metaFileObject?.name ?? (isTsv ? "metadata.tsv" : "metadata.csv");
+    const serializedMetadata = Papa.unparse({
+      fields: metadataPreview.columns,
+      data: remainingRows.map((row) => metadataPreview.columns.map((column) => row[column] ?? "")),
+    }, { delimiter: isTsv ? "\t" : "," });
+
+    // Only capture the pre-removal state once, so undo always restores the very first version.
+    setMetadataUndoSnapshot((current) => current ?? {
+      rows: metadataPreview.rows,
+      fileObject: metaFileObject,
+      fileName: metaFile,
+    });
+    setMetadataPreview((current) => ({ ...current, rows: remainingRows }));
+    setMetaFileObject(new File(
+      [serializedMetadata],
+      fileName,
+      { type: isTsv ? "text/tab-separated-values" : "text/csv" }
+    ));
+    setMetaFile(fileName);
+    setSubmitError(null);
+  };
+
+  // Restore the metadata worksheet to how it stood before any rows were removed this session.
+  const undoMetadataRemoval = () => {
+    if (!metadataUndoSnapshot) return;
+    setMetadataPreview((current) => ({ ...current, rows: metadataUndoSnapshot.rows }));
+    setMetaFileObject(metadataUndoSnapshot.fileObject);
+    setMetaFile(metadataUndoSnapshot.fileName);
+    setMetadataUndoSnapshot(null);
+    setSubmitError(null);
+  };
+
+  // Serialize the currently displayed/edited metadata preview into a metadata.csv file,
+  // so what gets uploaded always matches exactly what's shown in the table (incl. row removals).
+  // collection_date is re-normalized here too, defensively, in case metadataPreview was ever
+  // populated without going through parseMetadata's normalization.
+  const buildMetadataCsvFile = () => {
+    const normalizedRows = metadataPreview.rows.map((row) =>
+      "collection_date" in row ? { ...row, collection_date: normalizeCollectionDate(row.collection_date) } : row
+    );
+    const serializedMetadata = Papa.unparse({
+      fields: metadataPreview.columns,
+      data: normalizedRows.map((row) => metadataPreview.columns.map((column) => row[column] ?? "")),
+    });
+    return { file: new File([serializedMetadata], "metadata.csv", { type: "text/csv" }), rows: normalizedRows };
+  };
 
   // ── Submission credentials (Submission.NCBI / Submission.GISAID in config.yaml) ──
   const [ncbiUsername, setNcbiUsername]             = useState("");
@@ -5508,6 +6347,20 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
   const [gisaidSubmittersError, setGisaidSubmittersError]     = useState(null);
   const [gisaidSelectedSubmitterId, setGisaidSelectedSubmitterId] = useState("");
 
+  // ── Standalone "Save credentials" state (per portal) ──
+  const [ncbiSaveStatus, setNcbiSaveStatus]         = useState("idle"); // "idle" | "saving" | "saved" | "error"
+  const [ncbiSaveError, setNcbiSaveError]           = useState(null);
+  const [gisaidSaveStatus, setGisaidSaveStatus]     = useState("idle"); // "idle" | "saving" | "saved" | "error"
+  const [gisaidSaveError, setGisaidSaveError]       = useState(null);
+
+  // ── Standalone "Delete submitter" state (per portal) ──
+  const [ncbiDeleteStatus, setNcbiDeleteStatus]     = useState("idle"); // "idle" | "deleting" | "error"
+  const [ncbiDeleteError, setNcbiDeleteError]       = useState(null);
+  const [gisaidDeleteStatus, setGisaidDeleteStatus] = useState("idle"); // "idle" | "deleting" | "error"
+  const [gisaidDeleteError, setGisaidDeleteError]   = useState(null);
+  const [deleteSubmitterModal, setDeleteSubmitterModal] = useState(null); // "NCBI" | "GISAID" | null — which portal's confirmation modal is open
+
+
   // Fetch the saved submitters for a portal (lazily, the first time "Existing User" is picked).
   const loadSubmitters = useCallback(async (portal) => {
     const isNcbi = portal === "NCBI";
@@ -5531,6 +6384,25 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     loadSubmitters("NCBI");
     loadSubmitters("GISAID");
   }, [loadSubmitters]);
+  // For a brand-new submission (no initialSubmission to hydrate from), default straight to
+  // "Existing User" the first time each portal's submitter list loads with entries, so
+  // previously stored usernames are immediately available for selection instead of requiring
+  // an extra click. Guarded by a ref (not state) so a later reload of the list — e.g. after a
+  // successful submit — doesn't clobber a user who deliberately switched back to "New User".
+  const ncbiAutoModeSetRef = useRef(false);
+  useEffect(() => {
+    if (!initialSubmission && !ncbiAutoModeSetRef.current && ncbiSubmitters.length > 0) {
+      ncbiAutoModeSetRef.current = true;
+      setNcbiUserMode("existing");
+    }
+  }, [initialSubmission, ncbiSubmitters]);
+  const gisaidAutoModeSetRef = useRef(false);
+  useEffect(() => {
+    if (!initialSubmission && !gisaidAutoModeSetRef.current && gisaidSubmitters.length > 0) {
+      gisaidAutoModeSetRef.current = true;
+      setGisaidUserMode("existing");
+    }
+  }, [initialSubmission, gisaidSubmitters]);
 
   // Poll the SeqSender submission process status at regular intervals.
   useEffect(() => {
@@ -5546,14 +6418,21 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         params.set("submission_type", submissionJob.submission_type);
         params.set("pid", String(submissionJob.pid));
 
-        const response = await fetch(`${API.seqsenderSubmissionProcessStatus}?${params.toString()}`);
+        const response = await fetch(`${API.checkSeqsenderSubmissionProccess}?${params.toString()}`);
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || "Failed to check SeqSender submission status.");
         if (cancelled) return;
 
         setSubmissionProcessStatus(data);
         setSubmissionStatusError(null);
+        // Confirmed SUBMITTED (not just launched) — lock the form and stop polling.
+        if (data.status === "SUBMITTED") {
+          setSubmitted(true);
+        }
         if (data.status === "SUBMITTED" || data.status === "FAILED") {
+          // Let the parent tab know a submission was just created/updated so the Past Submissions
+          // panel refreshes even if it was already open (its own mount-time fetch won't rerun otherwise).
+          props.onSubmitted?.();
           setSubmissionPolling(false);
         }
       } catch (err) {
@@ -5572,8 +6451,24 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     };
   }, [submissionPolling, submissionJob]);
 
+  // Opening a past/initial submission shows its locally-stored status immediately, but also
+  // reload the stored submission rows and status report from the backend (no external SeqSender
+  // CLI call) so the banner/cards reflect whatever was last recorded without an expensive check.
+  // Skip entirely for a submission still stuck at CREATED — it was never actually submitted, so
+  // there's no SeqSender status/report to load yet.
+  useEffect(() => {
+    if (initialSubmission && !initialRows.every((row) => row.submission_status === "CREATED")) {
+      loadSubmissionStatus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSubmission]);
+
   // Fill every NCBI field from a previously saved submitter.
   const selectNcbiSubmitter = (s) => {
+    setNcbiSaveStatus("idle");
+    setNcbiSaveError(null);
+    setNcbiDeleteStatus("idle");
+    setNcbiDeleteError(null);
     setNcbiSelectedSubmitterId(String(s.submitter_id));
     setNcbiUsername(s.submitter_name ?? "");
     setNcbiPassword(s.submitter_password ?? "");
@@ -5608,10 +6503,95 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
 
   // Fill GISAID fields from a previously saved submitter.
   const selectGisaidSubmitter = (s) => {
+    setGisaidSaveStatus("idle");
+    setGisaidSaveError(null);
+    setGisaidDeleteStatus("idle");
+    setGisaidDeleteError(null);
     setGisaidSelectedSubmitterId(String(s.submitter_id));
     setGisaidUsername(s.submitter_name ?? "");
     setGisaidPassword(s.submitter_password ?? "");
     setGisaidClientId(s.gisaid_client_id ?? "");
+  };
+
+  // Clear every NCBI credential/organization field back to a blank "New User" form.
+  const clearNcbiFields = () => {
+    setNcbiUsername("");
+    setNcbiPassword("");
+    setNcbiSpuidNamespace("");
+    setNcbiOrgRole("owner");
+    setNcbiOrgType("center");
+    setNcbiOrgTypeOther("");
+    setNcbiOrgName("");
+    setNcbiAddrAffil("");
+    setNcbiAddrDiv("");
+    setNcbiAddrStreet("");
+    setNcbiAddrCity("");
+    setNcbiAddrSub("");
+    setNcbiAddrPostalCode("");
+    setNcbiAddrCountry("");
+    setNcbiAddrEmail("");
+    setNcbiAddrPhone("");
+    setNcbiSubmitterEmail("");
+    setNcbiSubmitterAltEmail("");
+    setNcbiSubmitterFirst("");
+    setNcbiSubmitterLast("");
+  };
+
+  // Clear every GISAID credential field back to a blank "New User" form.
+  const clearGisaidFields = () => {
+    setGisaidUsername("");
+    setGisaidPassword("");
+    setGisaidClientId("");
+  };
+
+  // Permanently remove the selected NCBI submitter's saved credentials.
+  const handleDeleteNcbiSubmitter = async () => {
+    const submitter = ncbiSubmitters.find((s) => String(s.submitter_id) === ncbiSelectedSubmitterId);
+    if (!submitter) return;
+    setNcbiDeleteStatus("deleting");
+    setNcbiDeleteError(null);
+    try {
+      const res = await fetch(API.deleteSubmitter, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ submitter_name: submitter.submitter_name, submission_portal: "NCBI" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Failed to delete NCBI submitter.");
+      setNcbiSelectedSubmitterId("");
+      clearNcbiFields();
+      setNcbiDeleteStatus("idle");
+      setDeleteSubmitterModal(null);
+      await loadSubmitters("NCBI");
+    } catch (err) {
+      setNcbiDeleteStatus("error");
+      setNcbiDeleteError(err.message || "Failed to delete NCBI submitter.");
+    }
+  };
+
+  // Permanently remove the selected GISAID submitter's saved credentials.
+  const handleDeleteGisaidSubmitter = async () => {
+    const submitter = gisaidSubmitters.find((s) => String(s.submitter_id) === gisaidSelectedSubmitterId);
+    if (!submitter) return;
+    setGisaidDeleteStatus("deleting");
+    setGisaidDeleteError(null);
+    try {
+      const res = await fetch(API.deleteSubmitter, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ submitter_name: submitter.submitter_name, submission_portal: "GISAID" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Failed to delete GISAID submitter.");
+      setGisaidSelectedSubmitterId("");
+      clearGisaidFields();
+      setGisaidDeleteStatus("idle");
+      setDeleteSubmitterModal(null);
+      await loadSubmitters("GISAID");
+    } catch (err) {
+      setGisaidDeleteStatus("error");
+      setGisaidDeleteError(err.message || "Failed to delete GISAID submitter.");
+    }
   };
 
   // Hydrate credentials from the saved submitter rows associated with a selected past submission.
@@ -5632,14 +6612,127 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     }
   }, [initialSubmission, ncbiSubmitters, gisaidSubmitters]);
 
+  const isValidEmailAddr = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+
+  // Save just the NCBI credentials/organization block to the database, independent of any submission.
+  const handleSaveNcbiSubmitter = async () => {
+    const missing = [];
+    if (!ncbiUsername) missing.push("NCBI Credentials: Username");
+    if (!ncbiPassword) missing.push("NCBI Credentials: Password");
+    if (!ncbiSpuidNamespace) missing.push("NCBI Credentials: Spuid Namespace");
+    if (!ncbiOrgName) missing.push("NCBI Organization: Name");
+    if (!ncbiAddrAffil.trim()) missing.push("NCBI Organization: Affiliation");
+    if (!ncbiAddrDiv.trim()) missing.push("NCBI Organization: Division");
+    if (ncbiOrgType === "other" && !ncbiOrgTypeOther) missing.push("NCBI Organization: Type (please specify)");
+    if (!ncbiAddrStreet) missing.push("NCBI Address: Street");
+    if (!ncbiAddrCity) missing.push("NCBI Address: City");
+    if (!ncbiAddrSub) missing.push("NCBI Address: State");
+    if (!ncbiAddrPostalCode) missing.push("NCBI Address: Postal Code");
+    else if (!/^\d+$/.test(ncbiAddrPostalCode.trim())) missing.push("NCBI Address: Postal Code must contain only digits");
+    if (!ncbiAddrCountry) missing.push("NCBI Address: Country");
+    if (!ncbiAddrEmail.trim()) missing.push("NCBI Address: Email");
+    else if (!isValidEmailAddr(ncbiAddrEmail)) missing.push("NCBI Address: Email must be a valid email address");
+    if (!ncbiSubmitterEmail.trim()) missing.push("NCBI Submitter: Email");
+    else if (!isValidEmailAddr(ncbiSubmitterEmail)) missing.push("NCBI Submitter: Email must be a valid email address");
+    if (ncbiSubmitterAltEmail.trim() && !isValidEmailAddr(ncbiSubmitterAltEmail)) {
+      missing.push("NCBI Submitter: Alt Email must be a valid email address");
+    }
+    if (!ncbiSubmitterFirst) missing.push("NCBI Submitter: First Name");
+    if (!ncbiSubmitterLast) missing.push("NCBI Submitter: Last Name");
+
+    if (missing.length > 0) {
+      setNcbiSaveStatus("error");
+      setNcbiSaveError(missing);
+      return;
+    }
+
+    setNcbiSaveStatus("saving");
+    setNcbiSaveError(null);
+    try {
+      const res = await fetch(API.saveSubmitter, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          submitter_name: ncbiUsername,
+          submitter_password: ncbiPassword,
+          submission_portal: "NCBI",
+          ncbi_spuid_namespace: ncbiSpuidNamespace,
+          ncbi_org_role: ncbiOrgRole,
+          ncbi_org_type: ncbiOrgType === "other" ? ncbiOrgTypeOther : ncbiOrgType,
+          ncbi_org_name: ncbiOrgName,
+          ncbi_org_affiliation: ncbiAddrAffil,
+          ncbi_org_division: ncbiAddrDiv,
+          ncbi_addr_street: ncbiAddrStreet,
+          ncbi_addr_city: ncbiAddrCity,
+          ncbi_addr_state: ncbiAddrSub,
+          ncbi_addr_postal_code: ncbiAddrPostalCode,
+          ncbi_addr_country: ncbiAddrCountry,
+          ncbi_addr_email: ncbiAddrEmail,
+          ncbi_addr_phone: ncbiAddrPhone,
+          ncbi_submitter_email: ncbiSubmitterEmail,
+          ncbi_submitter_alt_email: ncbiSubmitterAltEmail,
+          ncbi_submitter_first_name: ncbiSubmitterFirst,
+          ncbi_submitter_last_name: ncbiSubmitterLast,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Failed to save NCBI credentials.");
+      setNcbiSaveStatus("saved");
+      await loadSubmitters("NCBI");
+    } catch (err) {
+      setNcbiSaveStatus("error");
+      setNcbiSaveError([err.message || "Failed to save NCBI credentials."]);
+    }
+  };
+
+  // Save just the GISAID credentials block to the database, independent of any submission.
+  const handleSaveGisaidSubmitter = async () => {
+    const missing = [];
+    if (!gisaidUsername) missing.push("GISAID Credentials: Username");
+    if (!gisaidPassword) missing.push("GISAID Credentials: Password");
+    if (!gisaidClientId) missing.push("GISAID Credentials: Client-Id");
+
+    if (missing.length > 0) {
+      setGisaidSaveStatus("error");
+      setGisaidSaveError(missing);
+      return;
+    }
+
+    setGisaidSaveStatus("saving");
+    setGisaidSaveError(null);
+    try {
+      const res = await fetch(API.saveSubmitter, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          submitter_name: gisaidUsername,
+          submitter_password: gisaidPassword,
+          submission_portal: "GISAID",
+          gisaid_client_id: gisaidClientId,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Failed to save GISAID credentials.");
+      setGisaidSaveStatus("saved");
+      await loadSubmitters("GISAID");
+    } catch (err) {
+      setGisaidSaveStatus("error");
+      setGisaidSaveError([err.message || "Failed to save GISAID credentials."]);
+    }
+  };
+
   // ── Collapsible section state ──
+  // A new submission, or a past submission still entirely CREATED (never submitted), opens every
+  // section; any other past submission collapses every section except Status.
+  const initialSectionsExpanded = !initialSubmission
+    || (initialRows.length > 0 && initialRows.every((row) => row.submission_status === "CREATED"));
   const [openSections, setOpenSections] = useState({
-    database: true,
-    pathogen: true,
-    credentials: true,
-    inputs: true,
-    options: true,
-    submit: true,
+    database: initialSectionsExpanded,
+    pathogen: initialSectionsExpanded,
+    credentials: initialSectionsExpanded,
+    inputs: initialSectionsExpanded,
+    options: initialSectionsExpanded,
+    submit: initialSectionsExpanded,
     status: true,
   });
   const toggleSection = (key) => setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -5655,18 +6748,34 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
   const toggleDb = (k) => setDbs((p) => ({ ...p, [k]: !p[k] }));
 
   // Validate every required field (scoped to the selected databases) before allowing final submission.
-  const handleSubmit = async () => {
+  const handleSubmit = async (mode = "submit") => {
+
+    // Determine if the submission is a preparation-only submission.
+    const isPrep = mode === "prep";
+
+    // Helper function to validate email addresses.
     const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+    
+    // Initialize an array to keep track of missing required fields.
     const missing = [];
     if (!Object.values(dbs).some(Boolean)) missing.push("Database Targets: select at least one database");
     if (!organism) missing.push("Pathogen: Organism");
     if (!subName) missing.push("Submission Inputs: Submission Name");
 
+    // table2asn's GFF file is only surfaced in the UI for FLU/COV, so only require it there.
+    const gffRequired = table2asn && (organism === "FLU" || organism === "COV");
+    if (gffRequired && !gffFile) missing.push("Submission Options: GFF File is required when --table2asn is enabled.");
+
+    // FASTA is only required for GenBank/GISAID submissions — BioSample and SRA don't need sequences.
+    const fastaRequired = dbs.genbank || dbs.gisaid;
+
     if (!initialSubmission) {
       if (!metaFile) missing.push("Submission Inputs: Metadata File");
       else if (!metaFileObject) missing.push("Submission Inputs: Metadata File (please browse and upload a file, not just type its name)");
-      if (!fastaFile) missing.push("Submission Inputs: FASTA File");
-      else if (!fastaFileObject) missing.push("Submission Inputs: FASTA File (please browse and upload a file, not just type its name)");
+      if (fastaRequired) {
+        if (!fastaFile) missing.push("Submission Inputs: FASTA File");
+        else if (!fastaFileObject) missing.push("Submission Inputs: FASTA File (please browse and upload a file, not just type its name)");
+      }
       if (dbs.sra && !rawReadsFiles) missing.push("Submission Inputs: Raw Reads (FASTQs)");
       else if (dbs.sra && rawReadsFiles && !rawReadsFileObjects.length) missing.push("Submission Inputs: Raw Reads (FASTQs) (please browse and upload files, not just type their names)");
       if (gffFile && !gffFileObject) missing.push("Submission Options: GFF File (please browse and upload a file, not just type its name)");
@@ -5678,6 +6787,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       else if (!gisaidCliFileObject) missing.push("Submission Inputs: GISAID CLI (please browse and upload a file, not just type its name)");
     }
 
+    // NCBI Credentials and Organization Information Validation
     if (dbs.biosample || dbs.sra || dbs.genbank) {
       if (!ncbiUsername) missing.push("NCBI Credentials: Username");
       if (!ncbiPassword) missing.push("NCBI Credentials: Password");
@@ -5703,12 +6813,14 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       if (!ncbiSubmitterLast) missing.push("NCBI Submitter: Last Name");
     }
 
+    // GISAID Credentials Validation
     if (dbs.gisaid) {
       if (!gisaidUsername) missing.push("GISAID Credentials: Username");
       if (!gisaidPassword) missing.push("GISAID Credentials: Password");
       if (!gisaidClientId) missing.push("GISAID Credentials: Client-Id");
     }
 
+    // Check if any required fields are missing for NCBI and GISAID
     if (missing.length > 0) {
       setSubmitError(missing);
       // Expand every section so the user can see and fill in what's missing.
@@ -5716,14 +6828,36 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       setTimeout(() => document.getElementById("seqsender-section-submit")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
       return;
     }
+
+    if (metadataPreview.rows.length === 0) {
+      setSubmitError(["Metadata must contain at least one sample."]);
+      setOpenSections((prev) => ({ ...prev, inputs: true, submit: true }));
+      setTimeout(() => document.getElementById("seqsender-section-submit")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+      return;
+    }
+
+    // Check if the metadata exceeds the maximum allowed number of samples (3,000)
+    if (metadataPreview.rows.length > 3000) {
+      setSubmitError(["Metadata cannot contain more than 3,000 samples."]);
+      setOpenSections((prev) => ({ ...prev, database: true, pathogen: true, credentials: true, inputs: true, submit: true }));
+      setTimeout(() => document.getElementById("seqsender-section-submit")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+      return;
+    }
     
     // Upload the submission files to the SeqSender submission folder in the backend
     setSubmitError(null);
-    setUploadError(null);
-    setUploadingFiles(true);
+    if (isPrep) {
+      setCreateFilesError(null);
+      setCreateFilesResult(null);
+      setCreatingFiles(true);
+    } else {
+      setUploadError(null);
+      setUploadingFiles(true);
+    }
 
     // Attempt to upload the submission data and files to the backend
     try {
+
       // Build the NCBI submitter information block
       const ncbiActive = dbs.biosample || dbs.sra || dbs.genbank;
       const ncbiSubmitterInfo = ncbiActive ? {
@@ -5801,8 +6935,14 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         if (!uploadRes.ok) throw new Error(uploadData.detail || `Failed to upload ${fieldName}`);
       };
       // Upload the selected files to the backend API endpoints for each file type.
-      if (metaFileObject) {
-        await uploadFile(API.uploadSeqsenderMetadata, "metadata_file", metaFileObject);
+      // Metadata is always re-serialized from metadataPreview (not gated on metaFileObject) so a
+      // past submission's stored metadata.csv also picks up normalization (e.g. collection_date)
+      // even when the user didn't browse a new file this session.
+      if (metadataPreview.columns.length > 0) {
+        const { file: metadataCsvFile, rows: normalizedMetadataRows } = buildMetadataCsvFile();
+        await uploadFile(API.uploadSeqsenderMetadata, "metadata_file", metadataCsvFile);
+        // Reflect the exact (normalized) data that was just uploaded back into the preview table.
+        setMetadataPreview((current) => ({ ...current, rows: normalizedMetadataRows }));
       }
       if (fastaFileObject) {
         await uploadFile(API.uploadSeqsenderFasta, "fasta_file", fastaFileObject);
@@ -5818,39 +6958,14 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         await uploadGisaidCli(API.uploadSeqsenderGisaidCli, "gisaid_cli_file", gisaidCliFileObject);
       }
 
-      // Validate stored submission files
-      checkParams.set("gff_file", String(submissionData.gff_file));
-      const fileCheckRes = await fetch(`${API.validateSeqsenderFiles}?${checkParams.toString()}`);
-      const fileCheckData = await fileCheckRes.json().catch(() => ({}));
-      if (!fileCheckRes.ok) throw new Error(fileCheckData.detail || "Failed to check stored submission files.");
-
-      const replacements = {
-        metadata: !!metaFileObject,
-        fasta: !!fastaFileObject,
-        raw_reads: rawReadsFileObjects.length > 0,
-        gisaid_cli: gisaidCliMode === "new" && !!gisaidCliFileObject,
-        gff: !!gffFileObject,
-      };
-
-      const missingStoredFiles = (fileCheckData.missing_files ?? [])
-        .filter(({ key }) => !replacements[key]);
-      if (missingStoredFiles.length > 0) {
-        setSubmitError(missingStoredFiles.map(({ label }) =>
-          `Submission Inputs: ${label} not found in the storage location. File(s) may have been moved or deleted; Browse and upload the file(s) again.`
-        ));
-        setOpenSections((prev) => ({ ...prev, inputs: true, options: true, submit: true }));
-        setUploadingFiles(false);
-        return;
-      }
-
       // If new submission, check for existing submission with the same identity.
       if(!initialSubmission) {
         const checkRes = await fetch(`${API.retrieveSeqsenderSubmission}?${checkParams.toString()}`);
         const checkData = await checkRes.json().catch(() => ({}));
         if (!checkRes.ok) throw new Error(checkData.detail || "Failed to check for an existing submission.");
         if (Array.isArray(checkData?.submission_info) && checkData.submission_info.length > 0) {
-          setUploadError(`Submission "${submissionData.submission_name}" already exists for organism ${submissionData.organism} with database(s): ${checkData.submission_info.map((row) => row.database).join(", ")}. Please choose a different submission name.`);
-          setUploadingFiles(false);
+          setUploadError(`Submission "${submissionData.submission_name}" already exists for organism ${submissionData.organism} with database(s): ${checkData.submission_info.map((row) => row.database).join(", ")}. Please choose a different name or select "Past Submissions" to reload it.`);
+          if (isPrep) setCreatingFiles(false); else setUploadingFiles(false);
           return;
         }
       }
@@ -5865,53 +6980,111 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || "Failed to create submission record.");
 
-      // Launch the SeqSender submission pipeline for the newly created submission record.
-      const submitRes = await fetch(API.submitSeqsenderSubmission, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          submission_name:  submissionData.submission_name,
-          organism:         submissionData.organism,
-          database:         submissionData.database,
-          submission_type:  submissionData.submission_type,
-        }),
-      });
-      const submitData = await submitRes.json().catch(() => ({}));
-      if (!submitRes.ok) throw new Error(submitData.detail || "Failed to launch SeqSender submission.");
-      if (submitData.status !== "success" || !Number.isInteger(submitData.pid)) {
-        throw new Error("SeqSender did not return a valid process ID.");
+      // Validate stored submission files -- required gff file parameter in the check.
+      checkParams.set("gff_file", String(submissionData.gff_file));
+      const fileCheckRes = await fetch(`${API.validateSeqsenderFiles}?${checkParams.toString()}`);
+      const fileCheckData = await fileCheckRes.json().catch(() => ({}));
+      if (!fileCheckRes.ok) throw new Error(fileCheckData.detail || "Failed to check stored submission files.");
+
+      // Determine which required submission files are missing from the storage location.
+      const replacements = {
+        metadata: metadataPreview.columns.length > 0,
+        fasta: !!fastaFileObject,
+        raw_reads: rawReadsFileObjects.length > 0,
+        gisaid_cli: gisaidCliMode === "new" && !!gisaidCliFileObject,
+        gff: !!gffFileObject,
+      };
+
+      // Filter out the files that are already present in the storage location based on the replacements object.  
+      const missingStoredFiles = (fileCheckData.missing_files ?? [])
+        .filter(({ key }) => !replacements[key]);
+      if (missingStoredFiles.length > 0) {
+        setSubmitError(missingStoredFiles.map(({ label }) =>
+          `Submission Inputs: ${label} not found in the storage location. File(s) may have been moved or deleted; Browse and upload the file(s) again.`
+        ));
+        setOpenSections((prev) => ({ ...prev, inputs: true, options: true, submit: true }));
+        if (isPrep) setCreatingFiles(false); else setUploadingFiles(false);
+        return;
       }
 
-      setSubmissionJob({
-        submission_name: submissionData.submission_name,
-        organism: submissionData.organism,
-        database: submissionData.database,
-        submission_type: submissionData.submission_type,
-        pid: submitData.pid,
-      });
+      if (isPrep) {
 
-      setSubmissionProcessStatus({
-        status: "PROCESSING",
-        pid: submitData.pid,
-        return_code: null,
-        message: "SeqSender was launched successfully and is being processed.",
-      });
-      
-      setSubmissionStatusError(null);
-      setSubmitted(true);
-      setSubmissionPolling(true);
+        // Only generate the per-database submission files — no actual portal submission is launched.
+        const prepRes = await fetch(API.createSeqsenderSubmissionFiles, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            submission_name:  submissionData.submission_name,
+            organism:         submissionData.organism,
+            database:         submissionData.database,
+            submission_type:  submissionData.submission_type,
+          }),
+        });
+        const prepData = await prepRes.json().catch(() => ({}));
+        if (!prepRes.ok) throw new Error(prepData.detail || "Failed to create submission files.");
+        setCreateFilesResult(prepData);
 
-      // The backend upserts the submitter row (new OR existing) as part of /create/submission,
-      // so re-fetch from the backend rather than patching local state — a local patch only ever
-      // carried submitter_name/ncbi_spuid_namespace, dropping every other field (org, address,
-      // publication, etc.), so re-selecting that "just created" entry later showed blank fields.
-      if (ncbiActive) loadSubmitters("NCBI");
-      if (dbs.gisaid) loadSubmitters("GISAID");
+        if (ncbiActive) loadSubmitters("NCBI");
+        if (dbs.gisaid) loadSubmitters("GISAID");
+        props.onSubmitted?.();
+
+      } else {
+
+        // Launch the SeqSender submission pipeline for the newly created submission record.
+        const submitRes = await fetch(API.submitSeqsenderSubmission, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            submission_name:  submissionData.submission_name,
+            organism:         submissionData.organism,
+            database:         submissionData.database,
+            submission_type:  submissionData.submission_type,
+          }),
+        });
+        const submitData = await submitRes.json().catch(() => ({}));
+        if (!submitRes.ok) throw new Error(submitData.detail || "Failed to launch SeqSender submission.");
+        if (submitData.status !== "success" || !Number.isInteger(submitData.pid)) {
+          throw new Error("SeqSender did not return a valid process ID.");
+        }
+
+        // Update the local state to reflect the newly launched submission job.
+        setSubmissionJob({
+          submission_name: submissionData.submission_name,
+          organism: submissionData.organism,
+          database: submissionData.database,
+          submission_type: submissionData.submission_type,
+          pid: submitData.pid,
+        });
+
+        // Update the submission process status to indicate that SeqSender has been launched successfully.
+        setSubmissionProcessStatus({
+          status: "PROCESSING",
+          pid: submitData.pid,
+          return_code: null,
+          message: "SeqSender was launched successfully and is being processed.",
+        });
+
+        setSubmissionPolling(true);
+        setSubmissionStatusError(null);
+
+        // The backend upserts the submitter row (new OR existing) as part of /create/submission,
+        // so re-fetch from the backend rather than patching local state — a local patch only ever
+        // carried submitter_name/ncbi_spuid_namespace, dropping every other field (org, address,
+        // publication, etc.), so re-selecting that "just created" entry later showed blank fields.
+        if (ncbiActive) loadSubmitters("NCBI");
+        if (dbs.gisaid) loadSubmitters("GISAID");
+
+        // Let the parent tab know a submission was just created/updated so the Past Submissions
+        // panel refreshes even if it was already open (its own mount-time fetch won't rerun otherwise).
+        props.onSubmitted?.();
+
+      }
 
     } catch (err) {
-      setUploadError(err.message || "Failed to upload submission files.");
+      if (isPrep) setCreateFilesError(err.message || "Failed to create submission files.");
+      else setUploadError(err.message || "Failed to upload submission files.");
     } finally {
-      setUploadingFiles(false);
+      if (isPrep) setCreatingFiles(false); else setUploadingFiles(false);
     }
 
   };
@@ -5925,10 +7098,11 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
           <div className="grid w-full grid-cols-3 gap-2">
             {DB_LIST.map(({ key, label, desc, url }) => (
               <label key={key} className={cn(
-                "flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors",
+                "flex items-start gap-3 p-3 rounded-xl border transition-colors",
+                !canCreateOrSubmit ? "cursor-not-allowed opacity-60" : "cursor-pointer",
                 dbs[key] ? "border-primary bg-primary/5" : "border-border hover:bg-muted/20"
               )}>
-                <input type="checkbox" checked={dbs[key]} onChange={() => toggleDb(key)} className="mt-0.5 accent-primary" />
+                <input type="checkbox" checked={dbs[key]} onChange={() => toggleDb(key)} disabled={!canCreateOrSubmit} className="mt-0.5 accent-primary disabled:cursor-not-allowed" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold">{label}</p>
                   <p className="text-xs text-muted-foreground">{desc}</p>
@@ -5949,22 +7123,35 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
             ))}
           </div>
 
-          {/* ── Download config file and metadata template — these are static templates, independent of organism/database selection ────────────── */}
-          <div className="flex flex-wrap gap-2">
-            <a
-              href={API.downloadSeqsenderConfigTemplate}
-              download="config_template.yaml"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-primary bg-primary hover:bg-primary/90 text-xs font-medium text-primary-foreground transition-colors"
-            >
-              <Download size={13} /> Download Config File
-            </a>
-            <a
-              href={API.downloadSeqsenderMetadataTemplate}
-              download="metadata_template.csv"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-primary bg-primary hover:bg-primary/90 text-xs font-medium text-primary-foreground transition-colors"
-            >
-              <Download size={13} /> Download Metadata Template
-            </a>
+          {/* ── Download metadata template — generated by SeqSender for the selected organism + databases ────────────── */}
+          <div className="flex flex-col gap-1.5">
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => downloadStoredFile(
+                  (() => {
+                    const selectedDatabases = Object.entries(dbs).filter(([, v]) => v).map(([k]) => k.toUpperCase());
+                    if (!organism || selectedDatabases.length === 0) return "";
+                    const params = new URLSearchParams();
+                    params.set("organism", organism);
+                    selectedDatabases.forEach((db) => params.append("database", db));
+                    return `${API.downloadSeqsenderMetadataTemplate}?${params.toString()}`;
+                  })(),
+                  "metadataTemplate",
+                  `${organism.toLowerCase()}_metadata_template.csv`
+                )}
+                disabled={!organism || !Object.values(dbs).some(Boolean) || storedDownloading === "metadataTemplate"}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-primary bg-primary hover:bg-primary/90 text-xs font-medium text-primary-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {storedDownloading === "metadataTemplate" ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />}
+                Download Metadata Template
+              </button>
+            </div>
+            {storedDownloadError?.field === "metadataTemplate" && (
+              <p className="flex items-center gap-1 text-xs text-destructive">
+                <AlertCircle size={11} className="shrink-0" /> {storedDownloadError.message}
+              </p>
+            )}
           </div>
         </>
       )}
@@ -5976,9 +7163,10 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
           <FieldLabel>Organism <span className="text-destructive">*</span></FieldLabel>
           <div className="flex flex-wrap gap-2">
             {ORGANISMS.map(({ value, label }) => (
-              <button key={value} onClick={() => setOrganism(value)}
+              <button key={value} disabled={!canCreateOrSubmit} onClick={() => setOrganism(value)}
                 className={cn(
                   "px-4 py-1.5 rounded-full text-xs font-semibold border transition-colors",
+                  !canCreateOrSubmit && "cursor-not-allowed opacity-60",
                   organism === value
                     ? "bg-primary text-primary-foreground border-primary"
                     : "border-border text-muted-foreground hover:border-primary hover:text-primary"
@@ -5999,13 +7187,13 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                 <FieldLabel>Username <span className="text-destructive">*</span></FieldLabel>
                 {ncbiSubmitters.length > 0 && (
                   <div className="flex gap-2 mb-2">
-                    <button type="button" onClick={() => { setNcbiUserMode("new"); setNcbiSelectedSubmitterId(""); }}
-                      className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors",
+                    <button type="button" disabled={!canCreateOrSubmit} onClick={() => { setNcbiUserMode("new"); setNcbiSelectedSubmitterId(""); setNcbiSaveStatus("idle"); setNcbiSaveError(null); setNcbiDeleteStatus("idle"); setNcbiDeleteError(null); clearNcbiFields(); }}
+                      className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors disabled:opacity-60 disabled:cursor-not-allowed",
                         ncbiUserMode === "new" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary hover:text-primary")}>
                       New User
                     </button>
-                    <button type="button" onClick={() => setNcbiUserMode("existing")}
-                      className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors",
+                    <button type="button" disabled={!canCreateOrSubmit} onClick={() => { setNcbiUserMode("existing"); setNcbiSaveStatus("idle"); setNcbiSaveError(null); setNcbiDeleteStatus("idle"); setNcbiDeleteError(null); }}
+                      className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors disabled:opacity-60 disabled:cursor-not-allowed",
                         ncbiUserMode === "existing" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary hover:text-primary")}>
                       Existing User
                     </button>
@@ -6019,6 +7207,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                     selectedId={ncbiSelectedSubmitterId}
                     onSelect={selectNcbiSubmitter}
                     placeholder="Select an NCBI submitter…"
+                    disabled={!canCreateOrSubmit}
                   />
                 ) : (
                   <input
@@ -6026,19 +7215,14 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                     onChange={(e) => setNcbiUsername(e.target.value)}
                     placeholder="e.g. your NCBI username"
                     autoComplete="off"
-                    className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    disabled={!canCreateOrSubmit}
+                    className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
                   />
                 )}
               </div>
               <div>
                 <FieldLabel>Password <span className="text-destructive">*</span></FieldLabel>
-                <input
-                  type="password"
-                  value={ncbiPassword}
-                  onChange={(e) => setNcbiPassword(e.target.value)}
-                  autoComplete="new-password"
-                  className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                />
+                <PasswordInput value={ncbiPassword} onChange={(e) => setNcbiPassword(e.target.value)} disabled={!canCreateOrSubmit} />
               </div>
               <div>
                 <FieldLabel>Spuid Namespace <span className="text-destructive">*</span></FieldLabel>
@@ -6047,7 +7231,8 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                   onChange={(e) => setNcbiSpuidNamespace(e.target.value)}
                   placeholder="e.g. your organization's NCBI namespace"
                   autoComplete="off"
-                  className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  disabled={!canCreateOrSubmit}
+                  className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
                 />
               </div>
 
@@ -6057,15 +7242,15 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <FieldLabel>Role <span className="text-destructive">*</span></FieldLabel>
-                    <select value={ncbiOrgRole} onChange={(e) => setNcbiOrgRole(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+                    <select value={ncbiOrgRole} onChange={(e) => setNcbiOrgRole(e.target.value)} disabled={!canCreateOrSubmit}
+                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted">
                       <option value="owner">Owner</option>
                     </select>
                   </div>
                   <div>
                     <FieldLabel>Type <span className="text-destructive">*</span></FieldLabel>
-                    <select value={ncbiOrgType} onChange={(e) => setNcbiOrgType(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+                    <select value={ncbiOrgType} onChange={(e) => setNcbiOrgType(e.target.value)} disabled={!canCreateOrSubmit}
+                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted">
                       <option value="center">Center</option>
                       <option value="institute">Institute</option>
                       <option value="lab">Lab</option>
@@ -6075,26 +7260,26 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                     </select>
                     {ncbiOrgType === "other" && (
                       <input value={ncbiOrgTypeOther} onChange={(e) => setNcbiOrgTypeOther(e.target.value)}
-                        placeholder="e.g. bureau"
-                        className="w-full h-9 px-3 mt-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                        placeholder="e.g. bureau" disabled={!canCreateOrSubmit}
+                        className="w-full h-9 px-3 mt-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted" />
                     )}
                   </div>
                 </div>
                 <div className="mt-3">
                   <FieldLabel>Name <span className="text-destructive">*</span></FieldLabel>
-                  <input value={ncbiOrgName} onChange={(e) => setNcbiOrgName(e.target.value)}
-                    className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                  <input value={ncbiOrgName} onChange={(e) => setNcbiOrgName(e.target.value)} disabled={!canCreateOrSubmit}
+                    className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted" />
                 </div>            
                 <div className="grid grid-cols-2 mt-3 gap-3">
                   <div>
                     <FieldLabel>Affiliation <span className="text-destructive">*</span></FieldLabel>
-                    <input required value={ncbiAddrAffil} onChange={(e) => setNcbiAddrAffil(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                    <input required value={ncbiAddrAffil} onChange={(e) => setNcbiAddrAffil(e.target.value)} disabled={!canCreateOrSubmit}
+                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted" />
                   </div>
                   <div>
                     <FieldLabel>Division <span className="text-destructive">*</span></FieldLabel>
-                    <input required value={ncbiAddrDiv} onChange={(e) => setNcbiAddrDiv(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                    <input required value={ncbiAddrDiv} onChange={(e) => setNcbiAddrDiv(e.target.value)} disabled={!canCreateOrSubmit}
+                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted" />
                   </div>
                 </div>
               </div>
@@ -6104,39 +7289,39 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                 <p className="text-xs font-bold text-foreground uppercase tracking-wider mt-2 mb-2">Address</p>
                 <div className="mt-3">
                   <FieldLabel>Street <span className="text-destructive">*</span></FieldLabel>
-                  <input value={ncbiAddrStreet} onChange={(e) => setNcbiAddrStreet(e.target.value)}
-                    className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                  <input value={ncbiAddrStreet} onChange={(e) => setNcbiAddrStreet(e.target.value)} disabled={!canCreateOrSubmit}
+                    className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted" />
                 </div>
                 <div className="grid grid-cols-2 gap-3 mt-3">
                   <div>
                     <FieldLabel>City <span className="text-destructive">*</span></FieldLabel>
-                    <input value={ncbiAddrCity} onChange={(e) => setNcbiAddrCity(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                    <input value={ncbiAddrCity} onChange={(e) => setNcbiAddrCity(e.target.value)} disabled={!canCreateOrSubmit}
+                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted" />
                   </div>
                   <div>
                     <FieldLabel>State <span className="text-destructive">*</span></FieldLabel>
-                    <input value={ncbiAddrSub} onChange={(e) => setNcbiAddrSub(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                    <input value={ncbiAddrSub} onChange={(e) => setNcbiAddrSub(e.target.value)} disabled={!canCreateOrSubmit}
+                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted" />
                   </div>
                   <div>
                     <FieldLabel>Postal Code <span className="text-destructive">*</span></FieldLabel>
-                    <input inputMode="numeric" pattern="[0-9]*" value={ncbiAddrPostalCode} onChange={(e) => setNcbiAddrPostalCode(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                    <input inputMode="numeric" pattern="[0-9]*" value={ncbiAddrPostalCode} onChange={(e) => setNcbiAddrPostalCode(e.target.value)} disabled={!canCreateOrSubmit}
+                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted" />
                   </div>
                   <div>
                     <FieldLabel>Country <span className="text-destructive">*</span></FieldLabel>
-                    <input value={ncbiAddrCountry} onChange={(e) => setNcbiAddrCountry(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                    <input value={ncbiAddrCountry} onChange={(e) => setNcbiAddrCountry(e.target.value)} disabled={!canCreateOrSubmit}
+                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted" />
                   </div>
                   <div>
                     <FieldLabel>Email <span className="text-destructive">*</span></FieldLabel>
-                    <input type="email" required value={ncbiAddrEmail} onChange={(e) => setNcbiAddrEmail(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                    <input type="email" required value={ncbiAddrEmail} onChange={(e) => setNcbiAddrEmail(e.target.value)} disabled={!canCreateOrSubmit}
+                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted" />
                   </div>
                   <div>
                     <FieldLabel>Phone</FieldLabel>
-                    <input value={ncbiAddrPhone} onChange={(e) => setNcbiAddrPhone(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                    <input value={ncbiAddrPhone} onChange={(e) => setNcbiAddrPhone(e.target.value)} disabled={!canCreateOrSubmit}
+                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted" />
                   </div>
                 </div>
               </div>
@@ -6147,26 +7332,62 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <FieldLabel>Email <span className="text-destructive">*</span></FieldLabel>
-                    <input type="email" value={ncbiSubmitterEmail} onChange={(e) => setNcbiSubmitterEmail(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                    <input type="email" value={ncbiSubmitterEmail} onChange={(e) => setNcbiSubmitterEmail(e.target.value)} disabled={!canCreateOrSubmit}
+                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted" />
                   </div>
                   <div>
                     <FieldLabel>Alt Email</FieldLabel>
-                    <input type="email" value={ncbiSubmitterAltEmail} onChange={(e) => setNcbiSubmitterAltEmail(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                    <input type="email" value={ncbiSubmitterAltEmail} onChange={(e) => setNcbiSubmitterAltEmail(e.target.value)} disabled={!canCreateOrSubmit}
+                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted" />
                   </div>
                   <div>
                     <FieldLabel>First Name <span className="text-destructive">*</span></FieldLabel>
-                    <input value={ncbiSubmitterFirst} onChange={(e) => setNcbiSubmitterFirst(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                    <input value={ncbiSubmitterFirst} onChange={(e) => setNcbiSubmitterFirst(e.target.value)} disabled={!canCreateOrSubmit}
+                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted" />
                   </div>
                   <div>
                     <FieldLabel>Last Name <span className="text-destructive">*</span></FieldLabel>
-                    <input value={ncbiSubmitterLast} onChange={(e) => setNcbiSubmitterLast(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                    <input value={ncbiSubmitterLast} onChange={(e) => setNcbiSubmitterLast(e.target.value)} disabled={!canCreateOrSubmit}
+                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted" />
                   </div>
                 </div>
               </div>
+              <div className="flex items-center gap-3 pt-1 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleSaveNcbiSubmitter}
+                  disabled={ncbiSaveStatus === "saving" || !canCreateOrSubmit}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {ncbiSaveStatus === "saving" ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
+                  Save NCBI Credentials
+                </button>
+                {ncbiSelectedSubmitterId && (
+                  <button
+                    type="button"
+                    onClick={() => { setNcbiDeleteStatus("idle"); setNcbiDeleteError(null); setDeleteSubmitterModal("NCBI"); }}
+                    disabled={!canCreateOrSubmit}
+                    className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-border text-xs font-semibold text-destructive hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Trash2 size={13} /> Delete Submitter
+                  </button>
+                )}
+                {ncbiSaveStatus === "saved" && (
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600 dark:text-green-400">
+                    <Check size={13} /> Saved for future use
+                  </span>
+                )}
+              </div>
+              {ncbiSaveStatus === "error" && ncbiSaveError && (
+                <ul className="space-y-0.5">
+                  {ncbiSaveError.map((msg, i) => (
+                    <li key={i} className="flex items-start gap-1.5 text-xs text-destructive">
+                      <AlertCircle size={12} className="shrink-0 mt-0.5" />
+                      <span>{msg}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
 
@@ -6177,13 +7398,13 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                 <FieldLabel>Username <span className="text-destructive">*</span></FieldLabel>
                 {gisaidSubmitters.length > 0 && (
                   <div className="flex gap-2 mb-2">
-                    <button type="button" onClick={() => { setGisaidUserMode("new"); setGisaidSelectedSubmitterId(""); }}
-                      className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors",
+                    <button type="button" disabled={!canCreateOrSubmit} onClick={() => { setGisaidUserMode("new"); setGisaidSelectedSubmitterId(""); setGisaidSaveStatus("idle"); setGisaidSaveError(null); setGisaidDeleteStatus("idle"); setGisaidDeleteError(null); clearGisaidFields(); }}
+                      className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors disabled:opacity-60 disabled:cursor-not-allowed",
                         gisaidUserMode === "new" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary hover:text-primary")}>
                       New User
                     </button>
-                    <button type="button" onClick={() => setGisaidUserMode("existing")}
-                      className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors",
+                    <button type="button" disabled={!canCreateOrSubmit} onClick={() => { setGisaidUserMode("existing"); setGisaidSaveStatus("idle"); setGisaidSaveError(null); setGisaidDeleteStatus("idle"); setGisaidDeleteError(null); }}
+                      className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors disabled:opacity-60 disabled:cursor-not-allowed",
                         gisaidUserMode === "existing" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary hover:text-primary")}>
                       Existing User
                     </button>
@@ -6197,6 +7418,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                     selectedId={gisaidSelectedSubmitterId}
                     onSelect={selectGisaidSubmitter}
                     placeholder="Select a GISAID submitter…"
+                    disabled={!canCreateOrSubmit}
                   />
                 ) : (
                   <input
@@ -6204,19 +7426,14 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                     onChange={(e) => setGisaidUsername(e.target.value)}
                     placeholder="e.g. your GISAID username"
                     autoComplete="off"
-                    className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    disabled={!canCreateOrSubmit}
+                    className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
                   />
                 )}
               </div>
               <div>
                 <FieldLabel>Password <span className="text-destructive">*</span></FieldLabel>
-                <input
-                  type="password"
-                  value={gisaidPassword}
-                  onChange={(e) => setGisaidPassword(e.target.value)}
-                  autoComplete="new-password"
-                  className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                />
+                <PasswordInput value={gisaidPassword} onChange={(e) => setGisaidPassword(e.target.value)} disabled={!canCreateOrSubmit} />
               </div>
               <div>
                 <FieldLabel>Client-Id <span className="text-destructive">*</span></FieldLabel>
@@ -6224,9 +7441,46 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                   value={gisaidClientId}
                   onChange={(e) => setGisaidClientId(e.target.value)}
                   autoComplete="off"
-                  className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  disabled={!canCreateOrSubmit}
+                  className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
                 />        
               </div>
+              <div className="flex items-center gap-3 pt-1 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleSaveGisaidSubmitter}
+                  disabled={gisaidSaveStatus === "saving" || !canCreateOrSubmit}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {gisaidSaveStatus === "saving" ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
+                  Save GISAID Credentials
+                </button>
+                {gisaidSelectedSubmitterId && (
+                  <button
+                    type="button"
+                    onClick={() => { setGisaidDeleteStatus("idle"); setGisaidDeleteError(null); setDeleteSubmitterModal("GISAID"); }}
+                    disabled={!canCreateOrSubmit}
+                    className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-border text-xs font-semibold text-destructive hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Trash2 size={13} /> Delete Submitter
+                  </button>
+                )}
+                {gisaidSaveStatus === "saved" && (
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600 dark:text-green-400">
+                    <Check size={13} /> Saved for future use
+                  </span>
+                )}
+              </div>
+              {gisaidSaveStatus === "error" && gisaidSaveError && (
+                <ul className="space-y-0.5">
+                  {gisaidSaveError.map((msg, i) => (
+                    <li key={i} className="flex items-start gap-1.5 text-xs text-destructive">
+                      <AlertCircle size={12} className="shrink-0 mt-0.5" />
+                      <span>{msg}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
         </>
@@ -6241,7 +7495,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
             <FieldLabel>Submission Name <span className="text-destructive">*</span></FieldLabel>
             <input value={subName} onChange={(e) => setSubName(e.target.value.replace(/\s+/g, "_"))}
               placeholder="e.g. FLU_H3N2_2026"
-              disabled={!!initialSubmission}
+              disabled={!!initialSubmission || submitted}
               className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-60" />
           </div>
 
@@ -6253,12 +7507,14 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                   <div>
                     <FieldLabel>Publication Title</FieldLabel>
                     <input value={ncbiPubTitle} onChange={(e) => setNcbiPubTitle(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                      disabled={!canCreateOrSubmit}
+                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-60" />
                   </div>
                   <div>
                     <FieldLabel>Publication Status</FieldLabel>
                     <select value={ncbiPubStatus} onChange={(e) => setNcbiPubStatus(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+                      disabled={!canCreateOrSubmit}
+                      className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-60">
                       <option value="Unpublished">Unpublished</option>
                       <option value="In-press">In Press</option>
                       <option value="Published">Published</option>
@@ -6271,15 +7527,16 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
               <div className="w-full">
                 <FieldLabel>Specified Release Date</FieldLabel>
                 <input type="date" value={ncbiPubReleaseDate} onChange={(e) => setNcbiPubReleaseDate(e.target.value)}
-                  className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                  disabled={!canCreateOrSubmit}
+                  className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-60" />
               </div>
             </>
           )}
 
           {/* ── File inputs ────────────── */}
           {[
-            { label: "Metadata File",  required: true,  val: metaFile,      set: setMetaFile,       accept: ".csv,.tsv,.xlsx",      ph: "metadata.csv",            show: true, downloadUrl: API.downloadSeqsenderMetadata, onFile: (files) => setMetaFileObject(files[0] ?? null) },
-            { label: "FASTA File",    required: true,  val: fastaFile,     set: setFastaFile,      accept: ".fasta,.fa,.fna",      ph: "sequences.fasta",         show: true, downloadUrl: API.downloadSeqsenderFasta, onFile: (files) => setFastaFileObject(files[0] ?? null) },
+            { label: "Metadata File",  required: true,  val: metaFile,      set: setMetaFile,       accept: ".csv,.tsv,.xlsx",      ph: "metadata.csv",            show: true, downloadUrl: API.downloadSeqsenderMetadata, onFile: (files) => { setMetaFileObject(files[0] ?? null); setMetadataUndoSnapshot(null); } },
+            { label: "FASTA File",  required: dbs.genbank || dbs.gisaid,  val: fastaFile,     set: setFastaFile,      accept: ".fasta,.fa,.fna",      ph: "sequences.fasta",         show: true, downloadUrl: API.downloadSeqsenderFasta, onFile: (files) => setFastaFileObject(files[0] ?? null) },
             { label: "Raw Reads (FASTQs)", required: true, val: rawReadsFiles, set: setRawReadsFiles, accept: ".fastq,.fq,.fastq.gz,.fq.gz", ph: "e.g. sample_R1.fastq.gz, sample_R2.fastq.gz", show: dbs.sra, multiple: true, downloadUrl: API.downloadSeqsenderRawReads, downloadLabel: "Download stored raw reads (.zip)", onFile: (files) => setRawReadsFileObjects(files) },
           ].filter(({ show }) => show).map(({ label, required, val, set, accept, ph, desc, multiple, downloadUrl, downloadLabel, onFile }) => (
             <div key={label} className="w-full">
@@ -6287,11 +7544,16 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
               {desc && <p className="text-xs text-muted-foreground mb-2">{desc}</p>}
               <div className="flex w-full gap-2">
                 <input value={val} onChange={(e) => set(e.target.value)} placeholder={ph}
-                  className="flex-1 h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-                <label className="flex items-center gap-1.5 px-3 h-9 rounded-md border border-border bg-muted/20 hover:bg-muted/40 cursor-pointer text-xs text-muted-foreground transition-colors">
+                  disabled={!canCreateOrSubmit}
+                  className="flex-1 h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-60" />
+                <label className={cn(
+                  "flex items-center gap-1.5 px-3 h-9 rounded-md border border-border bg-muted/20 text-xs text-muted-foreground transition-colors",
+                  !canCreateOrSubmit ? "cursor-not-allowed opacity-60" : "hover:bg-muted/40 cursor-pointer"
+                )}>
                   <FolderOpen size={13} /> Browse
                   <input type="file" className="hidden" accept={accept}
                     multiple={!!multiple}
+                    disabled={!canCreateOrSubmit}
                     onChange={(e) => {
                       const files = Array.from(e.target.files ?? []);
                       if (files.length) {
@@ -6302,10 +7564,19 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                 </label>
               </div>
               {initialSubmission && downloadUrl && (
-                <a href={storedDownloadUrl(downloadUrl)} download
-                  className="mt-1.5 inline-flex items-center gap-1 text-xs font-mono text-primary hover:underline">
-                  <Download size={11} className="shrink-0" /> {downloadLabel ?? "Download stored file"}
-                </a>
+                <button
+                  type="button"
+                  onClick={() => downloadStoredFile(storedDownloadUrl(downloadUrl), label, downloadLabel ?? "stored_file")}
+                  disabled={storedDownloading === label}
+                  className="mt-1.5 inline-flex items-center gap-1 text-xs font-mono text-primary hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {storedDownloading === label ? <RefreshCw size={11} className="shrink-0 animate-spin" /> : <Download size={11} className="shrink-0" />} {downloadLabel ?? "Download stored file"}
+                </button>
+              )}
+              {storedDownloadError?.field === label && (
+                <p className="mt-1 flex items-center gap-1 text-xs text-destructive">
+                  <AlertCircle size={11} className="shrink-0" /> {storedDownloadError.message}
+                </p>
               )}
             </div>
           ))}
@@ -6315,15 +7586,15 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
             <div className="w-full">
               <FieldLabel>GISAID CLI <span className="text-destructive">*</span></FieldLabel>
               <div className="flex gap-2 mb-2">
-                <button type="button"
+                <button type="button" disabled={!canCreateOrSubmit}
                   onClick={() => { setGisaidCliMode("new"); setGisaidCliFile(""); setGisaidCliFileObject(null); }}
-                  className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors",
+                  className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors disabled:cursor-not-allowed disabled:opacity-60",
                     gisaidCliMode === "new" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary hover:text-primary")}>
                   New CLI
                 </button>
-                <button type="button"
+                <button type="button" disabled={!canCreateOrSubmit}
                   onClick={() => { setGisaidCliMode("existing"); setGisaidCliFile(""); setGisaidCliFileObject(null); }}
-                  className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors",
+                  className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors disabled:cursor-not-allowed disabled:opacity-60",
                     gisaidCliMode === "existing" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary hover:text-primary")}>
                   Existing CLI
                 </button>
@@ -6331,10 +7602,15 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
               {gisaidCliMode === "new" ? (
                 <div className="flex w-full gap-2">
                   <input value={gisaidCliFile} onChange={(e) => setGisaidCliFile(e.target.value)} placeholder="e.g. fluCLI"
-                    className="flex-1 h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-                  <label className="flex items-center gap-1.5 px-3 h-9 rounded-md border border-border bg-muted/20 hover:bg-muted/40 cursor-pointer text-xs text-muted-foreground transition-colors">
+                    disabled={!canCreateOrSubmit}
+                    className="flex-1 h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-60" />
+                  <label className={cn(
+                    "flex items-center gap-1.5 px-3 h-9 rounded-md border border-border bg-muted/20 text-xs text-muted-foreground transition-colors",
+                    !canCreateOrSubmit ? "cursor-not-allowed opacity-60" : "hover:bg-muted/40 cursor-pointer"
+                  )}>
                     <FolderOpen size={13} /> Browse
                     <input type="file" className="hidden" accept="binary"
+                      disabled={!canCreateOrSubmit}
                       onChange={(e) => {
                         const f = e.target.files?.[0];
                         if (f) { setGisaidCliFile(f.name); setGisaidCliFileObject(f); }
@@ -6359,11 +7635,11 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
           {/* ── Submission options toggles ────────────── */}
           {[
             { label: "--table2asn",   desc: "Use table2asn for GenBank submission (required for annotated sequences)", val: table2asn, set: setTable2asn, show: dbs.genbank },
-            { label: "--test",        desc: "Run in test mode — submit to test servers without affecting production",  val: testMode,  set: setTestMode,  show: true },
+            { label: "--test",        desc: "Run in test mode — submit to test servers without affecting production (applicable to NCBI databases only)",  val: testMode,  set: setTestMode,  show: true },
           ].filter(({ show }) => show).map(({ label, desc, val, set }) => (
             <Fragment key={label}>
-              <button onClick={() => set((v) => !v)}
-                className="flex w-full items-center justify-between gap-4 p-3 rounded-xl border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left">
+              <button onClick={() => set((v) => !v)} disabled={!canCreateOrSubmit}
+                className="flex w-full items-center justify-between gap-4 p-3 rounded-xl border border-border bg-muted/10 hover:bg-muted/20 transition-colors text-left disabled:cursor-not-allowed disabled:opacity-60">
                 <div>
                   <p className="text-sm font-mono font-semibold">{label}</p>
                   <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
@@ -6375,14 +7651,19 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
 
               {label === "--table2asn" && val && (organism === "FLU" || organism === "COV") && (
                 <div className="w-full rounded-xl border border-border bg-muted/10 p-3">
-                  <p className="text-sm font-mono font-semibold">--gff_file</p>
-                  <p className="text-xs text-muted-foreground mb-2 mt-0.5">Annotation file only available for table2asn submissions.</p>
+                  <p className="text-sm font-mono font-semibold">--gff_file <span className="text-destructive">*</span></p>
+                  <p className="text-xs text-muted-foreground mb-2 mt-0.5">Provide an annotation file for table2asn submission.</p>
                   <div className="flex w-full gap-2">
-                    <input value={gffFile} onChange={(e) => setGffFile(e.target.value)} placeholder="annotation.gff (optional)"
-                      className="flex-1 h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-                    <label className="flex items-center gap-1.5 px-3 h-9 rounded-md border border-border bg-muted/20 hover:bg-muted/40 cursor-pointer text-xs text-muted-foreground transition-colors">
+                    <input value={gffFile} onChange={(e) => setGffFile(e.target.value)} placeholder="annotation.gff"
+                      disabled={!canCreateOrSubmit}
+                      className="flex-1 h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-60" />
+                    <label className={cn(
+                      "flex items-center gap-1.5 px-3 h-9 rounded-md border border-border bg-muted/20 text-xs text-muted-foreground transition-colors",
+                      !canCreateOrSubmit ? "cursor-not-allowed opacity-60" : "hover:bg-muted/40 cursor-pointer"
+                    )}>
                       <FolderOpen size={13} /> Browse
                       <input type="file" className="hidden" accept=".gff,.gff3"
+                        disabled={!canCreateOrSubmit}
                         onChange={(e) => {
                           const f = e.target.files?.[0];
                           if (f) {
@@ -6394,10 +7675,19 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                     </label>
                   </div>
                   {initialSubmission && gffFile && (
-                    <a href={storedDownloadUrl(API.downloadSeqsenderGff)} download
-                      className="mt-1.5 inline-flex items-center gap-1 text-xs font-mono text-primary hover:underline">
-                      <Download size={11} className="shrink-0" /> Download stored file
-                    </a>
+                    <button
+                      type="button"
+                      onClick={() => downloadStoredFile(storedDownloadUrl(API.downloadSeqsenderGff), "gff", "annotation.gff")}
+                      disabled={storedDownloading === "gff"}
+                      className="mt-1.5 inline-flex items-center gap-1 text-xs font-mono text-primary hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {storedDownloading === "gff" ? <RefreshCw size={11} className="shrink-0 animate-spin" /> : <Download size={11} className="shrink-0" />} Download stored file
+                    </button>
+                  )}
+                  {storedDownloadError?.field === "gff" && (
+                    <p className="mt-1 flex items-center gap-1 text-xs text-destructive">
+                      <AlertCircle size={11} className="shrink-0" /> {storedDownloadError.message}
+                    </p>
                   )}
                 </div>
               )}
@@ -6407,9 +7697,37 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       )}
 
       {/* ── Submit button ────────────── */}
-      <SectionHeader id="seqsender-section-submit" title="Review & Submit" icon={Rocket} open={openSections.submit} onToggle={() => toggleSection("submit")} />
+      <SectionHeader id="seqsender-section-submit" title="Review & Submit" icon={Rocket} open={openSections.submit} onToggle={() => toggleSection("submit")} />      
       {openSections.submit && (
         <>
+          {metadataPreview.loading && (
+            <div className="flex w-full items-center gap-2 rounded-lg border border-border bg-muted/10 px-3 py-2 text-xs text-muted-foreground">
+              <RefreshCw size={13} className="shrink-0 animate-spin" /> Loading metadata tables…
+            </div>
+          )}
+          {!metadataPreview.loading && metadataPreview.error && (
+            <div className="flex w-full items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-destructive dark:border-red-800 dark:bg-red-950/20">
+              <AlertCircle size={13} className="mt-0.5 shrink-0" /> {metadataPreview.error}
+            </div>
+          )}
+          {!metadataPreview.loading && !metadataPreview.error && metadataPreview.columns.length > 0 && (
+            <div className="w-full space-y-3">
+              {selectedMetadataTables.map(({ key, title, columns, rows, sampleNameColumn }) => (
+                <SeqSenderMetadataTable
+                  key={key}
+                  title={title}
+                  columns={columns}
+                  rows={rows}
+                  onRemoveRows={removeMetadataRows}
+                  onUndoRows={undoMetadataRemoval}
+                  canUndo={!!metadataUndoSnapshot}
+                  editable={canEditSubmission}
+                  sampleNameColumn={sampleNameColumn}
+                />
+              ))}
+            </div>
+          )}
+
           {submitError && submitError.length > 0 && (
             <div className="w-full rounded-lg border bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-800 px-3 py-2 space-y-1 text-left text-xs">
               <p className="font-semibold text-destructive mb-1">Please provide the following required fields before submitting:</p>
@@ -6421,13 +7739,36 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
               ))}
             </div>
           )}
+
           {uploadError && (
             <div className="flex w-full items-start gap-2 rounded-lg border bg-red-50 border-red-200 px-3 py-2 text-xs dark:border-red-800 dark:bg-red-950/20">
               <AlertCircle size={12} className="shrink-0 mt-0.5 text-destructive" />
               <span className="text-destructive">{uploadError}</span>
             </div>
           )}
-          <button onClick={handleSubmit} disabled={uploadingFiles || submissionPolling}
+
+          {createFilesError && (
+            <div className="flex w-full items-start gap-2 rounded-lg border bg-red-50 border-red-200 px-3 py-2 text-xs dark:border-red-800 dark:bg-red-950/20">
+              <AlertCircle size={12} className="shrink-0 mt-0.5 text-destructive" />
+              <span className="text-destructive">{createFilesError}</span>
+            </div>
+          )}
+
+          {createFilesResult && (
+            <div className="flex w-full items-start gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs dark:border-green-800 dark:bg-green-950/20">
+              <Check size={12} className="shrink-0 mt-0.5 text-green-700 dark:text-green-300" />
+              <span className="text-green-700 dark:text-green-300">{createFilesResult.message || "Submission files were created successfully."}</span>
+            </div>
+          )}
+
+          {/* ── Create submission files / Submit — disabled (not hidden) unless this is a new submission or a past submission still entirely CREATED ────────────── */}
+          <button onClick={() => handleSubmit("prep")} disabled={!canCreateOrSubmit || creatingFiles || uploadingFiles || submissionPolling}
+            className="flex w-full items-center gap-2 rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50">
+            {creatingFiles ? <RefreshCw size={14} className="animate-spin" /> : <Package size={14} />}
+            {creatingFiles ? "Creating files…" : `Create submission files for ${Object.entries(dbs).filter(([,v])=>v).map(([k])=>k).join(", ") || "selected databases"}`}
+          </button>
+
+          <button onClick={() => handleSubmit("submit")} disabled={!canCreateOrSubmit || uploadingFiles || submissionPolling}
             className="flex w-full items-center gap-2 rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50">
             {uploadingFiles || submissionPolling ? <RefreshCw size={14} className="animate-spin" /> : <Rocket size={14} />}
             {uploadingFiles ? "Uploading…" : submissionPolling ? "SeqSender running…" : `Submit to ${Object.entries(dbs).filter(([,v])=>v).map(([k])=>k).join(", ") || "selected databases"}`}
@@ -6435,102 +7776,256 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         </>
       )}
 
-      {/* ── Submission status ────────────── */}
+      {/* ── Submission status — header always shows; body depends on new/submitted/past-selected state ────────────── */}
       <SectionHeader id="seqsender-section-status" title="Submission Status" icon={ClipboardList} open={openSections.status} onToggle={() => toggleSection("status")} />
       {openSections.status && (
         <>
-          {!submitted && (
-            <div className="flex w-full items-center gap-2 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning">
-              <AlertCircle size={13} /> Submission status and accessions will populate here once the submission is submitted and processed.
+          {/* ── New submission: nothing submitted yet and no past submission selected ────────────── */}
+          {!submitted && !initialSubmission && !submissionJob && (
+            <div className="flex w-full items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+              <AlertCircle size={13} className="mt-0.5 shrink-0" />
+              <span>Submission status will appear here once the submission is submitted and proccessed.</span>
             </div>
           )}
 
-          {submitted && (
+          {/* ── Latest submission status message — prefers a manual Refresh Status check over the process poller ────────────── */}
+          {(() => {
+            const displayedStatus = refreshedSubmissionStatus ?? submissionProcessStatus;
+            return (submitted || initialSubmission || submissionJob) && displayedStatus?.message && (
             <div className={cn(
               "flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-xs",
-              submissionStatusError || submissionProcessStatus?.status === "FAILED"
+              displayedStatus?.status === "FAILED"
                 ? "border-red-200 bg-red-50 text-destructive dark:border-red-800 dark:bg-red-950/20"
-                : submissionProcessStatus?.status === "SUBMITTED"
+                : ["SUBMITTED", "COMPLETED"].includes(displayedStatus?.status)
                   ? "border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-950/20 dark:text-green-300"
                   : "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/20 dark:text-blue-300"
             )}>
-              {submissionPolling
+              {(submissionPolling || existingStatusRefreshing)
                 ? <RefreshCw size={13} className="mt-0.5 shrink-0 animate-spin" />
-                : submissionProcessStatus?.status === "SUBMITTED"
+                : ["SUBMITTED", "COMPLETED"].includes(displayedStatus?.status)
                   ? <Check size={13} className="mt-0.5 shrink-0" />
                   : <AlertCircle size={13} className="mt-0.5 shrink-0" />}
               <div className="min-w-0">
-                <p className="font-semibold">
-                  {submissionStatusError
-                    ? "Unable to check SeqSender status"
-                    : submissionProcessStatus?.status === "SUBMITTED"
-                      ? "SeqSender submissions submitted successfully"
-                      : submissionProcessStatus?.status === "FAILED"
-                        ? "SeqSender submissions failed"
-                        : "SeqSender is running"}
-                </p>
                 <p className="mt-0.5 break-words opacity-80">
-                  {submissionStatusError || submissionProcessStatus?.message}
+                  {displayedStatus?.message}
                   {submissionJob?.pid ? ` (PID ${submissionJob.pid})` : ""}
                 </p>
               </div>
             </div>
-          )}
+            );
+          })()}
 
-          {/* ── Submission status cards ────────────── */}
-          {submitted && (
-            <div className="w-full space-y-2">
-              {[
-                { key: "biosample", label: "BioSample", accessionLabel: "BioSample Accession",  placeholder: "e.g. SAMN00000000"    },
-                { key: "sra",       label: "SRA",       accessionLabel: "SRA Accession",        placeholder: "e.g. SRR00000000"    },
-                { key: "genbank",   label: "GenBank",   accessionLabel: "GenBank Accession",    placeholder: "e.g. MN000000"       },
-                { key: "gisaid",    label: "GISAID",    accessionLabel: "EPI ISL Accession",    placeholder: "e.g. EPI_ISL_000000" },
-              ]
-                .filter(({ key }) => dbs[key])
-                .map(({ key, label, accessionLabel, placeholder }) => (
-                  <div key={key} className="rounded-xl border border-border bg-muted/10 overflow-hidden">
-                    <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-border">
-                      <p className="text-xs font-bold tracking-wide text-foreground">{label}</p>
-                      <span className="px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-xs font-medium">Pending</span>
-                    </div>
-                    <div className="px-3 py-2 space-y-1.5">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground">{accessionLabel}</span>
-                        <span className="font-mono text-muted-foreground/60">{placeholder}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground">Message</span>
-                        <span className="text-muted-foreground/60">—</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+          {/* ── Submission error message — only relevant after this session's Submit was clicked ────────────── */}
+          {(submissionStatusError || existingStatusError) && (
+            <div className="flex w-full items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs dark:border-red-800 dark:bg-red-950/20">
+              <AlertCircle size={13} className="mt-0.5 shrink-0 text-destructive" />
+              <div className="min-w-0">
+                <p className="font-semibold text-destructive">Unable to check SeqSender status</p>
+                <p className="mt-0.5 break-words text-destructive opacity-80">{submissionStatusError || existingStatusError}</p>
+              </div>
             </div>
           )}
 
-          {/* ── Refresh status button ────────────── */}
-          {submitted && (
+          {/* ── Submission status cards — shown for a submitted session or a selected past submission ────────────── */}
+          {(submitted || initialSubmission || submissionJob) && (
+            <div className="w-full space-y-2">
+              {[
+                { key: "biosample", label: "BioSample", accessionLabel: "Submission ID",  placeholder: "e.g. SAMN00000000"    },
+                { key: "sra",       label: "SRA",       accessionLabel: "Submission ID",  placeholder: "e.g. SRR00000000"    },
+                { key: "genbank",   label: "GenBank",   accessionLabel: "Submission ID",  placeholder: "e.g. MN000000"       },
+                { key: "gisaid",    label: "GISAID",    accessionLabel: "EPI ISL Accession",    placeholder: "e.g. EPI_ISL_000000" },
+              ]
+                .filter(({ key }) => dbs[key])
+                .map(({ key, label, accessionLabel, placeholder }) => {
+                  // Prefer a manual Refresh Status check (real SeqSender portal status), then this
+                  // session's just-launched process status, then the selected past submission's stored row.
+                  const refreshedEntry = refreshedSubmissionStatus?.database_statuses?.[key.toUpperCase()];
+                  const storedRow = (existingRows.length ? existingRows : initialRows).find((row) => row.database === key.toUpperCase());
+                  const dbStatus = refreshedEntry?.status
+                    ?? submissionProcessStatus?.database_statuses?.[key.toUpperCase()]?.status
+                    ?? (submissionJob && submissionProcessStatus?.status
+                      ? submissionProcessStatus.status
+                      : storedRow?.submission_status ?? "PENDING");
+                  const dbAccession = refreshedEntry?.accession || storedRow?.ncbi_submission_id || "";
+                  const rawStatusReportRows = refreshedSubmissionStatus?.submission_status_report?.[key.toUpperCase()] ?? [];
+                  // Collapse duplicate rows for the same sample (e.g. re-checks appending to the
+                  // report) down to one row per sample_name, keeping the most recently seen values.
+                  const statusReportRows = Array.from(
+                    rawStatusReportRows.reduce((map, row) => map.set(row.sample_name, row), new Map()).values()
+                  );
+                  return (
+                  <div key={key} className="rounded-xl border border-border bg-muted/10 overflow-hidden">
+                    <div className="flex items-center justify-between gap-2 px-3 py-2 bg-muted/20 border-b border-border">
+                      <p className="text-xs font-bold tracking-wide text-foreground">{label}</p>
+                      <span className="font-mono px-2 py-0.5 rounded-full bg-primary/10 text-xs">Submission ID: {dbAccession || "—"}</span>
+                      <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium", SUBMISSION_STATUS_BADGE_STYLES[dbStatus] ?? "bg-muted text-muted-foreground")}>{dbStatus}</span>
+                    </div>
+                    <div className="px-3 py-2 space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span>
+                          {storedRow?.date_submitted && (
+                            <span className="font-mono px-2 py-0.5 rounded-full bg-primary/10 text-primary">Submitted {storedRow.date_submitted}</span>
+                          )}
+                        </span>
+                        <span>
+                          {storedRow?.date_updated && (
+                            <span className="font-mono px-2 py-0.5 rounded-full bg-primary/10 text-primary">Updated {storedRow.date_updated}</span>
+                          )}
+                        </span>
+                      </div>
+                      {statusReportRows.length > 0 && (
+                        <StatusReportTable
+                          rows={statusReportRows}
+                          onMessageChange={(sampleName, message) => {
+                            const database = key.toUpperCase();
+                            setStatusReportMessageEdits((prev) => ({
+                              ...prev,
+                              [database]: { ...prev[database], [sampleName]: message },
+                            }));
+                            setCommentsSaveStatus((prev) => ({ ...prev, [database]: "idle" }));
+                            setCommentsSaveError((prev) => ({ ...prev, [database]: null }));
+                          }}
+                        />
+                      )}
+                      {/* ── Comments — free-text notes attached to this database's submission row ────────────── */}
+                      <div className="space-y-1.5 pt-1">
+                        <label htmlFor={`seqsender-comments-${key}`} className="text-xs font-semibold text-foreground">Comments</label>
+                        <textarea
+                          id={`seqsender-comments-${key}`}
+                          rows={2}
+                          value={comments[key.toUpperCase()] ?? ""}
+                          onChange={(e) => {
+                            const db = key.toUpperCase();
+                            const value = e.target.value;
+                            setComments((prev) => ({ ...prev, [db]: value }));
+                            setCommentsSaveStatus((prev) => ({ ...prev, [db]: "idle" }));
+                            setCommentsSaveError((prev) => ({ ...prev, [db]: null }));
+                          }}
+                          placeholder={`Add any notes about the ${label} submission here...`}
+                          className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                        />
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => saveSubmissionComments(key.toUpperCase())}
+                            disabled={commentsSaveStatus[key.toUpperCase()] === "saving"}
+                            className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1 text-[11px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {commentsSaveStatus[key.toUpperCase()] === "saving" ? "Saving…" : "Save Comments"}
+                          </button>
+                          {commentsSaveStatus[key.toUpperCase()] === "saved" && (
+                            <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">Saved</span>
+                          )}
+                          {commentsSaveStatus[key.toUpperCase()] === "error" && (
+                            <span className="text-[11px] font-medium text-destructive">{commentsSaveError[key.toUpperCase()] || "Failed to save comments."}</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  );
+                })}
+            </div>
+          )}
+
+          {/* ── Refresh status button — hidden for a past submission stuck at CREATED, since it was never actually submitted ────────────── */}
+          {(submitted || initialSubmission || submissionJob) && !(initialSubmission && !submitted && existingRows.length > 0 && existingRows.every((row) => row.submission_status === "CREATED")) && (
             <button
-              onClick={() => setSubmissionPolling(true)}
-              disabled={submissionPolling || !submissionJob}
+              onClick={refreshSubmissionStatus}
+              disabled={submissionPolling || existingStatusRefreshing}
               className="flex w-full items-center gap-2 rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <RefreshCw size={14} className={submissionPolling ? "animate-spin" : ""} />
-              {submissionPolling ? "Checking Status…" : "Refresh Status"}
+              <RefreshCw size={14} className={(submissionPolling || existingStatusRefreshing) ? "animate-spin" : ""} />
+              {(submissionPolling || existingStatusRefreshing) ? "Checking Status…" : "Refresh Status"}
             </button>
           )}
         </>
       )}
+
+      {/* ── Delete Submitter confirmation modal (shared by NCBI/GISAID) ────────────── */}
+      {deleteSubmitterModal && (() => {
+        const isNcbi = deleteSubmitterModal === "NCBI";
+        const submitters = isNcbi ? ncbiSubmitters : gisaidSubmitters;
+        const selectedId = isNcbi ? ncbiSelectedSubmitterId : gisaidSelectedSubmitterId;
+        const submitter = submitters.find((s) => String(s.submitter_id) === selectedId);
+        const deleteStatus = isNcbi ? ncbiDeleteStatus : gisaidDeleteStatus;
+        const deleteError = isNcbi ? ncbiDeleteError : gisaidDeleteError;
+        const handleDelete = isNcbi ? handleDeleteNcbiSubmitter : handleDeleteGisaidSubmitter;
+        const closeModal = () => {
+          if (deleteStatus === "deleting") return;
+          setDeleteSubmitterModal(null);
+        };
+        return (
+          <div onClick={closeModal} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div onClick={(e) => e.stopPropagation()} className="bg-background border border-border rounded-xl p-6 max-w-md w-full mx-4 shadow-xl flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-foreground">Delete {deleteSubmitterModal} Submitter</h3>
+                <button onClick={closeModal} className="text-muted-foreground hover:text-foreground transition-colors">
+                  <X size={14} />
+                </button>
+              </div>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Are you sure you want to permanently delete the {deleteSubmitterModal} submitter{" "}
+                <span className="font-mono font-semibold text-foreground">{submitter?.submitter_name ?? "this submitter"}</span>? This cannot be undone.
+              </p>
+              {deleteStatus === "error" && deleteError && (
+                <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs dark:border-red-800 dark:bg-red-950/20">
+                  <AlertCircle size={12} className="shrink-0 mt-0.5 text-destructive" />
+                  <span className="text-destructive">{deleteError}</span>
+                </div>
+              )}
+              <div className="flex gap-2 justify-end pt-1">
+                <button
+                  onClick={closeModal}
+                  disabled={deleteStatus === "deleting"}
+                  className="px-4 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-muted/60 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleteStatus === "deleting"}
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-destructive text-destructive-foreground text-xs font-semibold hover:bg-destructive/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {deleteStatus === "deleting" ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                  {deleteStatus === "deleting" ? "Deleting…" : "Delete"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </>
   );
 });
+
+// Sortable columns for the Past Submissions table, keyed by the value each column sorts on.
+const PAST_SUBMISSIONS_COLUMNS = [
+  { key: "submission_name", label: "Submission Name" },
+  { key: "organism", label: "Organism" },  
+  { key: "number_of_samples", label: "Databases" },
+  { key: "submission_type", label: "Type" },
+  { key: "submission_status", label: "Status" },
+  { key: "accessions", label: "Submission IDs" },
+  { key: "date_submitted", label: "Submitted" },
+  { key: "date_updated", label: "Updated" },
+];
+
+// Table body rows beyond this count get a scrollable, sticky-header container instead of growing forever.
+const PAST_SUBMISSIONS_MAX_VISIBLE_ROWS = 20;
 
 function PastSubmissionsPanel({ onSelectSubmission }) {
   const [submissions, setSubmissions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
-  const [sortDir, setSortDir] = useState("desc"); // "asc" | "desc" — submitted date sort order (desc = most recent first)
+  const [sortColumn, setSortColumn] = useState("date_submitted"); // which column header is currently sorted
+  const [sortDir, setSortDir] = useState("desc"); // "asc" | "desc"
+  const [selectedRow, setSelectedRow] = useState(null); // row highlighted by a single click (Copy/Delete/Update Status act on this)
+  const [actionMode, setActionMode] = useState(null); // null | "copy" | "delete" — which confirmation modal is open
+  const [copyName, setCopyName] = useState("");
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState(null);
+  const [statusMessage, setStatusMessage] = useState(null); // { type: "warning"|"error"|"success", text } feedback banner for the Update Status action
 
   const loadSubmissions = useCallback(() => {
     let cancelled = false;
@@ -6567,15 +8062,110 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
           submission_type: row.submission_type,
           submitter_name: row.submitter_name,
           date_submitted: row.date_submitted,
+          date_updated: row.date_updated,
+          number_of_samples: row.number_of_samples,
+          submission_status: row.submission_status,
           databases: [],
           rows: [],
         });
       }
-      bySubmission.get(key).databases.push({ database: row.database, status: row.submission_status });
+      bySubmission.get(key).databases.push({
+        database: row.database,
+        status: row.submission_status,
+        accession: row.ncbi_submission_id,
+        ncbiStatus: row.ncbi_submission_status,
+        samples: row.number_of_samples,
+      });
       bySubmission.get(key).rows.push(row);
     }
     return Array.from(bySubmission.values());
   }, [submissions]);
+
+  // Duplicate the selected submission's database rows and stored files under a new name.
+  const handleCopySubmission = async () => {
+    if (!selectedRow) return;
+    const trimmed = copyName.trim().replace(/\s+/g, "_");
+    if (!trimmed) { setActionError("Please enter a new submission name."); return; }
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      const res = await fetch(API.copySeqsenderSubmission, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          submission_name: selectedRow.submission_name,
+          organism: selectedRow.organism,
+          new_submission_name: trimmed,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Failed to copy submission.");
+      setActionMode(null);
+      setCopyName("");
+      setSelectedRow(null);
+      loadSubmissions();
+    } catch (err) {
+      setActionError(err.message || "Failed to copy submission.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Permanently remove the selected submission's database rows and stored files.
+  const handleDeleteSubmission = async () => {
+    if (!selectedRow) return;
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      const res = await fetch(API.deleteSeqsenderSubmission, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          submission_name: selectedRow.submission_name,
+          organism: selectedRow.organism,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Failed to delete submission.");
+      setActionMode(null);
+      setSelectedRow(null);
+      loadSubmissions();
+    } catch (err) {
+      setActionError(err.message || "Failed to delete submission.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Ask SeqSender to check the real submission portals for the selected submission, then reload
+  // the list so the updated status/accession show up in the table.
+  const handleUpdateStatus = async () => {   
+    if (!selectedRow) return;
+    setStatusMessage(null);
+    // A submission still stuck at CREATED was never actually submitted — there's no portal
+    // status to check yet, so warn the user instead of calling the backend.
+    if (selectedRow.submission_status === "CREATED") {
+      setStatusMessage({ type: "warning", text: "This submission has not been submitted yet. Please open it, submit it, and then check its status again." });
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("submission_name", selectedRow.submission_name);
+      params.set("organism", selectedRow.organism);
+      selectedRow.databases.forEach(({ database }) => params.append("database", database));
+      params.set("submission_type", selectedRow.submission_type);
+      const res = await fetch(`${API.checkSeqsenderSubmissionStatus}?${params.toString()}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || data.message || "Failed to check submission status.");
+      setStatusMessage({ type: "success", text: data.message || "Submission status updated." });
+      loadSubmissions();
+    } catch (err) {
+      setStatusMessage({ type: "error", text: err.message || "Failed to update submission status." });
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -6597,6 +8187,35 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
     return <p className="py-10 text-left text-xs text-muted-foreground">There are no past submissions.</p>;
   }
 
+  // Toggle sort direction when clicking the already-active column header, otherwise switch to the
+  // clicked column ascending.
+  const handleSort = (column) => {
+    if (sortColumn === column) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortColumn(column);
+      setSortDir("asc");
+    }
+  };
+
+  // Extract the value a given row sorts on for the currently selected column.
+  const getSortValue = (row, column) => {
+    switch (column) {
+      case "organism": return row.organism ?? "";
+      case "databases": return row.databases.map((d) => d.database).sort().join(", ");
+      case "submission_type": return row.submission_type ?? "";
+      case "number_of_samples": {
+        const sampleCounts = row.databases.map((d) => d.samples).filter((n) => typeof n === "number");
+        return sampleCounts.length ? sampleCounts.reduce((sum, n) => sum + n, 0) : null;
+      }
+      case "submission_status": return row.submission_status ?? "";
+      case "accessions": return row.databases.map((d) => d.accession).filter(Boolean).sort().join(", ");
+      case "date_updated": return row.date_updated ?? "";
+      case "date_submitted": return row.date_submitted ?? "";
+      default: return row.submission_name ?? "";
+    }
+  };
+
   const q = search.trim().toLowerCase();
   const filtered = (q
     ? groupedSubmissions.filter((s) =>
@@ -6607,12 +8226,20 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
   ).slice().sort((a, b) => {
     const direction = sortDir === "asc" ? 1 : -1;
     const nameComparison = (a.submission_name ?? "").localeCompare(b.submission_name ?? "");
-    const ta = Date.parse(a.date_submitted ?? "");
-    const tb = Date.parse(b.date_submitted ?? "");
-    if (Number.isNaN(ta) && Number.isNaN(tb)) return direction * nameComparison;
-    if (Number.isNaN(ta)) return 1;
-    if (Number.isNaN(tb)) return -1;
-    return direction * (ta - tb || nameComparison);
+    const av = getSortValue(a, sortColumn);
+    const bv = getSortValue(b, sortColumn);
+    if (typeof av === "number" || typeof bv === "number" || av === null || bv === null) {
+      if (av === null && bv === null) return direction * nameComparison;
+      if (av === null) return 1;
+      if (bv === null) return -1;
+      return direction * (av - bv) || nameComparison;
+    }
+    const as = String(av).trim();
+    const bs = String(bv).trim();
+    if (!as && !bs) return direction * nameComparison;
+    if (!as) return 1;
+    if (!bs) return -1;
+    return direction * as.localeCompare(bs, undefined, { numeric: true, sensitivity: "base" }) || nameComparison;
   });
 
   return (
@@ -6629,14 +8256,6 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
         </div>
         <button
           type="button"
-          title={`Sort ${sortDir === "asc" ? "newest first" : "oldest first"}`}
-          onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-          className="h-8 w-8 shrink-0 flex items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-primary hover:border-primary transition-colors"
-        >
-          {sortDir === "asc" ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
-        </button>
-        <button
-          type="button"
           title="Refresh"
           onClick={loadSubmissions}
           className="h-8 w-8 shrink-0 flex items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-primary hover:border-primary transition-colors"
@@ -6645,22 +8264,81 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
         </button>
       </div>
 
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={!selectedRow}
+          onClick={() => { setStatusMessage(null); onSelectSubmission(selectedRow); }}
+          className="flex items-center gap-1.5 px-3 py-1 rounded-md border border-primary bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:bg-primary/50"
+        >
+          <ExternalLink size={12} /> Open
+        </button>
+        <button
+          type="button"
+          disabled={!selectedRow}
+          onClick={() => { setStatusMessage(null); setActionMode("copy"); setCopyName(`${selectedRow.submission_name}_copy`); setActionError(null); }}
+          className="flex items-center gap-1.5 px-3 py-1 rounded-md border border-border text-xs font-semibold text-foreground hover:border-primary hover:text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:text-foreground"
+        >
+          <Copy size={12} /> Copy
+        </button>
+        <button
+          type="button"
+          disabled={!selectedRow}
+          onClick={() => { setStatusMessage(null); setActionMode("delete"); setActionError(null); }}
+          className="flex items-center gap-1.5 px-3 py-1 rounded-md border border-border text-xs font-semibold text-destructive hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+        >
+          <Trash2 size={12} /> Delete
+        </button>
+        <button
+          type="button"
+          disabled={!selectedRow || actionLoading}
+          onClick={handleUpdateStatus}
+          className="flex items-center gap-1.5 px-3 py-1 rounded-md border border-border text-xs font-semibold text-foreground hover:border-primary hover:text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <RefreshCw size={12} className={actionLoading ? "animate-spin" : undefined} /> {actionLoading ? "Updating…" : "Update Status"}
+        </button>
+      </div>
+
+      {statusMessage && (() => {
+        const isWarning = statusMessage.type === "warning";
+        const isError = statusMessage.type === "error";
+        const Icon = isError ? AlertCircle : isWarning ? AlertCircle : Check;
+        return (
+          <div className={cn(
+            "flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs font-medium shadow-sm",
+            isError
+              ? "border-red-300 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300"
+              : isWarning
+                ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
+                : "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300"
+          )}>
+            <Icon size={14} className="mt-0.5 shrink-0" />
+            <span>{statusMessage.text}</span>
+          </div>
+        );
+      })()}
+
       {filtered.length === 0 ? (
         <p className="py-6 text-left text-xs text-muted-foreground">No submissions match your search.</p>
       ) : (
         <div className="overflow-hidden rounded-xl border border-border">
-          <div className="overflow-auto">
+          <div className={cn("overflow-auto", filtered.length > PAST_SUBMISSIONS_MAX_VISIBLE_ROWS && "max-h-[720px]")}>
             <table className="w-full text-xs">
               <thead className="bg-muted sticky top-0 z-10">
                 <tr>
-                  {[
-                    "Submission Name",
-                    "Organism",
-                    "Databases",
-                    "Type",
-                    "Submitted",
-                  ].map((heading) => (
-                    <th key={heading} className="whitespace-nowrap px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{heading}</th>
+                  {PAST_SUBMISSIONS_COLUMNS.map(({ key, label }) => (
+                    <th key={key} className="whitespace-nowrap px-3 py-2 text-left text-[12px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      <button
+                        type="button"
+                        onClick={() => handleSort(key)}
+                        className="flex items-center gap-1 hover:text-foreground transition-colors"
+                      >
+                        {label}
+                        {sortColumn === key
+                          ? sortDir === "asc" ? <ArrowUp size={10} className="text-primary shrink-0" /> : <ArrowDown size={10} className="text-primary shrink-0" />
+                          : <ArrowUpDown size={10} className="opacity-30 shrink-0" />}
+                      </button>
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -6670,28 +8348,54 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
                     key={submission.submission_id ?? `${submission.submission_name}-${index}`}
                     role="button"
                     tabIndex={0}
-                    title={`${submission.submission_name}`}
-                    onClick={() => onSelectSubmission(submission)}
-                    className="cursor-pointer hover:bg-muted/40 focus-visible:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+                    title={`Click to select · double-click or "Open" to view ${submission.submission_name}`}
+                    onClick={() => { setStatusMessage(null); setSelectedRow(submission); }}
+                    onDoubleClick={() => { setStatusMessage(null); onSelectSubmission(submission); }}
+                    className={cn(
+                      "cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
+                      selectedRow?.submission_id === submission.submission_id ? "bg-primary/10" : "hover:bg-muted/40"
+                    )}
                   >
                     <td className="whitespace-nowrap px-3 py-2 font-mono font-semibold text-foreground">{submission.submission_name}</td>
                     <td className="whitespace-nowrap px-3 py-2 font-mono text-foreground">{submission.organism}</td>
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap gap-1">
-                        {submission.databases.map(({ database, status }) => (
+                        {submission.databases.map(({ database, samples }) => (
                           <span
                             key={database}
-                            title={status || undefined}
+                            title={`${database}: ${samples ?? "—"} samples`}
                             className="whitespace-nowrap rounded-full bg-muted px-2 py-0.5 font-mono text-[10px] font-medium text-foreground"
                           >
-                            {database}
-                            {status ? <span className="text-muted-foreground"> · {status}</span> : null}
+                            {database}: {samples ?? "—"}
                           </span>
                         ))}
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 font-mono text-foreground">{submission.submission_type}</td>
+                    <td className="whitespace-nowrap px-3 py-2">
+                      <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-medium", SUBMISSION_STATUS_BADGE_STYLES[submission.submission_status] ?? "bg-muted text-muted-foreground")}>
+                        {submission.submission_status || "—"}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex flex-wrap gap-1">
+                        {submission.databases.filter(({ accession }) => accession).map(({ database, accession, ncbiStatus }) => (
+                          <span
+                            key={database}
+                            title={`${database}: ${accession}${ncbiStatus ? ` (${ncbiStatus})` : ""}`}
+                            className="whitespace-nowrap rounded-full bg-muted px-2 py-0.5 font-mono text-[10px] font-medium text-foreground"
+                          >
+                            {database}: {accession}
+                            {ncbiStatus ? <span className="text-muted-foreground"> · {ncbiStatus}</span> : null}
+                          </span>
+                        ))}
+                        {submission.databases.every(({ accession }) => !accession) && (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </div>
+                    </td>
                     <td className="whitespace-nowrap px-3 py-2 font-mono text-muted-foreground">{submission.date_submitted || "—"}</td>
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-muted-foreground">{submission.date_updated || "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -6699,13 +8403,91 @@ function PastSubmissionsPanel({ onSelectSubmission }) {
           </div>
         </div>
       )}
+
+      {/* ── Copy Submission modal ── */}
+      {actionMode === "copy" && selectedRow && (
+        <div onClick={() => setActionMode(null)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div onClick={(e) => e.stopPropagation()} className="bg-background border border-border rounded-xl p-6 max-w-md w-full mx-4 shadow-xl flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-foreground">Copy Submission</h3>
+              <button onClick={() => setActionMode(null)} className="text-muted-foreground hover:text-foreground transition-colors"><X size={14} /></button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Duplicate <span className="font-mono font-semibold text-foreground">{selectedRow.submission_name}</span> (and its stored files) under a new name.
+            </p>
+            <div>
+              <FieldLabel>New Submission Name</FieldLabel>
+              <input
+                value={copyName}
+                onChange={(e) => setCopyName(e.target.value.replace(/\s+/g, "_"))}
+                className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+            {actionError && (
+              <div className="flex items-start gap-2 text-xs text-destructive">
+                <AlertCircle size={12} className="shrink-0 mt-0.5" /> {actionError}
+              </div>
+            )}
+            <div className="flex gap-2 justify-end pt-1">
+              <button onClick={() => setActionMode(null)} className="px-4 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-muted/60 transition-colors">Cancel</button>
+              <button
+                onClick={handleCopySubmission}
+                disabled={actionLoading}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {actionLoading ? <RefreshCw size={11} className="animate-spin" /> : <Copy size={11} />}
+                Copy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete Submission modal ── */}
+      {actionMode === "delete" && selectedRow && (
+        <div onClick={() => setActionMode(null)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div onClick={(e) => e.stopPropagation()} className="bg-background border border-border rounded-xl p-6 max-w-md w-full mx-4 shadow-xl flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-foreground">Delete Submission</h3>
+              <button onClick={() => setActionMode(null)} className="text-muted-foreground hover:text-foreground transition-colors"><X size={14} /></button>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Are you sure you want to delete <span className="font-mono font-semibold text-foreground">{selectedRow.submission_name}</span>? This permanently removes its database rows and stored files.
+            </p>
+            {actionError && (
+              <div className="flex items-start gap-2 text-xs text-destructive">
+                <AlertCircle size={12} className="shrink-0 mt-0.5" /> {actionError}
+              </div>
+            )}
+            <div className="flex gap-2 justify-end pt-1">
+              <button onClick={() => setActionMode(null)} className="px-4 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-muted/60 transition-colors">Cancel</button>
+              <button
+                onClick={handleDeleteSubmission}
+                disabled={actionLoading}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-destructive text-destructive-foreground text-xs font-semibold hover:bg-destructive/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {actionLoading ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
+// Prefix a raw version string with "v" unless it's already prefixed (case-insensitive).
+const formatVersionLabel = (version) => {
+  if (!version) return null;
+  return /^v/i.test(version) ? version : `v${version}`;
+};
+
 function SeqSenderTab({ onBack, showBackToMira, newSubmissionSignal }) {
   const [panelSession, setPanelSession] = useState({ key: 0, submission: null });
   const panelRef = useRef(null);
+  const [seqsenderVersion, setSeqsenderVersion] = useState(null); // fetched from /seqsender/version on load
+  const [submissionsRefreshKey, setSubmissionsRefreshKey] = useState(0); // bumped to force Past Submissions to refetch
   const [sectionNavCollapsed, setSectionNavCollapsed] = useState(false);
   const sectionNavRef = useRef(null);
   const sectionNavMeasureRef = useRef(null);
@@ -6739,10 +8521,12 @@ function SeqSenderTab({ onBack, showBackToMira, newSubmissionSignal }) {
     window.addEventListener("mouseup", onUp);
   }, []);
 
+  // Open a new submission panel
   const openNewSubmission = () => {
     setPanelSession(({ key }) => ({ key: key + 1, submission: null }));
   };
   
+  // Open a past submission panel
   const openPastSubmission = (submission) => {
     setPanelSession(({ key }) => ({ key: key + 1, submission }));
   };
@@ -6752,6 +8536,21 @@ function SeqSenderTab({ onBack, showBackToMira, newSubmissionSignal }) {
   useEffect(() => {
     if (newSubmissionSignal) openNewSubmission();
   }, [newSubmissionSignal]);
+
+  // Fetch the SeqSender CLI version once on load to display next to the tab title.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(API.retrieveSeqSenderVersion);
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && res.ok) setSeqsenderVersion(data.version ?? null);
+      } catch {
+        /* leave version unset on failure */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Collapse the step-link row into a "Submission Steps" dropdown once the pills no longer fit.
   useLayoutEffect(() => {
@@ -6792,7 +8591,7 @@ function SeqSenderTab({ onBack, showBackToMira, newSubmissionSignal }) {
             <div className="flex min-w-0 items-baseline gap-2">
               <Send size={15} className="shrink-0 self-center text-primary" />
               <h2 className="truncate text-sm font-bold text-foreground">SeqSender</h2>
-              <span className="shrink-0 text-xs font-mono text-muted-foreground">v1.0.0</span>
+              <span className="shrink-0 text-xs font-mono text-muted-foreground">{formatVersionLabel(seqsenderVersion) ?? "…"}</span>
             </div>
             <div ref={headerMenuRef} className="relative ml-auto shrink-0">
               <button
@@ -6873,14 +8672,14 @@ function SeqSenderTab({ onBack, showBackToMira, newSubmissionSignal }) {
                 <div className="flex min-w-0 items-baseline gap-2">
                   <Send size={15} className="shrink-0 self-center text-primary" />
                   <h2 className="truncate text-sm font-bold text-foreground">SeqSender</h2>
-                  <span className="shrink-0 text-xs font-mono text-muted-foreground">v1.0.0</span>
+                  <span className="shrink-0 text-xs font-mono text-muted-foreground">{formatVersionLabel(seqsenderVersion) ?? "…"}</span>
                 </div>
               </>
             ) : (
               <div className="flex min-w-0 items-baseline gap-2">
                 <Send size={15} className="shrink-0 self-center text-primary" />
                 <h2 className="truncate text-sm font-bold text-foreground">SeqSender</h2>
-                <span className="shrink-0 text-xs font-mono text-muted-foreground">v1.0.0</span>
+                <span className="shrink-0 text-xs font-mono text-muted-foreground">{formatVersionLabel(seqsenderVersion) ?? "…"}</span>
               </div>
             )}
 
@@ -6979,7 +8778,7 @@ function SeqSenderTab({ onBack, showBackToMira, newSubmissionSignal }) {
         {showBackToMira && (
           <span className="flex items-center gap-1.5 px-3 py-1 text-xs font-semibold"><ChevronLeft size={13} />Back to Mira</span>
         )}
-        <span className="flex items-baseline gap-2 text-sm font-bold"><Send size={15} />SeqSender<span className="text-xs font-mono">v1.0.0</span></span>
+        <span className="flex items-baseline gap-2 text-sm font-bold"><Send size={15} />SeqSender<span className="text-xs font-mono">{formatVersionLabel(seqsenderVersion) ?? "…"}</span></span>
         <span className="flex items-center gap-1.5 px-3 py-1 text-xs font-semibold">Submission Steps<ChevronDown size={13} /></span>
         <span className="flex items-center gap-1.5 px-3 py-1 text-xs font-semibold"><PlusCircle size={13} />New Submission</span>
         <span className="flex items-center gap-1.5 px-3 py-1 text-xs font-semibold"><ClipboardList size={13} />Past Submissions</span>
@@ -6988,7 +8787,7 @@ function SeqSenderTab({ onBack, showBackToMira, newSubmissionSignal }) {
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mx-auto flex w-[min(550px,100%)] flex-col items-start gap-4">
-            <SeqSenderPanel key={panelSession.key} ref={panelRef} initialSubmission={panelSession.submission} />
+            <SeqSenderPanel key={panelSession.key} ref={panelRef} initialSubmission={panelSession.submission} onSubmitted={() => setSubmissionsRefreshKey((k) => k + 1)} />
           </div>
         </div>
 
@@ -7011,7 +8810,7 @@ function SeqSenderTab({ onBack, showBackToMira, newSubmissionSignal }) {
                 </button>
               </div>
               <div className="flex-1 overflow-auto p-4">
-                <PastSubmissionsPanel onSelectSubmission={openPastSubmission} />
+                <PastSubmissionsPanel key={submissionsRefreshKey} onSelectSubmission={openPastSubmission} />
               </div>
             </aside>
           </>

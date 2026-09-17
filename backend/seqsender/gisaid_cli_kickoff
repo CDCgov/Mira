@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly ca_bundle="${FLUCLI_CA_BUNDLE:-/home/snu3/SSL/bundle-ca.pem}"
+
+if [[ ! -r "$ca_bundle" ]]; then
+    printf 'CA bundle is not readable: %s\n' "$ca_bundle" >&2
+    exit 1
+fi
+
+export REQUESTS_CA_BUNDLE="$ca_bundle"
+exec "$script_dir/fluCLI/fluCLI" "$@"
