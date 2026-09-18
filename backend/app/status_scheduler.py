@@ -123,7 +123,14 @@ def _record_run(status: str, message: str) -> None:
 def update_all_submission_statuses() -> dict[str, Any]:
     submission_table = lookup_tbl_in_database(
         db_tbl_name=["submission"],
-        return_var=["submission_name", "organism", "database", "submission_type", "submission_status"],
+        return_var=[
+            "submission_name",
+            "organism",
+            "database",
+            "submission_type",
+            "submission_status",
+            "ncbi_submission_status",
+        ],
         filter_coln_var=["database_status"],
         filter_coln_val={"database_status": ["ACTIVE"]},
     )
@@ -132,9 +139,13 @@ def update_all_submission_statuses() -> dict[str, Any]:
 
     for row in submission_table.to_dicts():
         key = (row["submission_name"], row["organism"], row["submission_type"])
-        if str(row["submission_status"]).strip().upper() == "CREATED":
+        submission_status = str(row.get("submission_status") or "").strip().upper()
+        portal_status = str(row.get("ncbi_submission_status") or "").strip().upper()
+        if submission_status == "CREATED":
             skipped_created.add(key)
             grouped.pop(key, None)
+            continue
+        if submission_status == "PROCESSED" or portal_status in {"CREATED", "PROCESSED"}:
             continue
         if key not in skipped_created:
             grouped.setdefault(key, set()).add(row["database"])

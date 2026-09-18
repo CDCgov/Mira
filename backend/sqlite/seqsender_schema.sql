@@ -8,7 +8,7 @@ PRAGMA foreign_keys=OFF;
 --
 CREATE TABLE IF NOT EXISTS submitter (
   submitter_id              INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-  submitter_name            TEXT NOT NULL,
+  submitter_name            TEXT DEFAULT NULL,
   submitter_password        TEXT NOT NULL,
   organism                  TEXT NOT NULL 
                             CHECK (organism IN (

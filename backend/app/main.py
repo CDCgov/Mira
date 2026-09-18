@@ -2501,15 +2501,15 @@ async def download_config_template():
     return FileResponse(path=CONFIG_TEMPLATE_PATH, filename="config_template.yaml", media_type="application/octet-stream", content_disposition_type="attachment")
 
 
-# Download metadata template 
-@app.get("/download/seqsender/metadata_template", summary="Download a SeqSender-generated metadata template for a given organism and database", tags=["SeqSender Downloads"])
+# Download SeqSender test data
+@app.get("/download/seqsender/metadata_template", summary="Download SeqSender-generated test data for a given organism and database", tags=["SeqSender Downloads"])
 async def download_metadata_template(
     organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to generate the metadata template."),
     database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases the metadata template should cover."),
 ):
     """
-    Generate (via SeqSender's own `test_data` command) and download a metadata template
-    shaped for the selected organism and database targets.
+    Generate (via SeqSender's own `test_data` command) and download all test-data files
+    shaped for the selected organism and database targets as a ZIP archive.
     """
     try:
         file_path = await asyncio.to_thread(
@@ -2521,7 +2521,7 @@ async def download_metadata_template(
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
-    return FileResponse(path=file_path, filename=f"{organism.lower()}_metadata_template.csv", media_type="application/octet-stream", content_disposition_type="attachment")
+    return FileResponse(path=file_path, filename=f"{'-'.join(sorted(db.strip().upper() for db in database))}_test_data.zip", media_type="application/zip", content_disposition_type="attachment")
 
 
 # Download config file for a given organism and database
@@ -2640,6 +2640,82 @@ async def download_raw_reads(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Download generated submission files for manual portal submission
+@app.get("/download/seqsender/submission_files", summary="Download generated files for a database submission", tags=["SeqSender Downloads"])
+async def download_submission_files(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which the files were generated."),
+    database: Literal[tuple(database_targets)] = Query(..., description="Database whose generated files should be downloaded."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    try:
+        db_submission_tbl = await asyncio.to_thread(
+            lookup_tbl_in_database,
+            db_tbl_name=["submission"],
+            return_var=["database"],
+            filter_coln_var=["submission_name", "organism", "database", "submission_type", "database_status"],
+            filter_coln_val={
+                "submission_name": [submission_name],
+                "organism": [organism],
+                "database": [database],
+                "submission_type": [submission_type],
+                "database_status": ["ACTIVE"],
+            },
+            filter_var_by=["AND", "AND", "AND", "AND", "AND"],
+        )
+        if db_submission_tbl.is_empty():
+            raise HTTPException(status_code=404, detail=f"Active {database} submission '{submission_name}' was not found.")
+
+        files_dir = os.path.realpath(os.path.join(
+            _DEFAULT_SEQSENDER_STORAGE_PATH,
+            organism,
+            submission_name,
+            "submission_files",
+            database,
+        ))
+        metadata_file = os.path.join(files_dir, METADATA_FILENAME)
+        generated_fasta_candidates = [
+            os.path.join(files_dir, FASTA_FILENAME),
+            os.path.join(files_dir, "sequence.fsa"),
+        ]
+        generated_fasta = next(
+            (file_path for file_path in generated_fasta_candidates if os.path.isfile(file_path)),
+            None,
+        )
+        missing_files = []
+        if not os.path.isfile(metadata_file):
+            missing_files.append(METADATA_FILENAME)
+        if generated_fasta is None:
+            missing_files.append(FASTA_FILENAME)
+        if missing_files:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Generated {database} submission file(s) not found: {', '.join(missing_files)}. Create the submission files first.",
+            )
+
+        temp_file = tempfile.NamedTemporaryFile(prefix="seqsender_submission_files_", suffix=".zip", delete=False)
+        temp_file.close()
+        try:
+            with zipfile.ZipFile(temp_file.name, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.write(metadata_file, arcname=METADATA_FILENAME)
+                archive.write(generated_fasta, arcname=FASTA_FILENAME)
+        except Exception:
+            os.unlink(temp_file.name)
+            raise
+
+        return FileResponse(
+            path=temp_file.name,
+            filename=f"{submission_name}_{database.lower()}_submission_files.zip",
+            media_type="application/zip",
+            content_disposition_type="attachment",
+            background=BackgroundTask(os.unlink, temp_file.name),
+        )
+    except HTTPException:
+        raise
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
 
 
 # Download gff file for a given organism and database

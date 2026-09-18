@@ -190,6 +190,7 @@ const API = {
   downloadSeqsenderFasta:            `${API_BASE}/download/seqsender/fasta`,
   downloadSeqsenderGff:              `${API_BASE}/download/seqsender/gff`,
   downloadSeqsenderRawReads:         `${API_BASE}/download/seqsender/raw_reads`,
+  downloadSeqsenderSubmissionFiles:  `${API_BASE}/download/seqsender/submission_files`,
   validateSeqsenderFiles:            `${API_BASE}/validate/seqsender/files`,
   uploadSeqsenderMetadata:           `${API_BASE}/upload/seqsender/metadata`,
   uploadSeqsenderFasta:              `${API_BASE}/upload/seqsender/fasta`,
@@ -5591,7 +5592,7 @@ const DB_LIST = [
   { key: "biosample", value: "BIOSAMPLE", label: "BioSample", url: "https://www.ncbi.nlm.nih.gov/biosample/"},
   { key: "sra", value: "SRA", label: "SRA", url: "https://www.ncbi.nlm.nih.gov/sra/ "},
   { key: "genbank", value: "GENBANK", label: "GenBank", url: "https://www.ncbi.nlm.nih.gov/genbank/"},
-  //{ key: "gisaid", value: "GISAID", label: "GISAID", url: "https://www.gisaid.org/"},
+  { key: "gisaid", value: "GISAID", label: "GISAID", url: "https://www.gisaid.org/"},
 ];
 
 const submitterListCache = new Map();
@@ -6317,7 +6318,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     sra: initialDatabases.has("SRA"),
     genbank: initialDatabases.has("GENBANK"),
     gisaid: initialDatabases.has("GISAID"),
-  } : { biosample: true, sra: true, genbank: true, gisaid: false });
+  } : { biosample: true, sra: true, genbank: true, gisaid: true });
   const [organism, setOrganism]             = useState(initialSubmission?.organism ?? "FLU"); // default to Influenza
   const [subName, setSubName]               = useState(initialSubmission?.submission_name ?? "");
   const [metaFile, setMetaFile]             = useState(initialSubmission ? "metadata.csv (stored)" : "");
@@ -6326,7 +6327,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
   const [fastaFileObject, setFastaFileObject] = useState(null); // File object for the selected FASTA File, for actual upload
   const [rawReadsFiles, setRawReadsFiles]     = useState(initialDatabases.has("SRA") ? "FASTQ files (stored)" : ""); // multiple raw FASTQ read files for SRA submission
   const [rawReadsFileObjects, setRawReadsFileObjects] = useState([]); // File objects for the selected Raw Reads files, for actual upload
-  const [gisaidCliFile, setGisaidCliFile]             = useState("");
+  const [gisaidCliFile, setGisaidCliFile]             = useState(null);
   const [gisaidCliFileObject, setGisaidCliFileObject] = useState(null); // File object for the selected GISAID CLI file, for actual upload
   const [gisaidCliMode, setGisaidCliMode]   = useState(initialDatabases.has("GISAID") ? "existing" : "new"); // "new" | "existing" — reuse the CLI already stored for this organism
   const [gffFile, setGffFile]               = useState(initialRows.some((row) => row.gff_file) ? "annotation.gff (stored)" : "");
@@ -6614,9 +6615,9 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
   const [ncbiPubTitle, setNcbiPubTitle]                     = useState(initialNcbiRow?.ncbi_publication_title ?? "");
   const [ncbiPubStatus, setNcbiPubStatus]                   = useState(initialNcbiRow?.ncbi_publication_status ?? "Unpublished");
   const [ncbiPubReleaseDate, setNcbiPubReleaseDate]         = useState(initialNcbiRow?.ncbi_release_date ?? "");
-  const [gisaidClientId, setGisaidClientId]         = useState("");
-  const [gisaidUsername, setGisaidUsername]         = useState("");
-  const [gisaidPassword, setGisaidPassword]         = useState("");
+  const [gisaidClientId, setGisaidClientId]         = useState(null);
+  const [gisaidUsername, setGisaidUsername]         = useState(null);
+  const [gisaidPassword, setGisaidPassword]         = useState(null);
 
   // ── New vs Existing submitter picker (per portal) ──
   const [ncbiUserMode, setNcbiUserMode]             = useState("new"); // "new" | "existing"
@@ -6820,9 +6821,9 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
 
   // Clear every GISAID credential field back to a blank "New User" form.
   const clearGisaidFields = () => {
-    setGisaidUsername("");
-    setGisaidPassword("");
-    setGisaidClientId("");
+    setGisaidUsername(null);
+    setGisaidPassword(null);
+    setGisaidClientId(null);
   };
 
   // Permanently remove the selected NCBI submitter's saved credentials.
@@ -7027,12 +7028,44 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
   }));
 
   const toggleDb = (k) => setDbs((p) => ({ ...p, [k]: !p[k] }));
+  const showGisaidCredentialInputs = false;
+  const showGisaidCliInput = false;
+  const selectedDatabases = Object.entries(dbs)
+    .filter(([, selected]) => selected)
+    .map(([database]) => database.toUpperCase());
+  const selectedNcbiDatabases = selectedDatabases.filter((database) => database !== "GISAID");
+  const submissionFilesDownloadUrl = (database) => {
+    const submissionName = submissionJob?.submission_name ?? initialSubmission?.submission_name ?? subName;
+    const submissionOrganism = submissionJob?.organism ?? initialSubmission?.organism ?? organism;
+    const submissionType = submissionJob?.submission_type ?? initialSubmission?.submission_type ?? (testMode ? "TEST" : "PRODUCTION");
+    if (!submissionName || !submissionOrganism) return "";
+    const params = new URLSearchParams({
+      submission_name: submissionName,
+      organism: submissionOrganism,
+      database,
+      submission_type: submissionType,
+    });
+    return `${API.downloadSeqsenderSubmissionFiles}?${params.toString()}`;
+  };
 
   // Validate every required field (scoped to the selected databases) before allowing final submission.
   const handleSubmit = async (mode = "submit") => {
 
+    // Reset message
+    setCreateFilesError(null);
+    setCreateFilesResult(null);
+    setRefreshedSubmissionStatus(null);
+    setSubmitError(null);
+    setUploadError(null);
+
     // Determine if the submission is a preparation-only submission.
     const isPrep = mode === "prep";
+
+    if (!isPrep && selectedNcbiDatabases.length === 0) {
+      setSubmitError(["Database Targets: select at least one NCBI database to submit."]);
+      setOpenSections((prev) => ({ ...prev, database: true, submit: true }));
+      return;
+    }
 
     // Helper function to validate email addresses.
     const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -7062,12 +7095,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       if (gffFile && !gffFileObject) missing.push("Submission Options: GFF File (please browse and upload a file, not just type its name)");
     }
 
-    // Existing CLI mode reuses whatever file is already stored for this organism — no upload required.
-    if (dbs.gisaid && gisaidCliMode === "new") {
-      if (!gisaidCliFile) missing.push("Submission Inputs: GISAID CLI");
-      else if (!gisaidCliFileObject) missing.push("Submission Inputs: GISAID CLI (please browse and upload a file, not just type its name)");
-    }
-
     // NCBI Credentials and Organization Information Validation
     if (dbs.biosample || dbs.sra || dbs.genbank) {
       if (!ncbiUsername) missing.push("NCBI Credentials: Username");
@@ -7094,14 +7121,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       if (!ncbiSubmitterLast) missing.push("NCBI Submitter: Last Name");
     }
 
-    // GISAID Credentials Validation
-    if (dbs.gisaid) {
-      if (!gisaidUsername) missing.push("GISAID Credentials: Username");
-      if (!gisaidPassword) missing.push("GISAID Credentials: Password");
-      if (!gisaidClientId) missing.push("GISAID Credentials: Client-Id");
-    }
-
-    // Check if any required fields are missing for NCBI and GISAID
+    // Check if any required fields are missing.
     if (missing.length > 0) {
       setSubmitError(missing);
       // Expand every section so the user can see and fill in what's missing.
@@ -7129,7 +7149,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     setSubmitError(null);
     if (isPrep) {
       setCreateFilesError(null);
-      setCreateFilesResult(null);
       setCreatingFiles(true);
     } else {
       setUploadError(null);
@@ -7164,22 +7183,14 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         ncbi_submitter_last_name: ncbiSubmitterLast,
       } : null;
 
-      // Build the GISAID submitter information block
-      const gisaidSubmitterInfo = dbs.gisaid ? {
-        submitter_name: gisaidUsername,
-        submitter_password: gisaidPassword,
-        submission_portal: "GISAID",
-        gisaid_client_id: gisaidClientId,
-      } : null;
-
       // Create a submission record 
       const submissionData = {
         submission_name: subName,
         organism: organism.toUpperCase(),
-        database: Object.entries(dbs).filter(([, v]) => v).map(([k]) => k.toUpperCase()),
+        database: selectedDatabases,
         submission_type: testMode ? "TEST" : "PRODUCTION",
         ncbi_submitter_info: ncbiSubmitterInfo,
-        gisaid_submitter_info: gisaidSubmitterInfo,
+        gisaid_submitter_info: null,
         gff_file: !!gffFile,
         table2asn: table2asn,
         ncbi_publication_title: ncbiPubTitle,
@@ -7235,7 +7246,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         await uploadFile(API.uploadSeqsenderGff, "gff_file", gffFileObject);
       }
       // "Existing CLI" mode reuses whatever GISAID CLI file is already stored for this organism — skip upload.
-      if (dbs.gisaid && gisaidCliMode === "new" && gisaidCliFileObject) {
+      if (showGisaidCliInput && dbs.gisaid && gisaidCliMode === "new" && gisaidCliFileObject) {
         await uploadGisaidCli(API.uploadSeqsenderGisaidCli, "gisaid_cli_file", gisaidCliFileObject);
       }
 
@@ -7297,7 +7308,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
           body: JSON.stringify({
             submission_name:  submissionData.submission_name,
             organism:         submissionData.organism,
-            database:         submissionData.database,
+            database:         selectedDatabases,
             submission_type:  submissionData.submission_type,
           }),
         });
@@ -7318,7 +7329,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
           body: JSON.stringify({
             submission_name:  submissionData.submission_name,
             organism:         submissionData.organism,
-            database:         submissionData.database,
+            database:         selectedNcbiDatabases,
             submission_type:  submissionData.submission_type,
           }),
         });
@@ -7332,7 +7343,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         setSubmissionJob({
           submission_name: submissionData.submission_name,
           organism: submissionData.organism,
-          database: submissionData.database,
+          database: selectedNcbiDatabases,
           submission_type: submissionData.submission_type,
           pid: submitData.pid,
         });
@@ -7342,7 +7353,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
           status: "PROCESSING",
           pid: submitData.pid,
           return_code: null,
-          message: "SeqSender was launched successfully and is being processed.",
+          message: submitData.message || "SeqSender was launched successfully and is being processed.",
         });
 
         setSubmissionPolling(true);
@@ -7376,7 +7387,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       <SectionHeader id="seqsender-section-database" title="Database Targets" icon={Database} open={openSections.database} onToggle={() => toggleSection("database")} />
       {openSections.database && (
         <>
-          <div className="grid w-full grid-cols-3 gap-2">
+          <div className="grid w-full grid-cols-4 gap-2">
             {DB_LIST.map(({ key, label, desc, url }) => (
               <label key={key} className={cn(
                 "flex items-start gap-3 p-3 rounded-xl border transition-colors",
@@ -7404,7 +7415,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
             ))}
           </div>
 
-          {/* ── Download metadata template — generated by SeqSender for the selected organism + databases ────────────── */}
+          {/* ── Download test data generated by SeqSender for the selected organism + databases ────────────── */}
           <div className="flex flex-col gap-1.5">
             <div className="flex flex-wrap gap-2">
               <button
@@ -7419,13 +7430,13 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                     return `${API.downloadSeqsenderMetadataTemplate}?${params.toString()}`;
                   })(),
                   "metadataTemplate",
-                  `${organism.toLowerCase()}_metadata_template.csv`
+                  `${organism.toLowerCase()}_test_data.zip`
                 )}
                 disabled={!organism || !Object.values(dbs).some(Boolean) || storedDownloading === "metadataTemplate"}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-primary bg-primary hover:bg-primary/90 text-xs font-medium text-primary-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {storedDownloading === "metadataTemplate" ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />}
-                Download Metadata Template
+                Download Test Data
               </button>
             </div>
             {storedDownloadError?.field === "metadataTemplate" && (
@@ -7672,7 +7683,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
             </div>
           )}
 
-          {dbs.gisaid && (
+          {showGisaidCredentialInputs && dbs.gisaid && (
             <div className="w-full rounded-xl border border-border bg-muted/10 p-3 space-y-3">
               <p className="text-xs font-bold text-foreground uppercase tracking-wider">GISAID</p>
               <div>
@@ -7703,7 +7714,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                   />
                 ) : (
                   <input
-                    value={gisaidUsername}
+                    value={gisaidUsername ?? ""}
                     onChange={(e) => setGisaidUsername(e.target.value)}
                     placeholder="e.g. your GISAID username"
                     autoComplete="off"
@@ -7714,12 +7725,12 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
               </div>
               <div>
                 <FieldLabel>Password <span className="text-destructive">*</span></FieldLabel>
-                <PasswordInput value={gisaidPassword} onChange={(e) => setGisaidPassword(e.target.value)} disabled={!canCreateOrSubmit} />
+                <PasswordInput value={gisaidPassword ?? ""} onChange={(e) => setGisaidPassword(e.target.value)} disabled={!canCreateOrSubmit} />
               </div>
               <div>
                 <FieldLabel>Client-Id <span className="text-destructive">*</span></FieldLabel>
                 <input
-                  value={gisaidClientId}
+                  value={gisaidClientId ?? ""}
                   onChange={(e) => setGisaidClientId(e.target.value)}
                   autoComplete="off"
                   disabled={!canCreateOrSubmit}
@@ -7864,18 +7875,18 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
           ))}
 
           {/* ── GISAID CLI: New upload vs reuse the existing file already stored for this organism ────────────── */}
-          {dbs.gisaid && (
+          {showGisaidCliInput && dbs.gisaid && (
             <div className="w-full">
               <FieldLabel>GISAID CLI <span className="text-destructive">*</span></FieldLabel>
               <div className="flex gap-2 mb-2">
                 <button type="button" disabled={!canCreateOrSubmit}
-                  onClick={() => { setGisaidCliMode("new"); setGisaidCliFile(""); setGisaidCliFileObject(null); }}
+                  onClick={() => { setGisaidCliMode("new"); setGisaidCliFile(null); setGisaidCliFileObject(null); }}
                   className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors disabled:cursor-not-allowed disabled:opacity-60",
                     gisaidCliMode === "new" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary hover:text-primary")}>
                   New CLI
                 </button>
                 <button type="button" disabled={!canCreateOrSubmit}
-                  onClick={() => { setGisaidCliMode("existing"); setGisaidCliFile(""); setGisaidCliFileObject(null); }}
+                  onClick={() => { setGisaidCliMode("existing"); setGisaidCliFile(null); setGisaidCliFileObject(null); }}
                   className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors disabled:cursor-not-allowed disabled:opacity-60",
                     gisaidCliMode === "existing" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary hover:text-primary")}>
                   Existing CLI
@@ -7883,7 +7894,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
               </div>
               {gisaidCliMode === "new" ? (
                 <div className="flex w-full gap-2">
-                  <input value={gisaidCliFile} onChange={(e) => setGisaidCliFile(e.target.value)} placeholder="e.g. fluCLI"
+                  <input value={gisaidCliFile ?? ""} onChange={(e) => setGisaidCliFile(e.target.value)} placeholder="e.g. fluCLI"
                     disabled={!canCreateOrSubmit}
                     className="flex-1 h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-60" />
                   <label className={cn(
@@ -8036,12 +8047,34 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
             </div>
           )}
 
-          {createFilesResult && (
-            <div className="flex w-full items-start gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs dark:border-green-800 dark:bg-green-950/20">
-              <Check size={12} className="shrink-0 mt-0.5 text-green-700 dark:text-green-300" />
-              <span className="text-green-700 dark:text-green-300">{createFilesResult.message || "Submission files were created successfully."}</span>
+          {/* ── Result from Create Submission Files or Submit ────────────── */}
+          {(() => {
+            const actionResult = createFilesResult ?? (submissionJob ? submissionProcessStatus : null);
+            const actionSucceeded = actionResult?.status === "success"
+              || ["SUBMITTED", "COMPLETED"].includes(actionResult?.status);
+            return actionResult?.message && (
+            <div className={cn(
+              "flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-xs",
+              actionResult.status === "FAILED"
+                ? "border-red-200 bg-red-50 text-destructive dark:border-red-800 dark:bg-red-950/20"
+                : actionSucceeded
+                  ? "border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-950/20 dark:text-green-300"
+                  : "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/20 dark:text-blue-300"
+            )}>
+              {submissionJob && submissionPolling
+                ? <RefreshCw size={13} className="mt-0.5 shrink-0 animate-spin" />
+                : actionSucceeded
+                  ? <Check size={13} className="mt-0.5 shrink-0" />
+                  : <AlertCircle size={13} className="mt-0.5 shrink-0" />}
+              <div className="min-w-0">
+                <p className="mt-0.5 break-words opacity-80">
+                  {actionResult.message}
+                  {submissionJob?.pid ? ` (PID ${submissionJob.pid})` : ""}
+                </p>
+              </div>
             </div>
-          )}
+            );
+          })()}
 
           {/* ── Create submission files / Submit — disabled (not hidden) unless this is a new submission or a past submission still entirely CREATED ────────────── */}
           <button onClick={() => handleSubmit("prep")} disabled={!canCreateOrSubmit || creatingFiles || uploadingFiles || submissionPolling}
@@ -8050,10 +8083,10 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
             {creatingFiles ? "Creating files…" : `Create submission files for ${Object.entries(dbs).filter(([,v])=>v).map(([k])=>k).join(", ") || "selected databases"}`}
           </button>
 
-          <button onClick={() => handleSubmit("submit")} disabled={!canCreateOrSubmit || uploadingFiles || submissionPolling}
+          <button onClick={() => handleSubmit("submit")} disabled={!canCreateOrSubmit || selectedNcbiDatabases.length === 0 || uploadingFiles || submissionPolling}
             className="flex w-full items-center gap-2 rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50">
             {uploadingFiles || submissionPolling ? <RefreshCw size={14} className="animate-spin" /> : <Rocket size={14} />}
-            {uploadingFiles ? "Uploading…" : submissionPolling ? "SeqSender running…" : `Submit to ${Object.entries(dbs).filter(([,v])=>v).map(([k])=>k).join(", ") || "selected databases"}`}
+            {uploadingFiles ? "Uploading…" : submissionPolling ? "SeqSender running…" : `Submit to ${selectedNcbiDatabases.map((database) => database.toLowerCase()).join(", ") || "NCBI databases"}`}
           </button>
         </>
       )}
@@ -8063,7 +8096,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       {openSections.status && (
         <>
           {/* ── New submission: nothing submitted yet and no past submission selected ────────────── */}
-          {!submitted && !initialSubmission && !submissionJob && (
+          {!submitted && !initialSubmission && !submissionJob && !createFilesResult && (
             <div className="flex w-full items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
               <AlertCircle size={13} className="mt-0.5 shrink-0" />
               <span>Submission status will appear here once the submission is submitted and proccessed.</span>
@@ -8097,46 +8130,8 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
             );
           })()}
 
-          {/* ── Latest submission status message — prefers a manual Refresh Status check over the process poller ────────────── */}
-          {(() => {
-            const displayedStatus = refreshedSubmissionStatus ?? submissionProcessStatus;
-            return (submitted || initialSubmission || submissionJob) && displayedStatus?.message && (
-            <div className={cn(
-              "flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-xs",
-              displayedStatus?.status === "FAILED"
-                ? "border-red-200 bg-red-50 text-destructive dark:border-red-800 dark:bg-red-950/20"
-                : ["SUBMITTED", "COMPLETED"].includes(displayedStatus?.status)
-                  ? "border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-950/20 dark:text-green-300"
-                  : "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/20 dark:text-blue-300"
-            )}>
-              {(submissionPolling || existingStatusRefreshing)
-                ? <RefreshCw size={13} className="mt-0.5 shrink-0 animate-spin" />
-                : ["SUBMITTED", "COMPLETED"].includes(displayedStatus?.status)
-                  ? <Check size={13} className="mt-0.5 shrink-0" />
-                  : <AlertCircle size={13} className="mt-0.5 shrink-0" />}
-              <div className="min-w-0">
-                <p className="mt-0.5 break-words opacity-80">
-                  {displayedStatus?.message}
-                  {submissionJob?.pid ? ` (PID ${submissionJob.pid})` : ""}
-                </p>
-              </div>
-            </div>
-            );
-          })()}
-
-          {/* ── Submission error message — only relevant after this session's Submit was clicked ────────────── */}
-          {(submissionStatusError || existingStatusError) && (
-            <div className="flex w-full items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs dark:border-red-800 dark:bg-red-950/20">
-              <AlertCircle size={13} className="mt-0.5 shrink-0 text-destructive" />
-              <div className="min-w-0">
-                <p className="font-semibold text-destructive">Unable to check SeqSender status</p>
-                <p className="mt-0.5 break-words text-destructive opacity-80">{submissionStatusError || existingStatusError}</p>
-              </div>
-            </div>
-          )}
-
           {/* ── Submission status cards — shown for a submitted session or a selected past submission ────────────── */}
-          {(submitted || initialSubmission || submissionJob) && (
+          {(submitted || initialSubmission || submissionJob || createFilesResult) && (
             <div className="w-full space-y-2">
               {[
                 { key: "biosample", label: "BioSample", accessionLabel: "Submission ID",  placeholder: "e.g. SAMN00000000"    },
@@ -8167,7 +8162,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                     <div className="flex items-center justify-between gap-2 px-3 py-2 bg-muted/20 border-b border-border">
                       <p className="text-xs font-bold tracking-wide text-foreground">{label}</p>
                       <span className="font-mono px-2 py-0.5 rounded-full bg-primary/10 text-xs">Submission ID: {dbAccession || "—"}</span>
-                      <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium", SUBMISSION_STATUS_BADGE_STYLES[dbStatus] ?? "bg-muted text-muted-foreground")}>{dbStatus}</span>
+                      <span className={cn("rounded-full px-2.5 py-1 font-mono text-xs font-semibold", SUBMISSION_STATUS_BADGE_STYLES[dbStatus] ?? "bg-muted text-muted-foreground")}>{dbStatus}</span>
                     </div>
                     <div className="px-3 py-2 space-y-1.5">
                       <div className="flex items-center justify-between text-xs">
@@ -8182,7 +8177,27 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                           )}
                         </span>
                       </div>
-                      {statusReportRows.length > 0 && (
+                      {key === "gisaid" ? (
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-background px-3 py-2">
+                          <p className="text-xs text-muted-foreground">Download these files and complete the submission using GISAID CLI instructions.</p>
+                          <button
+                            type="button"
+                            onClick={() => downloadStoredFile(
+                              submissionFilesDownloadUrl("GISAID"),
+                              "GISAID Submission Files",
+                              `${submissionJob?.submission_name ?? initialSubmission?.submission_name ?? subName}_gisaid_submission_files.zip`
+                            )}
+                            disabled={storedDownloading === "GISAID Submission Files"}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {storedDownloading === "GISAID Submission Files" ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />}
+                            Download submission files
+                          </button>
+                          {storedDownloadError?.field === "GISAID Submission Files" && (
+                            <p className="w-full text-xs text-destructive">{storedDownloadError.message}</p>
+                          )}
+                        </div>
+                      ) : statusReportRows.length > 0 && (
                         <StatusReportTable
                           rows={statusReportRows}
                           onMessageChange={(sampleName, message) => {
@@ -8197,6 +8212,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                         />
                       )}
                       {/* ── Comments — free-text notes attached to this database's submission row ────────────── */}
+                      {key !== "gisaid" && (
                       <div className="space-y-1.5 pt-1">
                         <label htmlFor={`seqsender-comments-${key}`} className="text-xs font-semibold text-foreground">Comments</label>
                         <textarea
@@ -8229,10 +8245,39 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                           )}
                         </div>
                       </div>
+                      )}
                     </div>
                   </div>
                   );
                 })}
+            </div>
+          )}
+
+          {/* ── Submission error message — only relevant after this session's Submit was clicked ────────────── */}
+          {(submissionStatusError || existingStatusError) && (
+            <div className="flex w-full items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs dark:border-red-800 dark:bg-red-950/20">
+              <AlertCircle size={13} className="mt-0.5 shrink-0 text-destructive" />
+              <div className="min-w-0">
+                <p className="font-semibold text-destructive">Unable to check SeqSender status</p>
+                <p className="mt-0.5 break-words text-destructive opacity-80">{submissionStatusError || existingStatusError}</p>
+              </div>
+            </div>
+          )}
+
+          {/* ── Result returned by the manual Refresh Status action ────────────── */}
+          {refreshedSubmissionStatus?.message && (
+            <div className={cn(
+              "flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-xs",
+              refreshedSubmissionStatus.status === "FAILED"
+                ? "border-red-200 bg-red-50 text-destructive dark:border-red-800 dark:bg-red-950/20"
+                : ["SUBMITTED", "COMPLETED"].includes(refreshedSubmissionStatus.status)
+                  ? "border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-950/20 dark:text-green-300"
+                  : "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/20 dark:text-blue-300"
+            )}>
+              {["SUBMITTED", "COMPLETED"].includes(refreshedSubmissionStatus.status)
+                ? <Check size={13} className="mt-0.5 shrink-0" />
+                : <AlertCircle size={13} className="mt-0.5 shrink-0" />}
+              <p className="mt-0.5 min-w-0 break-words opacity-80">{refreshedSubmissionStatus.message}</p>
             </div>
           )}
 
@@ -9252,7 +9297,7 @@ function SeqSenderTab({ onBack, showBackToMira, newSubmissionSignal, isActive, s
 
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 overflow-y-auto p-6">
-          <div className="mx-auto flex w-[min(550px,100%)] flex-col items-start gap-4">
+          <div className="mx-auto flex w-[min(600px,100%)] flex-col items-start gap-4">
             <SeqSenderPanel key={panelSession.key} ref={panelRef} initialSubmission={panelSession.submission} isActive={isActive} onSubmitted={() => { invalidateSubmissions(); setSubmissionsRefreshKey((k) => k + 1); }} />
           </div>
         </div>

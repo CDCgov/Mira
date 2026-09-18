@@ -311,7 +311,7 @@ submission_pa_schema = pa.DataFrameSchema(
             pl.Boolean, nullable=False, required=True,
             description="Whether to run table2asn."
         ),
-        "submitter_name": _required_str(
+        "submitter_name": _nullable_str(
             description="Name of the submitter."
         ),
         "ncbi_publication_title": _nullable_str(
