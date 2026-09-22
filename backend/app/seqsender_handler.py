@@ -11,7 +11,9 @@ import re
 import yaml
 import shutil
 import csv
+import ssl
 import subprocess
+import tempfile
 from datetime import date
 from threading import Lock
 
@@ -61,6 +63,107 @@ _SEQSENDER_PROCESSES: Dict[int, Dict[str, Any]] = {}
 _SEQSENDER_TERMINAL_RESULTS: Dict[int, Dict[str, Any]] = {}
 _SEQSENDER_PROCESS_LOCK = Lock()
 _MAX_TERMINAL_RESULTS = 256
+_SEQSENDER_SETTINGS_DIR = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, "_settings"))
+_NCBI_CUSTOM_CA_BUNDLE = os.path.join(_SEQSENDER_SETTINGS_DIR, "ncbi_custom_ca_bundle.pem")
+_NCBI_EFFECTIVE_CA_BUNDLE = os.path.join(_SEQSENDER_SETTINGS_DIR, "ncbi_ca_bundle.pem")
+_CERTIFICATE_EXTENSIONS = {".pem", ".crt", ".cer"}
+_PEM_CERTIFICATE_PATTERN = re.compile(
+    br"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----",
+    flags=re.DOTALL,
+)
+
+
+# Atomic file write utility function
+def _write_atomic(path: str, content: bytes) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=os.path.dirname(path), delete=False) as temp_file:
+        temp_path = temp_file.name
+        temp_file.write(content)
+    try:
+        os.chmod(temp_path, 0o644)
+        os.replace(temp_path, path)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+# Write content to a file atomically
+def save_ncbi_ca_bundle(certificates: List[Tuple[str, bytes]]) -> Dict[str, Any]:
+    if not certificates:
+        raise ValueError("Select at least one certificate file.")
+
+    pem_certificates = []
+    total_size = 0
+    for filename, content in certificates:
+        extension = os.path.splitext(filename or "")[1].lower()
+        if extension not in _CERTIFICATE_EXTENSIONS:
+            raise ValueError(f"Certificate file '{filename}' must use a .pem, .crt, or .cer extension.")
+        if not content:
+            raise ValueError(f"Certificate file '{filename}' is empty.")
+        total_size += len(content)
+        if total_size > 5 * 1024 * 1024:
+            raise ValueError("The combined certificate size cannot exceed 5 MB.")
+
+        pem_blocks = _PEM_CERTIFICATE_PATTERN.findall(content)
+        if pem_blocks:
+            for block in pem_blocks:
+                pem_text = block.decode("ascii")
+                ssl.PEM_cert_to_DER_cert(pem_text)
+                pem_certificates.append(pem_text.strip())
+        else:
+            try:
+                pem_certificates.append(ssl.DER_cert_to_PEM_cert(content).strip())
+            except (ValueError, ssl.SSLError) as err:
+                raise ValueError(f"Certificate file '{filename}' is not a valid X.509 certificate.") from err
+
+    custom_bundle = ("\n".join(pem_certificates) + "\n").encode("ascii")
+    validation_context = ssl.create_default_context()
+    try:
+        validation_context.load_verify_locations(cadata=custom_bundle.decode("ascii"))
+    except ssl.SSLError as err:
+        raise ValueError("The uploaded files do not contain valid CA certificates.") from err
+
+    default_ca_file = ssl.get_default_verify_paths().cafile
+    default_bundle = b""
+    if default_ca_file and os.path.isfile(default_ca_file):
+        with open(default_ca_file, "rb") as ca_file:
+            default_bundle = ca_file.read().rstrip() + b"\n"
+
+    _write_atomic(_NCBI_CUSTOM_CA_BUNDLE, custom_bundle)
+    _write_atomic(_NCBI_EFFECTIVE_CA_BUNDLE, default_bundle + custom_bundle)
+    return get_ncbi_ca_bundle_status()
+
+
+# Get the status of the NCBI CA bundle
+def get_ncbi_ca_bundle_status() -> Dict[str, Any]:
+    configured = os.path.isfile(_NCBI_CUSTOM_CA_BUNDLE)
+    certificate_count = 0
+    if configured:
+        with open(_NCBI_CUSTOM_CA_BUNDLE, "rb") as bundle_file:
+            certificate_count = len(_PEM_CERTIFICATE_PATTERN.findall(bundle_file.read()))
+    return {
+        "configured": configured,
+        "certificate_count": certificate_count,
+    }
+
+
+# Delete the NCBI CA bundle files
+def delete_ncbi_ca_bundle() -> Dict[str, Any]:
+    for bundle_path in (_NCBI_CUSTOM_CA_BUNDLE, _NCBI_EFFECTIVE_CA_BUNDLE):
+        if os.path.exists(bundle_path):
+            os.remove(bundle_path)
+    return get_ncbi_ca_bundle_status()
+
+
+# SeqSender environment configuration and CLI paths
+def _seqsender_environment() -> Dict[str, str]:
+    environment = os.environ.copy()
+    if os.path.isfile(_NCBI_EFFECTIVE_CA_BUNDLE):
+        environment["REQUESTS_CA_BUNDLE"] = _NCBI_EFFECTIVE_CA_BUNDLE
+        environment["SSL_CERT_FILE"] = _NCBI_EFFECTIVE_CA_BUNDLE
+        environment["CURL_CA_BUNDLE"] = _NCBI_EFFECTIVE_CA_BUNDLE
+    return environment
+
 
 # Locate the SeqSender CLI entrypoint and its isolated Micromamba Python interpreter.
 def _seqsender_cli_paths() -> Tuple[str, str]:
@@ -74,6 +177,8 @@ def _seqsender_cli_paths() -> Tuple[str, str]:
         raise FileNotFoundError(f"SeqSender executable '{seqsender_script}' does not exist.")
     return seqsender_python, seqsender_script
 
+
+# Get the installed version of SeqSender
 def _get_seqsender_version() -> str:
     seqsender_python, seqsender_script = _seqsender_cli_paths()
     result = subprocess.run(
@@ -89,7 +194,8 @@ def _get_seqsender_version() -> str:
     # Return version if match found, otherwise return a default "0.0.0"
     return version_match.group(0) if version_match else "0.0.0"
 
-# Function to generate a unique identity for a SeqSender process based on submission details.
+
+# Generate a unique identity for a SeqSender process based on submission details.
 def _seqsender_process_identity(
     submission_name: str,
     organism: str,
@@ -99,13 +205,13 @@ def _seqsender_process_identity(
     return submission_name, organism, tuple(sorted(database)), submission_type
 
 
-# Function to normalize the database name for SeqSender submissions.
+# Normalize the database name for SeqSender submissions.
 def _normalize_seqsender_database(database: str) -> str:
     normalized_database = database.strip().upper()
     return SEQSENDER_DATABASE_ALIASES.get(normalized_database, normalized_database)
 
 
-# Function to build the database name written by SeqSender to its submission log.
+# Build the database name written by SeqSender to its submission log.
 def _seqsender_log_database(database: str, table2asn: bool) -> str:
     normalized_database = _normalize_seqsender_database(database)
     if normalized_database == "GENBANK":
@@ -114,7 +220,7 @@ def _seqsender_log_database(database: str, table2asn: bool) -> str:
     return normalized_database
 
 
-# Function to read and parse the submission log of a SeqSender process.
+# Read and parse the submission log of a SeqSender process.
 def _read_submission_log(
     submission_log_file: str,
     submission_name: str,
@@ -1815,6 +1921,7 @@ def submit_ncbi_submission(
             stdout=stdout_fh,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            env=_seqsender_environment(),
         )
 
         # The child has inherited its own copy of the file descriptor; the parent's copy
@@ -2372,6 +2479,7 @@ def check_seqsender_submission(
         cwd=submission_name_dir,
         capture_output=True,
         text=True,
+        env=_seqsender_environment(),
     )
 
     # Check if the SeqSender CLI command executed successfully.

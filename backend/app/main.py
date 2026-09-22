@@ -144,6 +144,9 @@ from .seqsender_handler import (
     retrieve_seqsender_submission_log,
     retrieve_seqsender_status_report,
     retrieve_seqsender_process_status,
+    save_ncbi_ca_bundle,
+    get_ncbi_ca_bundle_status,
+    delete_ncbi_ca_bundle,
 )
 
 # Import sqlite handler for database operations
@@ -1620,6 +1623,45 @@ async def get_seqsender_version():
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
+
+# Get NCBI CA certificate status
+@app.get("/settings/ncbi-ca-certificate", response_model=Dict[str, Any], summary="Get NCBI CA certificate status", tags=["Settings"])
+async def get_ncbi_ca_certificate():
+    try:
+        return await asyncio.to_thread(get_ncbi_ca_bundle_status)
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+    
+
+# Install NCBI CA certificates
+@app.post("/settings/ncbi-ca-certificate", response_model=Dict[str, Any], summary="Install NCBI CA certificates", tags=["Settings"])
+async def upload_ncbi_ca_certificate(
+    certificate_files: List[UploadFile] = File(..., description="One or more PEM or DER encoded CA certificate files."),
+):
+    try:
+        certificates = [
+            (certificate_file.filename or "certificate.pem", await certificate_file.read())
+            for certificate_file in certificate_files
+        ]
+        result = await asyncio.to_thread(save_ncbi_ca_bundle, certificates)
+        return {
+            **result,
+            "message": f"Installed {result['certificate_count']} CA certificate(s) for NCBI submissions.",
+        }
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+@app.delete("/settings/ncbi-ca-certificate", response_model=Dict[str, Any], summary="Remove NCBI CA certificates", tags=["Settings"])
+async def remove_ncbi_ca_certificate():
+    try:
+        result = await asyncio.to_thread(delete_ncbi_ca_bundle)
+        return {**result, "message": "Custom NCBI CA certificates were removed."}
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
 
 # Upload config file to SeqSender storage location
 @app.post("/upload/seqsender/config", response_model=Dict[str, Any], summary="Upload a config file to SeqSender storage location", tags=["SeqSender Workflows"])
@@ -1708,8 +1750,8 @@ async def upload_seqsender_fasta(
     """
     try:
         # Make sure the uploaded file is a valid fasta file (e.g., check extension or content)
-        if not fasta_file.filename.endswith(".fasta") and not fasta_file.filename.endswith(".fa") and not fasta_file.filename.endswith(".fna"):
-            raise ValueError(f"Fasta file '{fasta_file.filename}' must be a .fasta, .fa, or .fna file.")
+        if not (fasta_file.filename or "").lower().endswith((".fasta", ".fa", ".fas")):
+            raise ValueError(f"Fasta file '{fasta_file.filename}' must be a .fasta, .fa, or .fas file.")
         # Define the storage directory based on submission name and organism
         submission_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism))
         submission_name_dir = os.path.realpath(os.path.join(submission_dir, submission_name))

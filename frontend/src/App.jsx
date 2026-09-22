@@ -222,6 +222,7 @@ const API = {
   retrieveSeqSenderSubmissionLog:    `${API_BASE}/retrieve/submission_log`,
   retrieveSeqSenderSubmissionStatus: `${API_BASE}/retrieve/submission_status`,
   retrieveSeqSenderVersion:          `${API_BASE}/seqsender/version`,
+  ncbiCaCertificate:                 `${API_BASE}/settings/ncbi-ca-certificate`,
 };
 
 let startupVersionsRequest;
@@ -6186,6 +6187,10 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
   const [storedDownloadError, setStoredDownloadError] = useState(null); // { field, message } for a failed stored-file download
   const [storedDownloading, setStoredDownloading] = useState(null); // field currently downloading
   const [existingRows, setExistingRows] = useState(initialRows); // per-database status rows for a selected past submission, refetchable
+  const [createdSubmissionIdentity, setCreatedSubmissionIdentity] = useState(() => initialSubmission
+    ? [initialSubmission.submission_name, initialSubmission.organism, initialSubmission.submission_type].join("\u0000")
+    : null
+  );
   const [existingStatusRefreshing, setExistingStatusRefreshing] = useState(false);
   const [existingStatusError, setExistingStatusError] = useState(null);
   const [metadataPreview, setMetadataPreview] = useState({ columns: [], rows: [], loading: false, error: null });
@@ -7197,6 +7202,11 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         ncbi_publication_status: ncbiPubStatus,
         ncbi_release_date: ncbiPubReleaseDate,
       };
+      const submissionIdentity = [
+        submissionData.submission_name,
+        submissionData.organism,
+        submissionData.submission_type,
+      ].join("\u0000");
 
       // Build the shared URL parameters before either validation request uses them.
       const checkParams = new URLSearchParams();
@@ -7251,7 +7261,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       }
 
       // If new submission, check for existing submission with the same identity.
-      if(!initialSubmission) {
+      if (!initialSubmission && createdSubmissionIdentity !== submissionIdentity) {
         const checkRes = await fetch(`${API.retrieveSeqsenderSubmission}?${checkParams.toString()}`);
         const checkData = await checkRes.json().catch(() => ({}));
         if (!checkRes.ok) throw new Error(checkData.detail || "Failed to check for an existing submission.");
@@ -7271,6 +7281,10 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || "Failed to create submission record.");
+      setCreatedSubmissionIdentity(submissionIdentity);
+      if (Array.isArray(data.submission_info) && data.submission_info.length > 0) {
+        setExistingRows(data.submission_info);
+      }
 
       // Validate stored submission files -- required gff file parameter in the check.
       checkParams.set("gff_file", String(submissionData.gff_file));
@@ -7828,7 +7842,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
           {/* ── File inputs ────────────── */}
           {[
             { label: "Metadata File",  required: true,  val: metaFile,      set: setMetaFile,       accept: ".csv,.tsv,.xlsx",      ph: "metadata.csv",            show: true, downloadUrl: API.downloadSeqsenderMetadata, onFile: (files) => { setMetaFileObject(files[0] ?? null); setMetadataUndoSnapshot(null); } },
-            { label: "FASTA File",  required: dbs.genbank || dbs.gisaid,  val: fastaFile,     set: setFastaFile,      accept: ".fasta,.fa,.fna",      ph: "sequences.fasta",         show: true, downloadUrl: API.downloadSeqsenderFasta, onFile: (files) => setFastaFileObject(files[0] ?? null) },
+            { label: "FASTA File",  required: dbs.genbank || dbs.gisaid,  val: fastaFile,     set: setFastaFile,      accept: ".fasta,.fa,.fas",      ph: "sequence.fasta",          show: true, downloadUrl: API.downloadSeqsenderFasta, onFile: (files) => setFastaFileObject(files[0] ?? null) },
             { label: "Raw Reads (FASTQs)", required: true, val: rawReadsFiles, set: setRawReadsFiles, accept: ".fastq,.fq,.fastq.gz,.fq.gz", ph: "e.g. sample_R1.fastq.gz, sample_R2.fastq.gz", show: dbs.sra, multiple: true, downloadUrl: API.downloadSeqsenderRawReads, downloadLabel: "Download stored raw reads (.zip)", onFile: (files) => setRawReadsFileObjects(files) },
           ].filter(({ show }) => show).map(({ label, required, val, set, accept, ph, desc, multiple, downloadUrl, downloadLabel, onFile }) => (
             <div key={label} className="w-full">
@@ -9512,6 +9526,14 @@ export default function App() {
   const [seqsenderVersion, setSeqsenderVersion] = useState(null);
   const [backendUp, setBackendUp] = useState(true); // assume healthy until the first check completes
   const [resourcesOpen, setResourcesOpen] = useState(false); // Resources overlay visibility
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [certificateStatus, setCertificateStatus] = useState({ configured: false, certificate_count: 0 });
+  const [certificateFiles, setCertificateFiles] = useState([]);
+  const [certificateLoading, setCertificateLoading] = useState(false);
+  const [certificateSaving, setCertificateSaving] = useState(false);
+  const [certificateError, setCertificateError] = useState("");
+  const [certificateMessage, setCertificateMessage] = useState("");
+  const certificateInputRef = useRef(null);
   const [loadRunSignal, setLoadRunSignal] = useState(0); // bumped to signal AssemblyTab to open its Load Run modal
   const [newRunSignal, setNewRunSignal] = useState(0);   // bumped to signal AssemblyTab to reset its inputs for a new run
   const [headerHidden, setHeaderHidden] = useState(false); // whether the top header is collapsed (auto-hide on scroll)
@@ -9556,6 +9578,65 @@ export default function App() {
     setSeqSenderOrigin(origin);
     navigateTo("seqsender");
     setNewSubmissionSignal((n) => n + 1);
+  };
+
+  const openSettings = async () => {
+    setSettingsOpen(true);
+    setCertificateLoading(true);
+    setCertificateError("");
+    setCertificateMessage("");
+    try {
+      const response = await fetch(API.ncbiCaCertificate);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Failed to load certificate settings.");
+      setCertificateStatus(data);
+    } catch (error) {
+      setCertificateError(error.message);
+    } finally {
+      setCertificateLoading(false);
+    }
+  };
+
+  const installCertificates = async () => {
+    if (!certificateFiles.length) {
+      setCertificateError("Select at least one certificate file.");
+      return;
+    }
+    setCertificateSaving(true);
+    setCertificateError("");
+    setCertificateMessage("");
+    try {
+      const formData = new FormData();
+      certificateFiles.forEach((file) => formData.append("certificate_files", file));
+      const response = await fetch(API.ncbiCaCertificate, { method: "POST", body: formData });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Failed to install certificates.");
+      setCertificateStatus(data);
+      setCertificateFiles([]);
+      if (certificateInputRef.current) certificateInputRef.current.value = "";
+      setCertificateMessage(data.message);
+    } catch (error) {
+      setCertificateError(error.message);
+    } finally {
+      setCertificateSaving(false);
+    }
+  };
+
+  const removeCertificates = async () => {
+    setCertificateSaving(true);
+    setCertificateError("");
+    setCertificateMessage("");
+    try {
+      const response = await fetch(API.ncbiCaCertificate, { method: "DELETE" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Failed to remove certificates.");
+      setCertificateStatus(data);
+      setCertificateMessage(data.message);
+    } catch (error) {
+      setCertificateError(error.message);
+    } finally {
+      setCertificateSaving(false);
+    }
   };
 
   // Sync active tab when browser back/forward is used
@@ -9616,8 +9697,6 @@ export default function App() {
           >
             <BookOpen size={22} />
           </button>
-
-
 
           {/* Notifications */}
           <Dropdown
@@ -9687,8 +9766,123 @@ export default function App() {
               <DropdownItem>There are no new notifications</DropdownItem>
             )}
           </Dropdown>
+
+          {/* Settings */}
+          <button
+            onClick={openSettings}
+            title="Settings"
+            className="p-2 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+          >
+            <Settings2 size={22} />
+          </button>
         </div>
       </header>
+
+      {/* ── Settings modal ───────────────────────── */}
+      {settingsOpen && (
+        <div onClick={() => setSettingsOpen(false)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div onClick={(event) => event.stopPropagation()} className="bg-background border border-border rounded-xl shadow-xl w-full max-w-xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+              <div className="flex items-center gap-2">
+                <Settings2 size={16} className="text-primary" />
+                <h3 className="text-sm font-bold text-foreground">Settings</h3>
+              </div>
+              <button onClick={() => setSettingsOpen(false)} title="Close settings" className="text-muted-foreground hover:text-foreground transition-colors">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="h-9 w-9 shrink-0 flex items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <ShieldCheck size={18} />
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold text-foreground">Company certificates for NCBI submissions</h4>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    Install your organization&apos;s CA certificate chain for NCBI submission and status connections. This resolves TLS inspection trust errors, but cannot override a firewall that blocks FTP traffic.
+                  </p>
+                </div>
+              </div>
+
+              {certificateLoading ? (
+                <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
+                  <RefreshCw size={13} className="animate-spin" /> Loading certificate status…
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className={cn(
+                    "flex items-center gap-2 rounded-lg border px-3 py-2 text-xs",
+                    certificateStatus.configured
+                      ? "border-green-200 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-950/20 dark:text-green-300"
+                      : "border-border bg-muted/40 text-muted-foreground"
+                  )}>
+                    {certificateStatus.configured ? <Check size={14} /> : <AlertCircle size={14} />}
+                    {certificateStatus.configured
+                      ? `${certificateStatus.certificate_count} custom CA certificate(s) installed`
+                      : "No custom CA certificates installed"}
+                  </div>
+
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-foreground">Certificate files</span>
+                    <input
+                      ref={certificateInputRef}
+                      type="file"
+                      multiple
+                      accept=".pem,.crt,.cer,application/x-pem-file,application/pkix-cert"
+                      onChange={(event) => {
+                        setCertificateFiles(Array.from(event.target.files || []));
+                        setCertificateError("");
+                        setCertificateMessage("");
+                      }}
+                      className="block w-full text-xs text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-2 file:text-xs file:font-semibold file:text-primary-foreground hover:file:opacity-90"
+                    />
+                    <span className="block text-[11px] text-muted-foreground">PEM or DER encoded .pem, .crt, and .cer files, up to 5 MB combined.</span>
+                  </label>
+
+                  {certificateFiles.length > 0 && (
+                    <p className="text-xs text-foreground">{certificateFiles.length} file(s) selected</p>
+                  )}
+
+                  {certificateError && (
+                    <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-destructive dark:border-red-800 dark:bg-red-950/20">
+                      <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                      <span>{certificateError}</span>
+                    </div>
+                  )}
+
+                  {certificateMessage && (
+                    <div className="flex items-start gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-800 dark:border-green-800 dark:bg-green-950/20 dark:text-green-300">
+                      <Check size={13} className="mt-0.5 shrink-0" />
+                      <span>{certificateMessage}</span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={removeCertificates}
+                      disabled={!certificateStatus.configured || certificateSaving}
+                      className="inline-flex h-9 items-center gap-2 rounded-md border border-destructive/40 px-3 text-xs font-semibold text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Trash2 size={14} /> Remove
+                    </button>
+                    <button
+                      type="button"
+                      onClick={installCertificates}
+                      disabled={!certificateFiles.length || certificateSaving}
+                      className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-xs font-semibold text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {certificateSaving ? <RefreshCw size={14} className="animate-spin" /> : <Upload size={14} />}
+                      {certificateStatus.configured ? "Replace certificates" : "Install certificates"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Resources modal ──────────────────────── */}
       {resourcesOpen && (
