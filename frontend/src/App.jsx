@@ -199,31 +199,57 @@ const clearActiveRun = () => {
 const CUSTOM_PRIMER_CONFIG_FILENAME = "custom_primers.fasta";
 
 /* ── simple dropdown hook ────────────────────────── */
-function useDropdown() {
+function useDropdown(panelRef) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
   useEffect(() => {
     function handleClick(e) {
+      if (panelRef?.current && panelRef.current.contains(e.target)) return;
       if (ref.current && !ref.current.contains(e.target)) setOpen(false);
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
+  }, [panelRef]);
 
   return { open, setOpen, ref };
 }
 
 /* ── Dropdown wrapper ────────────────────────────── */
 function Dropdown({ trigger, children, panelClassName = "w-48" }) {
-  const { open, setOpen, ref } = useDropdown();
+  const panelRef = useRef(null);
+  const { open, setOpen, ref } = useDropdown(panelRef);
+  const [pos, setPos] = useState(null);
+
+  // The panel is portalled to <body> because ancestors (e.g. the header) clip
+  // overflow, so it has to be positioned from the trigger's viewport rect.
+  useEffect(() => {
+    if (!open) return;
+    const update = () => {
+      const r = ref.current?.getBoundingClientRect();
+      if (r) setPos({ top: r.bottom + 8, right: Math.max(8, window.innerWidth - r.right) });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [open, ref]);
+
   return (
     <div ref={ref} className="relative">
       <div onClick={() => setOpen((v) => !v)}>{trigger}</div>
-      {open && (
-        <div className={cn("absolute right-0 mt-2 rounded-md border border-border bg-popover shadow-lg z-50 py-1", panelClassName)}>
+      {open && pos && createPortal(
+        <div
+          ref={panelRef}
+          style={{ top: pos.top, right: pos.right }}
+          className={cn("fixed rounded-md border border-border bg-popover shadow-lg z-[100] py-1", panelClassName)}
+        >
           {children}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
@@ -496,7 +522,7 @@ function HomeTab({ onNewRun, onLoadRun }) {
             const isRuns = label === "Sequencing Runs";
             const cardClass = cn(
               "rounded-xl border border-border bg-card px-4 py-3 flex items-center gap-3",
-              ["col-start-2", "col-start-6", "col-start-7"][i],
+              ["col-start-2", "col-start-7"][i],
               isRuns && "text-left hover:bg-muted/40 transition-colors"
             );
             const inner = (
