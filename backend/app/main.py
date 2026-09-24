@@ -1,6 +1,9 @@
 # Import future annotations for Pydantic models
 from typing import List, Optional, Literal, Dict, Any
 
+# Import context manager for managing application lifespan
+from contextlib import asynccontextmanager
+
 # Import FastAPI and related packages
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,9 +16,13 @@ import io
 import re
 import json
 import shutil
+import tempfile
 import zipfile
 import requests
 from datetime import datetime
+
+# Import background task handling from Starlette
+from starlette.background import BackgroundTask
 
 # Import asyncio for running blocking operations in a thread
 import asyncio
@@ -26,7 +33,7 @@ import polars as pl
 # Import schema
 from .schema import (
     RunRequest,
-    RunResponse,
+    ListRunResponse,
     RunStatusRequest,
     TaskLogRequest,
     AssemblyRequest,
@@ -34,20 +41,42 @@ from .schema import (
     DeleteSampleRequest,
     RenameRunRequest,
     CopyRunRequest,
+    SubmissionRequest,
+    DeleteSubmissionRequest,
+    CopySubmissionRequest,
+    CreateSubmissionRequest,
+    UpdateSubmissionCommentsRequest,
+    UpdateSubmissionStatusReportMessagesRequest,
+    StatusUpdateCronRequest,
+    ListSubmissionResponse,
+    ListSubmitterResponse,
+    SubmitterInfo,
+    DeleteSubmitterRequest,
 )
 
 # Import schema validation
 from .schema_validator import (
+    _DEFAULT_SEQSENDER_STORAGE_PATH,
     _DEFAULT_MIRA_STORAGE_PATH,
     _MIRA_NF_VERSION_URL,
     _MIRA_VERSION_URL,
     _MIRA_NF_IMAGE,
     _REACT_PORT,
     validate_tbl,
+    organisms,
+    submission_portals,
+    database_targets,
+    submission_types,
     experiment_types,
     assembly_pa_schema,
     ont_samplesheet_pa_schema,
     illumina_samplesheet_pa_schema, 
+    CONFIG_TEMPLATE_PATH,
+    CONFIG_FILENAME,
+    METADATA_FILENAME,
+    FASTA_FILENAME,
+    GFF_FILENAME,
+    TABLE2ASN_FILENAME,
     CUSTOM_PRIMER_CONFIG_FILENAME,
     CUSTOM_IRMA_CONFIG_FILENAME,
     CUSTOM_QC_SETTINGS_FILENAME,
@@ -89,6 +118,38 @@ from .mira_handler import (
     validate_custom_configs_in_storage,
 )
 
+# Import SeqSender handler
+from .seqsender_handler import (
+    _get_seqsender_version,
+    retrieve_submission,
+    create_seqsender_submission,
+    delete_seqsender_submission,
+    copy_seqsender_submission,
+    update_seqsender_submission_comments,
+    update_seqsender_submission_status_report_messages,
+    save_submitter,
+    delete_submitter,
+    submit_ncbi_submission,
+    prep_seqsender_submission,
+    check_seqsender_submission,
+    load_submission_status,
+    retrieve_seqsender_config,
+    retrieve_seqsender_metadata,
+    retrieve_seqsender_metadata_template,
+    retrieve_seqsender_fasta,
+    retrieve_seqsender_raw_reads,
+    validate_seqsender_uploaded_files,
+    retrieve_seqsender_gff,
+    retrieve_seqsender_table2asn,
+    retrieve_seqsender_gisaid_cli,
+    retrieve_seqsender_submission_log,
+    retrieve_seqsender_status_report,
+    retrieve_seqsender_process_status,
+    save_ncbi_ca_bundle,
+    get_ncbi_ca_bundle_status,
+    delete_ncbi_ca_bundle,
+)
+
 # Import sqlite handler for database operations
 from .sqlite_handler import (
     lookup_tbl_in_database,
@@ -97,15 +158,35 @@ from .sqlite_handler import (
 # Import shared logger (INFO/DEBUG -> stdout, WARNING/ERROR/CRITICAL -> stderr)
 from .logging_config import logger
 
-# Define React base URL and internal base URL for the app
-_REACT_BASE_URL = f"http://localhost:{_REACT_PORT}"
-_REACT_INTERNAL_BASE_URL = f"http://127.0.0.1:{_REACT_PORT}"
+from .status_scheduler import (
+    delete_status_update_schedule,
+    get_status_update_schedule,
+    save_status_update_schedule,
+    start_status_update_scheduler,
+    stop_status_update_scheduler,
+    wake_status_update_scheduler,
+)
 
-# Define FastAPI app
-app = FastAPI(title = "MIRA Backend")
+# Define the lifespan context manager for the FastAPI app, 
+# which starts and stops the status update scheduler.
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    start_status_update_scheduler()
+    try:
+        yield
+    finally:
+        await stop_status_update_scheduler()
+
+
+# FastAPI application instance
+app = FastAPI(title = "MIRA Backend", lifespan=lifespan)
 
 # Compress responses >= 1 KB with gzip (reduces large JSON payloads 5-10x)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# Define React base URL and internal base URL for the app
+_REACT_BASE_URL = f"http://localhost:{_REACT_PORT}"
+_REACT_INTERNAL_BASE_URL = f"http://127.0.0.1:{_REACT_PORT}"
 
 # CORS for your Vite dev server + Nextclade Web (fetches input-fasta directly from the browser)
 # Also accept the 127.0.0.1 form of the same host:port, since some dev setups (e.g. remote
@@ -253,11 +334,13 @@ def upload_fastq_files_to_storage(
 def _version_tuple(version: str) -> tuple:
     return tuple(int(part) for part in re.findall(r"\d+", version))
 
+
 ##############################################
 # 
 # MIRA HEALTH SECTION
 # 
 ##############################################
+
 
 # ---------- Health Check ----------
 @app.get("/health", tags=["Health"], summary="Health check", response_model=Dict[str, Any])
@@ -272,11 +355,13 @@ def health():
         logger.error("Health check: REACT_BASE_URL '%s' is unreachable: %s", _REACT_BASE_URL, err)
     return {"ok": True, "react_base_url": _REACT_BASE_URL, "react_reachable": react_reachable}
 
+
 ##############################################
 # 
 # MIRA UTILS SECTION
 # 
 ##############################################
+
 
 # --------- Get MIRA version ----------
 @app.get("/version", response_model=Dict[str, str], summary="Get MIRA version", tags=["MIRA Utils"])
@@ -342,11 +427,12 @@ async def check_mira_version():
     }
     return check_result
 
+
 # ---------- List all runs ----------
-@app.get("/list/runs", response_model=RunResponse, summary="List all assembly runs", tags=["MIRA Utils"])
+@app.get("/list/runs", response_model=ListRunResponse, summary="List all assembly runs", tags=["MIRA Utils"])
 async def get_runs():
     """
-    Return a list of assembly runs in storage.
+    Return a list of assembly runs in database.
     """
     # Query for all assembly runs
     try:
@@ -363,6 +449,7 @@ async def get_runs():
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Dashboard Summary Counts ----------
 @app.get("/stats/summary", response_model=Dict[str, int], summary="Dashboard summary counts (submitted sequences)", tags=["MIRA Utils"])
@@ -391,6 +478,7 @@ async def get_stats_summary():
         }
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Retrieve Specific Run Information ----------
 @app.get("/retrieve/run", response_model=Optional[Dict[str, Any]], summary="Retrieve a run information", tags=["MIRA Utils"])
@@ -409,12 +497,14 @@ async def get_run_info(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 ##############################################
 # 
 # MIRA WORKFLOWS SECTION
 # 
 ##############################################    
+
 
 # ---------- Create a MIRA run (with file uploads) ----------
 @app.post(
@@ -494,6 +584,7 @@ async def create_run_upload(
         raise HTTPException(status_code=422, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Create a MIRA assembly run ----------
 @app.post("/create/run", response_model=Dict[str, Any], summary="Create a MIRA run with appropriate samplesheet", tags=["MIRA Workflows"])
@@ -531,8 +622,8 @@ async def create_run(req: AssemblyRequest):
             f"sc2_primer='{req.sc2_primer}'\n"
             f"rsv_primer='{req.rsv_primer}'\n"
             f"custom_primers='{req.custom_primers}'\n"
-            f"primer_kmer_len='{req.primer_kmer_len if req.custom_primers and req.primer_kmer_len > 0 else ""}'\n"
-            f"primer_restrict_window='{req.primer_restrict_window if req.custom_primers and req.primer_restrict_window > 0 else ""}'\n"
+            f"primer_kmer_len='{req.primer_kmer_len if req.custom_primers and req.primer_kmer_len > 0 else ''}'\n"
+            f"primer_restrict_window='{req.primer_restrict_window if req.custom_primers and req.primer_restrict_window > 0 else ''}'\n"
             f"irma_module='{req.irma_module}'\n"
             f"custom_irma_config='{req.custom_irma_config}'\n"
             f"custom_qc_settings='{req.custom_qc_settings}'\n"
@@ -566,7 +657,8 @@ async def create_run(req: AssemblyRequest):
     except ValueError as err:
         raise HTTPException(status_code=422, detail=str(err))
     except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))        
+        raise HTTPException(status_code=500, detail=str(err))  
+          
 
 # ---------- Upload FASTQ files to storage ----------
 @app.post(
@@ -616,7 +708,8 @@ async def upload_fastqs(
     except ValueError as err:
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))    
+        raise HTTPException(status_code=500, detail=str(err))   
+     
 
 # Upload custom primger config file to storage location
 @app.post("/upload/custom_primer_config", response_model=Dict[str, Any], summary="Upload a custom primer config file to storage location", tags=["MIRA Workflows"])
@@ -639,7 +732,10 @@ async def upload_custom_primer_config(
         )
         # Make sure db_assembly_tbl is not empty
         if db_assembly_tbl.shape[0] == 0:
-            raise ValueError(f"No assembly found for run_name '{run_name}' and experiment_type '{experiment_type}'.")        
+            raise ValueError(f"No assembly found for run_name '{run_name}' and experiment_type '{experiment_type}'.")   
+        # Make sure the uploaded file has a valid extension .fasta
+        if not custom_primer_config_file.filename.lower().endswith((".fasta", ".fa")):
+            raise ValueError(f"Custom primer config file '{custom_primer_config_file.filename}' must be a .fasta or .fa file.")     
         # Get pathogen and instrument type from experiment_type
         pathogen = experiment_type.split("-")[0]
         instrument = experiment_type.split("-")[-1]
@@ -662,6 +758,7 @@ async def upload_custom_primer_config(
         }
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))    
+    
 
 # Upload custom IRMA config file to storage location
 @app.post("/upload/custom_irma_config", response_model=Dict[str, Any], summary="Upload a custom IRMA config file to storage location", tags=["MIRA Workflows"])
@@ -685,6 +782,9 @@ async def upload_custom_irma_config(
         # Make sure db_assembly_tbl is not empty
         if db_assembly_tbl.shape[0] == 0:
             raise ValueError(f"No assembly found for run_name '{run_name}' and experiment_type '{experiment_type}'.")
+        # Make sure upload file is a yaml file
+        if not custom_irma_config_file.filename.lower().endswith((".sh")):
+            raise ValueError(f"Custom IRMA config file '{custom_irma_config_file.filename}' must be a .sh file.")
         # Get pathogen and instrument type from experiment_type
         pathogen = experiment_type.split("-")[0]
         instrument = experiment_type.split("-")[-1]
@@ -707,6 +807,7 @@ async def upload_custom_irma_config(
         }
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # Upload custom QC settings file to storage location
 @app.post("/upload/custom_qc_settings", response_model=Dict[str, Any], summary="Upload a custom QC settings file to storage location", tags=["MIRA Workflows"])
@@ -729,7 +830,10 @@ async def upload_custom_qc_settings(
         )
         # Make sure db_assembly_tbl is not empty
         if db_assembly_tbl.shape[0] == 0:
-            raise ValueError(f"No assembly found for run_name '{run_name}' and experiment_type '{experiment_type}'.")        
+            raise ValueError(f"No assembly found for run_name '{run_name}' and experiment_type '{experiment_type}'.") 
+        # Make sure upload file is a yaml file
+        if not custom_qc_settings_file.filename.lower().endswith((".yaml", ".yml")):
+            raise ValueError(f"Custom QC settings file '{custom_qc_settings_file.filename}' must be a .yaml or .yml file.")       
         # Get pathogen and instrument type from experiment_type
         pathogen = experiment_type.split("-")[0]
         instrument = experiment_type.split("-")[-1]
@@ -752,6 +856,7 @@ async def upload_custom_qc_settings(
         }
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))    
+    
 
 # ---------- Validate samplesheet and all FASTQ files exist for a given sequencing run. ----------
 @app.get("/validate/run", response_model=Dict[str, Any], summary="Validate samplesheet and FASTQ files exist for a given run", tags=["MIRA Workflows"])
@@ -788,6 +893,7 @@ async def list_fastqs(req: RunRequest = Depends()):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
 
+
 @app.get("/validate/custom_configs", response_model=Dict[str, Any], summary="Validate custom primers, custom IRMA config, and custom QC settings exist for a given run if provided", tags=["MIRA Workflows"])
 async def validate_custom_configs(req: RunRequest = Depends()):
     """
@@ -804,6 +910,7 @@ async def validate_custom_configs(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
     
 # ---------- Run MIRA Workflows ----------
 @app.get("/run/MIRA", response_model=Dict[str, Any], summary="Run MIRA assembly via Docker (Part 3)", tags=["MIRA Workflows"])
@@ -823,6 +930,7 @@ async def run_mira(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
      
 # ---------- Cancel MIRA run ----------
 @app.get("/cancel/MIRA", response_model=Dict[str, Any], summary="Cancel a MIRA run", tags=["MIRA Workflows"])
@@ -842,6 +950,7 @@ async def cancel_mira(req: RunStatusRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
     
 # ---------- Check MIRA status ----------
 @app.get("/MIRA/status", response_model=Dict[str, Any], summary="Check status process of a MIRA run", tags=["MIRA Workflows"])
@@ -863,6 +972,7 @@ async def get_mira_status(req: RunStatusRequest = Depends()):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))   
     
+    
 # ---------- Pipeline DAG / status ----------
 @app.get("/MIRA/DAG", response_model=Dict[str, Any], summary="Get MIRA DAG from assembly", tags=["MIRA Workflows"])
 async def get_mira_dag(req: RunRequest = Depends()):
@@ -881,6 +991,7 @@ async def get_mira_dag(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 @app.get("/MIRA/task_log", response_model=Dict[str, Any], summary="Get error log for a failed MIRA task", tags=["MIRA Workflows"])
 async def get_mira_task_log(req: TaskLogRequest = Depends()):
@@ -903,12 +1014,14 @@ async def get_mira_task_log(req: TaskLogRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 ##############################################
 # 
 # MIRA RENAME AND COPY SECTION
 # 
 ##############################################    
+
     
 # ---------- Rename an existing MIRA run ----------
 @app.patch("/rename/run", response_model=Dict[str, Any], summary="Rename a run (updates DB record and on-disk run directory)", tags=["MIRA Rename & Copy"])
@@ -929,6 +1042,7 @@ async def rename_run(req: RenameRunRequest):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Copy an existing MIRA run ----------
 @app.post("/copy/run", response_model=Dict[str, Any], summary="Copy a run to a new name (duplicates DB record, samplesheet, FASTQs and outputs)", tags=["MIRA Rename & Copy"])
@@ -949,12 +1063,14 @@ async def copy_run(req: CopyRunRequest):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 ##############################################
 # 
 # MIRA RESULTS SECTION
 # 
 ##############################################       
+
 
 # ---------- Retrieve Barcode Assignments ----------
 @app.get("/retrieve/barcode_assignment", response_model=Optional[Dict[str, Any]], summary="Retrieve Barcode Assignments", tags=["MIRA Results"])
@@ -974,6 +1090,7 @@ async def get_barcode_assignment(req: RunRequest = Depends()):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
     
+    
 # ---------- Retrieve QC statement ----------
 @app.get("/retrieve/qc_statement", response_model=Optional[Dict[str, Any]], summary="Retrieve QC Statement", tags=["MIRA Results"])
 async def get_qc_statement(req: RunRequest = Depends()):
@@ -992,6 +1109,7 @@ async def get_qc_statement(req: RunRequest = Depends()):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
     
+    
 # ---------- Retrieve Quality Control Decisions ----------
 @app.get("/retrieve/quality_control_decisions", response_model=Optional[Dict[str, Any]], summary="Retrieve Quality Control Decisions", tags=["MIRA Results"])
 async def get_quality_control_decisions(req: RunRequest = Depends()):
@@ -1008,7 +1126,8 @@ async def get_quality_control_decisions(req: RunRequest = Depends()):
     except ValueError as err:
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))    
+        raise HTTPException(status_code=500, detail=str(err))   
+     
 
 # ---------- Retrieve MIRA Summary ----------
 @app.get("/retrieve/mira_summary", response_model=Optional[List[Dict[str, Any]]], summary="Retrieve MIRA Summary", tags=["MIRA Results"])
@@ -1028,6 +1147,7 @@ async def get_mira_summary(req: RunRequest = Depends()):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
     
+    
 # ---------- Retrieve Coverage Table----------
 @app.get("/retrieve/coverage_table", response_model=Optional[List[Dict[str, Any]]], summary="Retrieve Coverage Table", tags=["MIRA Results"])
 async def get_coverage(req: RunRequest = Depends()):
@@ -1046,6 +1166,7 @@ async def get_coverage(req: RunRequest = Depends()):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))   
     
+    
 # ---------- Retrieve Coverage Heatmap ----------
 @app.get("/retrieve/coverage_heatmap", response_model=Optional[Dict[str, Any]], summary="Retrieve Coverage Heatmap", tags=["MIRA Results"])
 async def get_coverage_heatmap(req: RunRequest = Depends()):
@@ -1063,6 +1184,7 @@ async def get_coverage_heatmap(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))  
+    
      
 # ---------- Retrieve Sample Coverage List ----------
 @app.get("/retrieve/sample_coverage_list", response_model=Optional[Dict[str, Any]], summary="Retrieve Sample Coverage List", tags=["MIRA Results"])
@@ -1081,6 +1203,7 @@ async def get_sample_coverage_list(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Retrieve Sample Coverage Sankey Figure ----------
 @app.get("/retrieve/sample_coverage_sankeyfig", response_model=Optional[Dict[str, Any]], summary="Retrieve Sample Coverage Sankey Figure", tags=["MIRA Results"])
@@ -1103,6 +1226,7 @@ async def get_sample_coverage_sankeyfig(
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Retrieve Sample Coverage Plot ----------
 @app.get("/retrieve/sample_coverage_plot", response_model=Optional[Dict[str, Any]], summary="Retrieve Sample Segment Coverage Plot", tags=["MIRA Results"])
@@ -1123,6 +1247,7 @@ async def get_sample_coverage_plot(
         return result
     except ValueError as err:
         raise HTTPException(status_code=404, detail=str(err))
+    
 
 # ---------- Retrieve Sample Combined (linear) Coverage Plot ----------
 @app.get("/retrieve/sample_coverage_linearfig", response_model=Optional[Dict[str, Any]], summary="Retrieve Sample Combined Coverage Plot", tags=["MIRA Results"])
@@ -1146,6 +1271,7 @@ async def get_sample_coverage_linearfig(
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
     
+    
 # ---------- Retrieve variants ----------
 @app.get("/retrieve/variants", response_model=Optional[List[Dict[str, Any]]], summary="Retrieve Variants", tags=["MIRA Results"])
 async def get_variants(req: RunRequest = Depends()):
@@ -1163,6 +1289,7 @@ async def get_variants(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
     
 # ---------- Retrieve minor snvs ----------
 @app.get("/retrieve/minor_snvs", response_model=Optional[List[Dict[str, Any]]], summary="Retrieve Minor SNVs", tags=["MIRA Results"])
@@ -1182,6 +1309,7 @@ async def get_minor_snvs(req: RunRequest = Depends()):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
     
+    
 # ---------- Retrieve indels ----------
 @app.get("/retrieve/indels", response_model=Optional[List[Dict[str, Any]]], summary="Retrieve Indels", tags=["MIRA Results"])
 async def get_indels(req: RunRequest = Depends()):
@@ -1199,6 +1327,7 @@ async def get_indels(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Retrieve Failed Amended Consensus ----------
 @app.get("/retrieve/failed_amended_consensus", response_model=Optional[Dict[str, Any]], summary="Retrieve Failed Amended Consensus", tags=["MIRA Results"])
@@ -1217,6 +1346,7 @@ async def get_failed_amended_consensus(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Retrieve Passed Amended Consensus ----------
 @app.get("/retrieve/passed_amended_consensus", response_model=Optional[Dict[str, Any]], summary="Retrieve Passed Amended Consensus", tags=["MIRA Results"])
@@ -1235,6 +1365,7 @@ async def get_passed_amended_consensus(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Retrieve AA Failed Fasta Location ----------
 @app.get("/retrieve/failed_amino_acid_consensus", response_model=Optional[Dict[str, Any]], summary="Retrieve Failed Amino Acid Consensus", tags=["MIRA Results"])
@@ -1253,6 +1384,7 @@ async def get_failed_amino_acid_consensus(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 # ---------- Retrieve AA Passed Fasta Location ----------
 @app.get("/retrieve/passed_amino_acid_consensus", response_model=Optional[Dict[str, Any]], summary="Retrieve Passed Amino Acid Consensus", tags=["MIRA Results"])
@@ -1270,7 +1402,8 @@ async def get_passed_amino_acid_consensus(req: RunRequest = Depends()):
     except ValueError as err:
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))        
+        raise HTTPException(status_code=500, detail=str(err))      
+      
 
 # ---------- Retrieve Nextclade Fasta Location ----------
 @app.get("/retrieve/nextclade_aligned_fasta", response_model=Optional[Dict[str, Any]], summary="Retrieve Nextclade Aligned Fasta", tags=["MIRA Results"])
@@ -1289,6 +1422,7 @@ async def get_nextclade_aligned_fasta(req: RunRequest = Depends()):
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
+    
 
 ##############################################
 # 
@@ -1296,80 +1430,113 @@ async def get_nextclade_aligned_fasta(req: RunRequest = Depends()):
 # 
 ##############################################        
 
+
 # ---------- Download NT Passed FASTA ----------
 @app.get("/download/nt_passed_fasta", summary="Download NT Passed FASTA", tags=["MIRA Downloads"])
 async def download_nt_passed_fasta(req: RunRequest = Depends()):
-    path = await asyncio.to_thread(retrieve_passed_amended_consensus, req.run_name, req.experiment_type)
-    if not path or not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="NT passed FASTA not found")
-    return FileResponse(path=path, filename=f"{req.run_name}_nt_passed.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    try:
+        path = await asyncio.to_thread(retrieve_passed_amended_consensus, req.run_name, req.experiment_type)
+        if not path or not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="NT passed FASTA not found")
+        return FileResponse(path=path, filename=f"{req.run_name}_nt_passed.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
 
 # ---------- Download NT Failed FASTA ----------
 @app.get("/download/nt_failed_fasta", summary="Download NT Failed FASTA", tags=["MIRA Downloads"])
 async def download_nt_failed_fasta(req: RunRequest = Depends()):
-    path = await asyncio.to_thread(retrieve_failed_amended_consensus, req.run_name, req.experiment_type)
-    if not path or not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="NT failed FASTA not found")
-    return FileResponse(path=path, filename=f"{req.run_name}_nt_failed.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    try:
+        path = await asyncio.to_thread(retrieve_failed_amended_consensus, req.run_name, req.experiment_type)
+        if not path or not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="NT failed FASTA not found")
+        return FileResponse(path=path, filename=f"{req.run_name}_nt_failed.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
+    
 # ---------- Download AA Passed FASTA ----------
 @app.get("/download/aa_passed_fasta", summary="Download AA Passed FASTA", tags=["MIRA Downloads"])
 async def download_aa_passed_fasta(req: RunRequest = Depends()):
-    path = await asyncio.to_thread(retrieve_passed_amino_acid_consensus, req.run_name, req.experiment_type)
-    if not path or not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="AA passed FASTA not found")
-    return FileResponse(path=path, filename=f"{req.run_name}_aa_passed.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    try:
+        path = await asyncio.to_thread(retrieve_passed_amino_acid_consensus, req.run_name, req.experiment_type)
+        if not path or not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="AA passed FASTA not found")
+        return FileResponse(path=path, filename=f"{req.run_name}_aa_passed.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ---------- Download AA Failed FASTA ----------
 @app.get("/download/aa_failed_fasta", summary="Download AA Failed FASTA", tags=["MIRA Downloads"])
 async def download_aa_failed_fasta(req: RunRequest = Depends()):
-    path = await asyncio.to_thread(retrieve_failed_amino_acid_consensus, req.run_name, req.experiment_type)
-    if not path or not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="AA failed FASTA not found")
-    return FileResponse(path=path, filename=f"{req.run_name}_aa_failed.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    try:
+        path = await asyncio.to_thread(retrieve_failed_amino_acid_consensus, req.run_name, req.experiment_type)
+        if not path or not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="AA failed FASTA not found")
+        return FileResponse(path=path, filename=f"{req.run_name}_aa_failed.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ---------- Download Custom Primer Config ----------
 @app.get("/download/custom_primer_config", summary="Download Custom Primer Config", tags=["MIRA Downloads"])
 async def download_custom_primer_config(req: RunRequest = Depends()):
-    pathogen = req.experiment_type.split("-")[0]
-    instrument = req.experiment_type.split("-")[-1]
-    path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, req.run_name, CUSTOM_PRIMER_CONFIG_FILENAME)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="Custom primer config file not found in storage. File may have been moved or deleted. Please re-upload a new custom primer config file if needed or turn off custom primer config.")
-    return FileResponse(path=path, filename=CUSTOM_PRIMER_CONFIG_FILENAME, media_type="application/octet-stream", content_disposition_type="attachment")
+    try:
+        pathogen = req.experiment_type.split("-")[0]
+        instrument = req.experiment_type.split("-")[-1]
+        path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, req.run_name, CUSTOM_PRIMER_CONFIG_FILENAME)
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="Custom primer config file not found in storage. File may have been moved or deleted. Please re-upload a new custom primer config file if needed or turn off custom primer config.")
+        return FileResponse(path=path, filename=CUSTOM_PRIMER_CONFIG_FILENAME, media_type="application/octet-stream", content_disposition_type="attachment")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ---------- Download Custom IRMA Config ----------
 @app.get("/download/custom_irma_config", summary="Download Custom IRMA Config", tags=["MIRA Downloads"])
 async def download_custom_irma_config(req: RunRequest = Depends()):
-    pathogen = req.experiment_type.split("-")[0]
-    instrument = req.experiment_type.split("-")[-1]
-    path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, req.run_name, CUSTOM_IRMA_CONFIG_FILENAME)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="Custom IRMA config file not found in storage. File may have been moved or deleted. Please re-upload a new custom IRMA config file if needed or turn off custom IRMA config.")
-    return FileResponse(path=path, filename=CUSTOM_IRMA_CONFIG_FILENAME, media_type="application/octet-stream", content_disposition_type="attachment")
+    try:
+        pathogen = req.experiment_type.split("-")[0]
+        instrument = req.experiment_type.split("-")[-1]
+        path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, req.run_name, CUSTOM_IRMA_CONFIG_FILENAME)
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="Custom IRMA config file not found in storage. File may have been moved or deleted. Please re-upload a new custom IRMA config file if needed or turn off custom IRMA config.")
+        return FileResponse(path=path, filename=CUSTOM_IRMA_CONFIG_FILENAME, media_type="application/octet-stream", content_disposition_type="attachment")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ---------- Download Custom QC Settings ----------
 @app.get("/download/custom_qc_settings", summary="Download Custom QC Settings", tags=["MIRA Downloads"])
 async def download_custom_qc_settings(req: RunRequest = Depends()):
-    pathogen = req.experiment_type.split("-")[0]
-    instrument = req.experiment_type.split("-")[-1]
-    path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, req.run_name, CUSTOM_QC_SETTINGS_FILENAME)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="Custom QC settings file not found in storage. File may have been moved or deleted. Please re-upload a new custom QC settings file if needed or turn off custom QC settings.")
-    return FileResponse(path=path, filename=CUSTOM_QC_SETTINGS_FILENAME, media_type="application/octet-stream", content_disposition_type="attachment")
+    try:
+        pathogen = req.experiment_type.split("-")[0]
+        instrument = req.experiment_type.split("-")[-1]
+        path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, req.run_name, CUSTOM_QC_SETTINGS_FILENAME)
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="Custom QC settings file not found in storage. File may have been moved or deleted. Please re-upload a new custom QC settings file if needed or turn off custom QC settings.")
+        return FileResponse(path=path, filename=CUSTOM_QC_SETTINGS_FILENAME, media_type="application/octet-stream", content_disposition_type="attachment")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ---------- Download Nextclade FASTA (single file by key) ----------
 @app.get("/download/nextclade_fasta", summary="Download Nextclade FASTA", tags=["MIRA Downloads"])
 async def download_nextclade_fasta(req: DownloadFastaRequest = Depends()):
-    files = await asyncio.to_thread(retrieve_nextclade_aligned_fasta, req.run_name, req.experiment_type)
-    if not files:
-        raise HTTPException(status_code=404, detail=f"No Nextclade FASTA files found for run '{req.run_name}' and experiment type '{req.experiment_type}' and key '{req.key}'.")
-    all_keys = list(files.keys())
-    path = files.get(req.key) if req.key else None
-    if not path or not os.path.exists(path):
-        raise HTTPException(status_code=404, detail=f"Invalid fasta keys. Available keys: {all_keys}")
-    safe_key = req.key if req.key else all_keys[0]
-    return FileResponse(path=path, filename=f"{req.run_name}_nextclade_{safe_key}.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    try:
+        files = await asyncio.to_thread(retrieve_nextclade_aligned_fasta, req.run_name, req.experiment_type)
+        if not files:
+            raise HTTPException(status_code=404, detail=f"No Nextclade FASTA files found for run '{req.run_name}' and experiment type '{req.experiment_type}' and key '{req.key}'.")
+        all_keys = list(files.keys())
+        path = files.get(req.key) if req.key else None
+        if not path or not os.path.exists(path):
+            raise HTTPException(status_code=404, detail=f"Invalid fasta keys. Available keys: {all_keys}")
+        safe_key = req.key if req.key else all_keys[0]
+        return FileResponse(path=path, filename=f"{req.run_name}_nextclade_{safe_key}.fasta", media_type="application/octet-stream", content_disposition_type="attachment")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ---------- Export MIRA Reports ----------
 @app.get("/download/mira_reports", summary="Export MIRA Reports", tags=["MIRA Downloads"])
@@ -1407,11 +1574,13 @@ async def download_mira_reports(req: RunRequest = Depends()):
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err))
 
+
 ##############################################
 # 
 # MIRA DELETE SECTION
 # 
 ##############################################
+
 
 # ---------- Delete a single sample from a run's samplesheet ----------
 @app.delete("/delete/sample", response_model=Dict[str, Any], summary="Remove a sample from a run's samplesheet", tags=["MIRA Delete"])
@@ -1460,3 +1629,1202 @@ async def delete_run(req: RunRequest):
 # 
 ##############################################
 
+# ---------- List all submissions ----------
+@app.get("/seqsender/version", response_model=Dict[str, str], summary="Get SeqSender version", tags=["SeqSender Utils"])
+async def get_seqsender_version():
+    try:
+        version = _get_seqsender_version()
+        return {"version": version}
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+    
+
+# Get NCBI CA certificate status
+@app.get("/settings/ncbi-ca-certificate", response_model=Dict[str, Any], summary="Get NCBI CA certificate status", tags=["Settings"])
+async def get_ncbi_ca_certificate():
+    try:
+        return await asyncio.to_thread(get_ncbi_ca_bundle_status)
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+    
+
+# Install NCBI CA certificates
+@app.post("/settings/ncbi-ca-certificate", response_model=Dict[str, Any], summary="Install NCBI CA certificates", tags=["Settings"])
+async def upload_ncbi_ca_certificate(
+    certificate_files: List[UploadFile] = File(..., description="One or more PEM or DER encoded CA certificate files."),
+):
+    try:
+        certificates = [
+            (certificate_file.filename or "certificate.pem", await certificate_file.read())
+            for certificate_file in certificate_files
+        ]
+        result = await asyncio.to_thread(save_ncbi_ca_bundle, certificates)
+        return {
+            **result,
+            "message": f"Installed {result['certificate_count']} CA certificate(s) for NCBI submissions.",
+        }
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+@app.delete("/settings/ncbi-ca-certificate", response_model=Dict[str, Any], summary="Remove NCBI CA certificates", tags=["Settings"])
+async def remove_ncbi_ca_certificate():
+    try:
+        result = await asyncio.to_thread(delete_ncbi_ca_bundle)
+        return {**result, "message": "Custom NCBI CA certificates were removed."}
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+# Upload config file to SeqSender storage location
+@app.post("/upload/seqsender/config", response_model=Dict[str, Any], summary="Upload a config file to SeqSender storage location", tags=["SeqSender Workflows"])
+async def upload_seqsender_config(
+    submission_name: str = Form("", description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Form(..., description="Type of organisms to submit."),
+    config_file: UploadFile = File(..., description="Config file to upload.")
+):
+    """
+    Upload a config file to the SeqSender storage location for a given submission.
+    """
+    try:
+        # Make sure the uploaded file is a valid config file (e.g., check extension or content)
+        if not config_file.filename.endswith(".yaml") and not config_file.filename.endswith(".yml"):
+            raise ValueError(f"Config file '{config_file.filename}' must be a .yaml or .yml file.")
+        # Define the storage directory based on submission name and organism
+        submission_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism))
+        submission_name_dir = os.path.realpath(os.path.join(submission_dir, submission_name))
+        os.makedirs(submission_name_dir, exist_ok=True)
+        # Standardize the filename 
+        filename = CONFIG_FILENAME
+        dest_file_path = os.path.join(submission_name_dir, filename)
+        # Copy config file to the destination file path
+        config_file.file.seek(0)
+        with open(dest_file_path, "wb") as buf:
+            shutil.copyfileobj(config_file.file, buf)
+        # Return success message with file path and name
+        return {
+            "status": "success",
+            "message": f"Config file '{config_file.filename}' has been uploaded successfully.",
+            "file_path": dest_file_path,
+            "file_name": filename
+        }
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+    
+
+# Upload metadata file to SeqSender storage location
+@app.post("/upload/seqsender/metadata", response_model=Dict[str, Any], summary="Upload a metadata file to SeqSender storage location", tags=["SeqSender Workflows"])
+async def upload_seqsender_metadata(
+    submission_name: str = Form("", description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Form(..., description="Type of organisms to submit."),
+    metadata_file: UploadFile = File(..., description="Metadata file to upload.")
+):
+    """
+    Upload a metadata file to the SeqSender storage location for a given submission.
+    """
+    try:
+        # Make sure the uploaded file is a valid metadata file (e.g., check extension or content)
+        if not metadata_file.filename.endswith(".csv") and not metadata_file.filename.endswith(".csv"):
+            raise ValueError(f"Metadata file '{metadata_file.filename}' must be a .csv file.")
+        # Define the storage directory based on submission name and organism
+        submission_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism))
+        submission_name_dir = os.path.realpath(os.path.join(submission_dir, submission_name))
+        os.makedirs(submission_name_dir, exist_ok=True)
+        # Standardize the filename
+        filename = METADATA_FILENAME
+        dest_file_path = os.path.join(submission_name_dir, filename)
+        metadata_file.file.seek(0)
+        with open(dest_file_path, "wb") as buf:
+            shutil.copyfileobj(metadata_file.file, buf)
+        # Return success message with file path and name
+        return {
+            "status": "success",
+            "message": f"Metadata file '{metadata_file.filename}' has been uploaded successfully.",
+            "file_path": dest_file_path,
+            "file_name": filename
+        }
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))    
+    
+
+# Upload fasta file to SeqSender storage location
+@app.post("/upload/seqsender/fasta", response_model=Dict[str, Any], summary="Upload a fasta file to SeqSender storage location", tags=["SeqSender Workflows"])
+async def upload_seqsender_fasta(
+    submission_name: str = Form("", description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Form(..., description="Type of organisms to submit."),
+    fasta_file: UploadFile = File(..., description="Fasta file to upload.")
+):
+    """
+    Upload a fasta file to the SeqSender storage location for a given submission.
+    """
+    try:
+        # Make sure the uploaded file is a valid fasta file (e.g., check extension or content)
+        if not (fasta_file.filename or "").lower().endswith((".fasta", ".fa", ".fas")):
+            raise ValueError(f"Fasta file '{fasta_file.filename}' must be a .fasta, .fa, or .fas file.")
+        # Define the storage directory based on submission name and organism
+        submission_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism))
+        submission_name_dir = os.path.realpath(os.path.join(submission_dir, submission_name))
+        os.makedirs(submission_name_dir, exist_ok=True)
+        # Standardize the filename
+        filename = FASTA_FILENAME
+        dest_file_path = os.path.join(submission_name_dir, filename)
+        fasta_file.file.seek(0)
+        with open(dest_file_path, "wb") as buf:
+            shutil.copyfileobj(fasta_file.file, buf)
+        # Return success message with file path and name
+        return {
+            "status": "success",
+            "message": f"Fasta file '{fasta_file.filename}' has been uploaded successfully.",
+            "file_path": dest_file_path,
+            "file_name": filename
+        }
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) 
+    
+
+# Upload GISAID CLI file to SeqSender storage location
+@app.post("/upload/seqsender/gisaid_cli", response_model=Dict[str, Any], summary="Upload a GISAID CLI file to SeqSender storage location", tags=["SeqSender Workflows"])
+async def upload_seqsender_gisaid_cli(
+    organism: Literal[tuple(organisms)] = Form(..., description="Type of organisms to submit."),
+    gisaid_cli_file: UploadFile = File(..., description="Gisaid CLI file to upload.")
+):
+    """
+    Upload a GISAID CLI file to the SeqSender storage location for a given submission.
+    """
+    try:
+        # Define the storage directory based on submission name and organism
+        submission_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism))
+        submission_gisaid_cli_dir = os.path.realpath(os.path.join(submission_dir, "gisaid_cli"))
+        os.makedirs(submission_gisaid_cli_dir, exist_ok=True)
+        # Standardize the filename
+        filename = organism.lower()+"CLI"
+        dest_file_path = os.path.join(submission_gisaid_cli_dir, filename)
+        # Copy GISAID CLI file to the destination file path
+        gisaid_cli_file.file.seek(0)
+        with open(dest_file_path, "wb") as buf:
+            shutil.copyfileobj(gisaid_cli_file.file, buf)
+        # Return success message with file path and name
+        return {
+            "status": "success",
+            "message": f"GISAID CLI file '{gisaid_cli_file.filename}' has been uploaded successfully.",
+            "file_path": dest_file_path,
+            "file_name": filename
+        }
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) 
+    
+
+# Upload raw reads files to SeqSender storage location
+@app.post("/upload/seqsender/raw_reads", response_model=Dict[str, Any], summary="Upload raw reads files to SeqSender storage location", tags=["SeqSender Workflows"])
+async def upload_seqsender_raw_reads(
+    submission_name: str = Form("", description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Form(..., description="Type of organisms to submit."),
+    raw_read_files: List[UploadFile] = File(default=[], description="One or more .fastq/.fastq.gz/.fq/.fq.gz files to upload."),
+):
+    """
+    Upload raw reads files to the SeqSender storage location for a given submission.
+    """
+    try:
+        # Define the storage directory based on submission name and organism
+        submission_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism))
+        submission_name_dir = os.path.realpath(os.path.join(submission_dir, submission_name))
+        submission_raw_reads_dir = os.path.realpath(os.path.join(submission_name_dir, "raw_reads"))
+        os.makedirs(submission_raw_reads_dir, exist_ok=True)
+        # Copy raw reads file to the destination file path
+        uploaded_files = []
+        for raw_read_file in raw_read_files:
+            raw_read_file.file.seek(0)
+            filename = raw_read_file.filename
+            dest_file_path = os.path.join(submission_raw_reads_dir, filename)
+            with open(dest_file_path, "wb") as buf:
+                shutil.copyfileobj(raw_read_file.file, buf)
+            uploaded_files.append({"file_path": dest_file_path, "file_name": filename})
+        # Return success message with file paths and names
+        return {
+            "status": "success",
+            "message": f"Raw reads files have been uploaded successfully.",
+            "files": uploaded_files
+        }
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))     
+    
+
+# Upload GFF file to SeqSender storage location
+@app.post("/upload/seqsender/gff", response_model=Dict[str, Any], summary="Upload a GFF file to SeqSender storage location", tags=["SeqSender Workflows"])
+async def upload_seqsender_gff(
+    submission_name: str = Form("", description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Form(..., description="Type of organisms to submit."),
+    gff_file: UploadFile = File(..., description="GFF file to upload.")
+):
+    """
+    Upload a GFF file to the SeqSender storage location for a given submission.
+    """
+    try:
+        # Make sure the uploaded file is a valid GFF file (e.g., check extension or content)
+        if not gff_file.filename.endswith(".gff") and not gff_file.filename.endswith(".gff3"):
+            raise ValueError(f"GFF file '{gff_file.filename}' must have a .gff or .gff3 extension.")
+        # Define the storage directory
+        submission_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism))
+        submission_name_dir = os.path.realpath(os.path.join(submission_dir, submission_name))
+        os.makedirs(submission_name_dir, exist_ok=True)
+        # Standardize the filename
+        filename = GFF_FILENAME
+        dest_file_path = os.path.join(submission_name_dir, filename)
+        # Copy GFF file to the destination file path
+        gff_file.file.seek(0)
+        with open(dest_file_path, "wb") as buf:
+            shutil.copyfileobj(gff_file.file, buf)
+        # Return success message with file path and name
+        return {
+            "status": "success",
+            "message": f"GFF file '{gff_file.filename}' has been uploaded successfully.",
+            "file_path": dest_file_path,
+            "file_name": filename
+        }
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) 
+    
+
+# ---------- Create SeqSender submission ----------
+@app.post("/create/submission", response_model=Dict[str, Any], summary="Create a SeqSender submission", tags=["SeqSender Workflows"])
+async def create_submission(req: CreateSubmissionRequest):
+    """
+    Create a SeqSender submission for a given submission name, organism, database, and submission type. 
+    The submission will be created using the provided config file, metadata file, fasta file, and optionally GISAID CLI and GFF files. 
+    The function will return a list of messages indicating the success or failure of each step in the submission process.
+    """
+    try:
+        # Get NCBI Submitter Info if provided, else set to None
+        if req.ncbi_submitter_info is not None:
+            ncbi_submitter_info = pl.DataFrame([req.ncbi_submitter_info.model_dump()])
+        else:
+            ncbi_submitter_info = None
+        # Get GISAID Submitter Info if provided, else set to None
+        if req.gisaid_submitter_info is not None:
+            gisaid_submitter_info = pl.DataFrame([req.gisaid_submitter_info.model_dump()])
+        else:
+            gisaid_submitter_info = None
+        # Create the submission in a separate thread to avoid blocking the event loop
+        result = await asyncio.to_thread(
+            create_seqsender_submission,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type,
+            ncbi_submitter_info = ncbi_submitter_info,
+            gisaid_submitter_info = gisaid_submitter_info,
+            gff_file = req.gff_file,
+            table2asn= req.table2asn,
+            ncbi_publication_title = req.ncbi_publication_title,
+            ncbi_publication_status = req.ncbi_publication_status,
+            ncbi_release_date = req.ncbi_release_date,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))       
+      
+
+@app.get("/validate/seqsender/files", response_model=Dict[str, Any], summary="Validate files for an existing SeqSender submission", tags=["SeqSender Workflows"])
+async def validate_submission_files(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Type of organisms to submit."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+    gff_file: bool = Query(False, description="Whether a stored GFF file is required."),
+):
+    try:
+        return await asyncio.to_thread(
+            validate_seqsender_uploaded_files,
+            submission_name=submission_name,
+            organism=organism,
+            database=database,
+            submission_type=submission_type,
+            require_gff=gff_file,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+   
+
+# Submit a submission to NCBI or GISAID using SeqSender
+@app.post("/submit/submission", response_model=Dict[str, Any], summary="Submit a SeqSender submission to NCBI or GISAID", tags=["SeqSender Workflows"])
+async def submit_submission(req: SubmissionRequest):
+    """
+    Submit a SeqSender submission to NCBI or GISAID for a given submission name, organism, database, and submission type. 
+    The function will return a dictionary containing the details of the submission process.
+    """
+    try:
+        result = await asyncio.to_thread(
+            submit_ncbi_submission,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+# Create the per-database submission files for a stored submission without submitting to any portal
+@app.post("/create/submission/files", response_model=Dict[str, Any], summary="Create SeqSender submission files without submitting", tags=["SeqSender Workflows"])
+async def create_submission_files(req: SubmissionRequest):
+    """
+    Generate the per-database submission files (BioSample/SRA/GenBank/GISAID) for a stored
+    submission using SeqSender's "prep" command, without launching an actual submission to
+    any portal. Returns a dictionary containing the status, message, and created file locations.
+    """
+    try:
+        result = await asyncio.to_thread(
+            prep_seqsender_submission,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+ 
+@app.get("/check/submission/process", response_model=Dict[str, Any], summary="Check a running SeqSender submission", tags=["SeqSender Workflows"])
+async def get_seqsender_process_status(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which sequences are being sent."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more submission databases."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+    pid: int = Query(..., gt=0, description="Process ID returned when the submission was launched."),
+):
+    try:
+        return await asyncio.to_thread(
+            retrieve_seqsender_process_status,
+            submission_name=submission_name,
+            organism=organism,
+            database=database,
+            submission_type=submission_type,
+            pid=pid,
+        )
+    except (ValueError, FileNotFoundError) as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+# Check status of a SeqSender submission
+@app.get("/check/submission/status", response_model=Dict[str, Any], summary="Check submission status for a given organism and database", tags=["SeqSender Workflows"])
+async def monitor_submission_status(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    try:
+        status = await asyncio.to_thread(
+            check_seqsender_submission,
+            submission_name=submission_name,
+            organism=organism,
+            database=database,
+            submission_type=submission_type
+        )
+        return status
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Manage the hourly submission status schedule
+@app.get("/cron/status", response_model=Dict[str, Any], summary="Get the hourly submission status schedule", tags=["SeqSender Workflows"])
+async def get_status_update_cron():
+    try:
+        return await asyncio.to_thread(get_status_update_schedule)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/cron/update/status", response_model=Dict[str, Any], summary="Create or update the hourly submission status schedule", tags=["SeqSender Workflows"])
+async def create_status_update_cron(req: StatusUpdateCronRequest):
+    try:
+        schedule = await asyncio.to_thread(save_status_update_schedule, req.interval_hours)
+        start_status_update_scheduler()
+        wake_status_update_scheduler()
+        return {
+            "message": "Hourly submission status updates scheduled.",
+            "schedule": schedule,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Delete the hourly submission status schedule
+@app.delete("/cron/delete/status", response_model=Dict[str, Any], summary="Remove the hourly submission status schedule", tags=["SeqSender Workflows"])
+async def delete_status_update_cron():
+    try:
+        await asyncio.to_thread(delete_status_update_schedule)
+        wake_status_update_scheduler()
+        return {"message": "Hourly submission status updates disabled."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Check status of a SeqSender submission
+@app.get("/load/submission/status", response_model=Dict[str, Any], summary="Load submission status for a given organism and database", tags=["SeqSender Workflows"])
+async def retrieve_submission_status(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    try:
+        status = await asyncio.to_thread(
+            load_submission_status,
+            submission_name=submission_name,
+            organism=organism,
+            database=database,
+            submission_type=submission_type
+        )
+        return status
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    
+# ---------- List all submissions ----------
+@app.get("/list/submitters", response_model=ListSubmitterResponse, summary="List all submitters", tags=["Submitter Utils"])
+async def get_submitters(
+    submission_portal: Optional[Literal[tuple(submission_portals)]] = Query(None, description="Submission portal (NCBI or GISAID).")
+):
+    """
+    Return a list of submitters in the database, optionally filtered by submission_portal
+    ("NCBI" or "GISAID"), including saved passwords so users can verify or update them.
+    """
+    try:
+        db_submitter_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["submitter"],
+            return_var  = ["*"],
+            filter_coln_var = ["submission_portal"] if submission_portal else None,
+            filter_coln_val = {"submission_portal": [submission_portal]} if submission_portal else None,
+            filter_var_by = ["AND"] if submission_portal else None
+        )
+        if db_submitter_tbl.shape[0] == 0:
+            return {"SubmitterInfo": []}
+        else:
+            return {"SubmitterInfo": db_submitter_tbl.to_dicts()}
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+@app.get("/retrieve/submitter", response_model=ListSubmitterResponse, summary="Retrieve information about a given submitter", tags=["Submitter Utils"])
+async def get_submitter_info(
+    submitter_name: str = Query(..., description="Name of the submitter."),
+    submission_portal: Literal[tuple(submission_portals)] = Query(..., description="Submission portal (NCBI or GISAID).")
+):
+    """
+    Return a submitter matching the given name and submission portal, including the saved
+    password so the user can verify or update it.
+    """
+    try:
+        db_submitter_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["submitter"],
+            return_var  = ["*"],
+            filter_coln_var = ["submitter_name", "submission_portal"],
+            filter_coln_val = {"submitter_name": [submitter_name], "submission_portal": [submission_portal]},
+            filter_var_by = ["AND", "AND"],
+        )
+        if db_submitter_tbl.shape[0] == 0:
+            return {"SubmitterInfo": []}
+        else:
+            return {"SubmitterInfo": db_submitter_tbl.to_dicts()}
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))    
+
+
+# Save (create or update) a submitter's credentials without creating a submission
+@app.post("/save/submitter", response_model=Dict[str, Any], summary="Save a submitter's credentials for future use", tags=["Submitter Utils"])
+async def save_submitter_endpoint(req: SubmitterInfo):
+    """
+    Save (insert or update) a submitter's credentials for a given portal (NCBI or GISAID) so
+    they can be reused on future submissions without needing to submit a full submission.
+    """
+    try:
+        submitter_tbl = pl.DataFrame([req.model_dump()])
+        result = await asyncio.to_thread(save_submitter, submitter_tbl)
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+# ---------- Delete a saved submitter ----------
+@app.delete("/delete/submitter", response_model=Dict[str, Any], summary="Delete a saved submitter's credentials", tags=["Submitter Utils"])
+async def delete_submitter_endpoint(req: DeleteSubmitterRequest):
+    """
+    Remove a saved submitter's credentials (identified by name + submission portal) from the database.
+    """
+    try:
+        result = await asyncio.to_thread(
+            delete_submitter,
+            submitter_name = req.submitter_name,
+            submission_portal = req.submission_portal,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+@app.get("/list/submissions", response_model=ListSubmissionResponse, summary="List all submissions", tags=["Submission Utils"])
+async def get_submissions():
+    """
+    Return a list of submissions in database.
+    """
+    # Query for all assembly runs
+    try:
+        db_submission_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["submission"],
+            return_var = ["*"],
+            filter_coln_var = ["database_status"],
+            filter_coln_val = {"database_status": ["ACTIVE"]},
+        )
+        # If no submissions found, return an empty list
+        if db_submission_tbl.shape[0] == 0:
+            return {"submission_info": []}
+        else:
+            return {"submission_info": db_submission_tbl.to_dicts()}
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))    
+
+    
+# ---------- Retrieve SeqSender submission details ----------    
+@app.get("/retrieve/submission", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender submission details", tags=["Submission Utils"])
+async def get_submission_info(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Type of organisms to submit."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission.")
+):
+    """
+    Retrieve SeqSender submission details for a given submission name, organism, database, and submission type. 
+    The function will return a list of dictionaries containing the details of the submission.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_submission,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))    
+
+
+# ---------- Copy an existing SeqSender submission ----------
+@app.post("/copy/submission", response_model=Dict[str, Any], summary="Copy a SeqSender submission to a new name", tags=["Submission Utils"])
+async def copy_submission(req: CopySubmissionRequest):
+    """
+    Duplicate an existing SeqSender submission — including its database rows and
+    on-disk submission folder (config, metadata, FASTA, raw reads, etc.) — under a new name.
+    """
+    try:
+        result = await asyncio.to_thread(
+            copy_seqsender_submission,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            new_submission_name = req.new_submission_name,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+# ---------- Update a SeqSender submission's comments ----------
+@app.patch("/update/submission/comments", response_model=Dict[str, Any], summary="Update the comments for a SeqSender submission's database row", tags=["Submission Utils"])
+async def update_submission_comments(req: UpdateSubmissionCommentsRequest):
+    """
+    Update the free-text comments field for a single database row of a stored submission.
+    """
+    try:
+        result = await asyncio.to_thread(
+            update_seqsender_submission_comments,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type,
+            comments = req.comments,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+# ---------- Update a SeqSender submission's status report messages ----------
+@app.patch("/update/submission/status_report/messages", response_model=Dict[str, Any], summary="Update the user-edited messages in a SeqSender submission's status report", tags=["Submission Utils"])
+async def update_submission_status_report_messages(req: UpdateSubmissionStatusReportMessagesRequest):
+    """
+    Persist edited Message values from the status report table back into the stored
+    submission_status_report.csv for one database, keyed by each row's sample_name.
+    """
+    try:
+        result = await asyncio.to_thread(
+            update_seqsender_submission_status_report_messages,
+            submission_name = req.submission_name,
+            organism = req.organism,
+            database = req.database,
+            submission_type = req.submission_type,
+            messages = req.messages,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+# ---------- Delete an existing SeqSender submission ----------
+@app.delete("/delete/submission", response_model=Dict[str, Any], summary="Delete a SeqSender submission from database and disk records", tags=["Submission Utils"])
+async def delete_submission(req: DeleteSubmissionRequest):
+    """
+    Remove a submission's database rows (every database target) and its on-disk
+    submission folder (config, metadata, FASTA, raw reads, etc.).
+    """
+    try:
+        result = await asyncio.to_thread(
+            delete_seqsender_submission,
+            submission_name = req.submission_name,
+            organism = req.organism,
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+@app.get("/retrieve/config", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender config file location", tags=["SeqSender Results"])
+async def get_config(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    """
+    Retrieve SeqSender config file location for a given submission name, organism, database, and submission type. 
+    The function will return a dictionary containing the details of the config file location.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_seqsender_config,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+    
+    
+@app.get("/retrieve/metadata", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender metadata file location", tags=["SeqSender Results"])
+async def get_metadata(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    """
+    Retrieve SeqSender metadata file location for a given submission name, organism, database, and submission type. 
+    The function will return a list of dictionaries containing the details of the metadata file location.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_seqsender_metadata,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+    
+    
+@app.get("/retrieve/fasta", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender FASTA file location", tags=["SeqSender Results"])
+async def get_fasta(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    """
+    Retrieve SeqSender FASTA file location for a given submission name, organism, database, and submission type. 
+    The function will return a dictionary containing the details of the FASTA file location.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_seqsender_fasta,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+@app.get("/retrieve/gff", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender GFF file location", tags=["SeqSender Results"])
+async def get_gff(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    """
+    Retrieve SeqSender GFF file location for a given submission name, organism, database, and submission type. 
+    The function will return a dictionary containing the details of the GFF file location.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_seqsender_gff,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+    
+
+@app.get("/retrieve/table2asn", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender table2asn file location", tags=["SeqSender Results"])
+async def get_table2asn(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    """
+    Retrieve SeqSender table2asn file location for a given submission name, organism, database, and submission type. 
+    The function will return a dictionary containing the details of the table2asn file location.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_seqsender_table2asn,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))  
+    
+      
+@app.get("/retrieve/gisaid_cli", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender GISAID CLI file location", tags=["SeqSender Results"])
+async def get_gisaid_cli(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    """
+    Retrieve SeqSender GISAID CLI file location for a given submission name, organism, database, and submission type. 
+    The function will return a dictionary containing the details of the GISAID CLI file location.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_seqsender_gisaid_cli,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))      
+    
+
+@app.get("/retrieve/submission_log", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender submission log location", tags=["SeqSender Results"])
+async def get_submission_log(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    """
+    Retrieve SeqSender submission log location for a given submission name, organism, database, and submission type. 
+    The function will return a dictionary containing the details of the submission log location.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_seqsender_submission_log,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+    
+
+@app.get("/retrieve/submission_status", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender submission status file location", tags=["SeqSender Results"])
+async def get_submission_status(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    """
+    Retrieve SeqSender submission status file location for a given submission name, organism, database, and submission type. 
+    The function will return a dictionary containing the details of the submission status file location.
+    """
+    try:
+        result = await asyncio.to_thread(
+            retrieve_seqsender_status_report,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        return result
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))    
+    
+
+# Download config template
+@app.get("/download/seqsender/config_template", response_model=Dict[str, Any], summary="Download config template for a given organism and database", tags=["SeqSender Downloads"])
+async def download_config_template():
+    """
+    Download config template for a given organism and database. 
+    The function will return a dictionary containing the details of the config template file location.
+    """
+    if not os.path.exists(CONFIG_TEMPLATE_PATH):
+        raise HTTPException(status_code=404, detail=f"Config template not found.")
+    return FileResponse(path=CONFIG_TEMPLATE_PATH, filename="config_template.yaml", media_type="application/octet-stream", content_disposition_type="attachment")
+
+
+# Download SeqSender test data
+@app.get("/download/seqsender/metadata_template", summary="Download SeqSender-generated test data for a given organism and database", tags=["SeqSender Downloads"])
+async def download_metadata_template(
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to generate the metadata template."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases the metadata template should cover."),
+):
+    """
+    Generate (via SeqSender's own `test_data` command) and download all test-data files
+    shaped for the selected organism and database targets as a ZIP archive.
+    """
+    try:
+        file_path = await asyncio.to_thread(
+            retrieve_seqsender_metadata_template,
+            organism = organism,
+            database = database,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+    return FileResponse(path=file_path, filename=f"{'-'.join(sorted(db.strip().upper() for db in database))}_test_data.zip", media_type="application/zip", content_disposition_type="attachment")
+
+
+# Download config file for a given organism and database
+@app.get("/download/seqsender/config", response_model=Dict[str, Any], summary="Download config file for a given organism and database", tags=["SeqSender Downloads"])
+async def download_config(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    """
+    Download config file for a given organism and database. 
+    The function will return a dictionary containing the details of the config file location.
+    """
+    file_path = await asyncio.to_thread(
+        retrieve_seqsender_config,
+        submission_name = submission_name,
+        organism = organism,
+        database = database,
+        submission_type = submission_type
+    )
+    if file_path is None or not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"Config file not found.")
+    return FileResponse(path=file_path, filename=f"{submission_name}_{CONFIG_FILENAME}", media_type="application/octet-stream", content_disposition_type="attachment") 
+
+
+# Download metadata file for a given organism and database
+@app.get("/download/seqsender/metadata", response_model=Dict[str, Any], summary="Download metadata file for a given organism and database", tags=["SeqSender Downloads"])
+async def download_metadata(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    """
+    Download metadata file for a given organism and database. 
+    The function will return a dictionary containing the details of the metadata file location.
+    """
+    try:
+        file_path = await asyncio.to_thread(
+            retrieve_seqsender_metadata,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        if file_path is None or not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"Metadata file not found.")
+        return FileResponse(path=file_path, filename=f"{submission_name}_{METADATA_FILENAME}", media_type="application/octet-stream", content_disposition_type="attachment") 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Download fasta file for a given organism and database
+@app.get("/download/seqsender/fasta", response_model=Dict[str, Any], summary="Download fasta file for a given organism and database", tags=["SeqSender Downloads"])
+async def download_fasta(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    """
+    Download fasta file for a given organism and database. 
+    The function will return a dictionary containing the details of the fasta file location.
+    """
+    try:
+        file_path = await asyncio.to_thread(
+            retrieve_seqsender_fasta,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        if file_path is None or not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"FASTA file not found.")
+        return FileResponse(path=file_path, filename=f"{submission_name}_{FASTA_FILENAME}", media_type="application/octet-stream", content_disposition_type="attachment") 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Download all raw read files for a given submission as a ZIP archive
+@app.get("/download/seqsender/raw_reads", summary="Download raw read files for a given submission", tags=["SeqSender Downloads"])
+async def download_raw_reads(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    try:
+        file_paths = await asyncio.to_thread(
+            retrieve_seqsender_raw_reads,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+
+        # Create a temporary ZIP file to store the raw read files
+        temp_file = tempfile.NamedTemporaryFile(prefix="seqsender_raw_reads_", suffix=".zip", delete=False)
+        temp_file.close()
+        try:
+            with zipfile.ZipFile(temp_file.name, "w", compression=zipfile.ZIP_STORED) as archive:
+                for file_path in file_paths:
+                    archive.write(file_path, arcname=os.path.basename(file_path))
+        except Exception:
+            os.unlink(temp_file.name)
+            raise
+
+        # Return the ZIP file as a response
+        return FileResponse(
+            path=temp_file.name,
+            filename=f"{submission_name}_raw_reads.zip",
+            media_type="application/zip",
+            content_disposition_type="attachment",
+            background=BackgroundTask(os.unlink, temp_file.name)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Download generated submission files for manual portal submission
+@app.get("/download/seqsender/submission_files", summary="Download generated files for a database submission", tags=["SeqSender Downloads"])
+async def download_submission_files(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which the files were generated."),
+    database: Literal[tuple(database_targets)] = Query(..., description="Database whose generated files should be downloaded."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    try:
+        db_submission_tbl = await asyncio.to_thread(
+            lookup_tbl_in_database,
+            db_tbl_name=["submission"],
+            return_var=["database"],
+            filter_coln_var=["submission_name", "organism", "database", "submission_type", "database_status"],
+            filter_coln_val={
+                "submission_name": [submission_name],
+                "organism": [organism],
+                "database": [database],
+                "submission_type": [submission_type],
+                "database_status": ["ACTIVE"],
+            },
+            filter_var_by=["AND", "AND", "AND", "AND", "AND"],
+        )
+        if db_submission_tbl.is_empty():
+            raise HTTPException(status_code=404, detail=f"Active {database} submission '{submission_name}' was not found.")
+
+        files_dir = os.path.realpath(os.path.join(
+            _DEFAULT_SEQSENDER_STORAGE_PATH,
+            organism,
+            submission_name,
+            "submission_files",
+            database,
+        ))
+        metadata_file = os.path.join(files_dir, METADATA_FILENAME)
+        generated_fasta_candidates = [
+            os.path.join(files_dir, FASTA_FILENAME),
+            os.path.join(files_dir, "sequence.fsa"),
+        ]
+        generated_fasta = next(
+            (file_path for file_path in generated_fasta_candidates if os.path.isfile(file_path)),
+            None,
+        )
+        missing_files = []
+        if not os.path.isfile(metadata_file):
+            missing_files.append(METADATA_FILENAME)
+        if generated_fasta is None:
+            missing_files.append(FASTA_FILENAME)
+        if missing_files:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Generated {database} submission file(s) not found: {', '.join(missing_files)}. Create the submission files first.",
+            )
+
+        temp_file = tempfile.NamedTemporaryFile(prefix="seqsender_submission_files_", suffix=".zip", delete=False)
+        temp_file.close()
+        try:
+            with zipfile.ZipFile(temp_file.name, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.write(metadata_file, arcname=METADATA_FILENAME)
+                archive.write(generated_fasta, arcname=FASTA_FILENAME)
+        except Exception:
+            os.unlink(temp_file.name)
+            raise
+
+        return FileResponse(
+            path=temp_file.name,
+            filename=f"{submission_name}_{database.lower()}_submission_files.zip",
+            media_type="application/zip",
+            content_disposition_type="attachment",
+            background=BackgroundTask(os.unlink, temp_file.name),
+        )
+    except HTTPException:
+        raise
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+# Download gff file for a given organism and database
+@app.get("/download/seqsender/gff", response_model=Dict[str, Any], summary="Download gff file for a given organism and database", tags=["SeqSender Downloads"])
+async def download_gff(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    """
+    Download gff file for a given organism and database. 
+    The function will return a dictionary containing the details of the gff file location.
+    """
+    try:
+        file_path = await asyncio.to_thread(
+            retrieve_seqsender_gff,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        if file_path is None or not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"GFF file not found.")
+        return FileResponse(path=file_path, filename=f"{submission_name}_{GFF_FILENAME}", media_type="application/octet-stream", content_disposition_type="attachment") 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Download table2asn file for a given organism and database
+@app.get("/download/seqsender/table2asn", response_model=Dict[str, Any], summary="Download table2asn file for a given organism and database", tags=["SeqSender Downloads"])
+async def download_table2asn(
+    submission_name: str = Query(..., description="Name of the submission."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
+    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
+    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
+):
+    """
+    Download table2asn file for a given organism and database. 
+    The function will return a dictionary containing the details of the table2asn file location.
+    """
+    try:
+        file_path = await asyncio.to_thread(
+            retrieve_seqsender_table2asn,
+            submission_name = submission_name,
+            organism = organism,
+            database = database,
+            submission_type = submission_type
+        )
+        if file_path is None or not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"table2asn file not found.")
+        return FileResponse(path=file_path, filename=f"{submission_name}_{TABLE2ASN_FILENAME}", media_type="application/octet-stream", content_disposition_type="attachment") 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

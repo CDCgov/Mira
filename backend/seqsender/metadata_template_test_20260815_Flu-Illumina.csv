@@ -1,0 +1,44 @@
+﻿,Specimen/Sample Information,,,,Patient/ Host Information,,,Specimen Collection Location,,,,SARS-CoV-2 Rt-PCR,"CDC Flu SC2 Multiplex or CDC Flu Rt-PCR Dx Panel Information
+(NT= Not Tested, 0=tested with no Ct value)",,,,,,,,IF CULTURE ISOLATE,,Additional Patient info.,,,Travel Location Information  (if recent travel),,,,,
+No,Submitter Specimen ID,Collection Date MM/DD/YY,Specimen Source,Reason for Submission,Age,Age units,Sex,Country,State,County,City,SARS-CoV-2,InfA,pdm InfA,pdm H1,H3,InfB ,B-Vic ,B-Yam,Influenza Type (Subtype/ Lineage),Passage History,Comments,Fatal?,Institution?,Vaccinated?,Country,State ,County,City,Return Date,
+1,f58cd412,1/25/2026,TS,Diagnosis,17,Days,U,US,GA,Atlanta County,Atlanta,Negative,25.7,22.0,19.0,0.0,0.0,0.0,0.0,A(H1N1)pdm09,X1,test data,N,N,Y,,,,,,
+2,73ceed0e,7/2/2026,NW,Surveillance,66,Years,M,US,TX,Houston County,Houston,Negative,25.5,23.7,29.1,0.0,0.0,0.0,0.0,A(H1N1)pdm09,Original,test data,N,N,U,,,,,,
+3,6796f13d,5/20/2026,TI,Surveillance,1,Days,F,US,CA,Los Angeles County,Los Angeles,Negative,0.0,0.0,0.0,0.0,31.0,22.5,0.0,B-VIC,X1,test data,N,N,U,,,,,,
+4,e91ea59e,8/25/2026,NS,Diagnosis,17,Days,F,US,NY,Albany County,Albany,Negative,30.6,30.1,31.2,0.0,0.0,0.0,0.0,A(H1N1)pdm09,C1S1,test data,N,N,Y,,,,,,
+5,ba21bd1f,4/4/2026,TI,Surveillance,62,Years,U,US,FL,Miami County,Miami,Negative,0.0,0.0,0.0,0.0,18.3,0.0,28.5,B-YAM,Original,test data,N,N,U,,,,,,
+6,f133a406,6/11/2026,TI,Diagnosis,19,Years,U,US,OH,Columbus County,Columbus,Negative,31.1,23.2,18.5,0.0,0.0,0.0,0.0,A(H1N1)pdm09,C1S1,test data,N,N,N,,,,,,
+7,03b02807,8/5/2026,NW,Surveillance,15,Months,F,US,WA,Seattle County,Seattle,Negative,0.0,0.0,0.0,0.0,29.0,0.0,24.0,B-YAM,Original,test data,N,N,U,,,,,,
+8,89bb6967,1/17/2026,NS,Surveillance,21,Days,F,US,CO,Denver County,Denver,Negative,0.0,0.0,0.0,0.0,21.9,0.0,26.5,B-YAM,C1S1,test data,N,N,U,,,,,,
+9,314ac5ba,8/10/2026,TI,Diagnosis,16,Months,M,US,IL,Chicago County,Chicago,Negative,22.8,28.0,20.3,0.0,0.0,0.0,0.0,A(H1N1)pdm09,X1,test data,N,N,Y,,,,,,
+10,239e44e6,3/12/2026,NW,Surveillance,34,Years,U,US,AZ,Phoenix County,Phoenix,Negative,0.0,0.0,0.0,0.0,30.1,22.2,0.0,B-VIC,Original,test data,N,N,U,,,,,,
+11,81ae9ee5,3/19/2026,TS,Surveillance,5,Years,M,US,OR,Portland County,Portland,Negative,0.0,0.0,0.0,0.0,26.5,0.0,30.7,B-YAM,C1S1,test data,N,N,U,,,,,,
+12,0dca4b84,6/28/2026,TS,Diagnosis,12,Days,U,US,MI,Detroit County,Detroit,Negative,31.2,29.5,19.2,0.0,0.0,0.0,0.0,A(H1N1)pdm09,X1,test data,N,N,U,,,,,,
+13,240aa994,1/7/2026,NS,Diagnosis,22,Days,F,US,VA,Richmond County,Richmond,Negative,28.1,0.0,0.0,19.6,0.0,0.0,0.0,A(H3),C1S1,test data,N,N,N,,,,,,
+14,d969e179,5/14/2026,NS,Diagnosis,10,Years,F,US,NV,Reno County,Reno,Negative,26.8,0.0,0.0,26.9,0.0,0.0,0.0,A(H3),C1S1,test data,N,N,N,,,,,,
+15,ad336cc2,1/4/2026,TI,Diagnosis,15,Days,F,US,UT,Provo County,Provo,Negative,23.8,21.2,25.8,0.0,0.0,0.0,0.0,A(H1N1)pdm09,Original,test data,N,N,Y,,,,,,
+16,046435d3,8/6/2026,TS,Diagnosis,2,Days,F,US,ME,Portland County,Portland,Negative,21.7,0.0,0.0,29.4,0.0,0.0,0.0,A(H3),C1S1,test data,N,N,U,,,,,,
+Sender Information,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Name,,,,,,,,,,,State,,,,,,,,,,,,,,,,,,,,
+Institute/Facility Name,,,,,,,,,,,Zip Code,,,,,,,,,,,,,,,,,,,,
+Address 1,,,,,,,,,,,Country Name,,,,,,,,,,,,,,,,,,,,
+Address 2,,,,,,,,,,,Phone Number,,,,,,,,,,,,,,,,,,,,
+City,,,,,,,,,,,Email Address,,,,,,,,,,,,,,,,,,,,
+Tracking Number:,,,,,,,,,,,Date of shipment,,,,,,,,,,,,,,,,,,,,
+Comments,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Please save the file and email as an attachment to:,,,,,,,,InfluenzaVirusSurveillance@cdc.gov,,,,,,,,,,,,,,,,,,,,,,,
+"Please be sure to fill in the tracking number, date of shipment and print region indicated below and place in shipping box. Then ship to the address below.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Please Print all Columns (except pink) for Shipping Package Insert,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Influenza/CDC Shipping Address,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Dr. REBECCA KONDOR
+ATTN: ANGIE FOUST
+Influenza Division, H17-5
+Centers for Disease Control and Prevention
+1600 Clifton Road, NE
+Atlanta, Georgia 30329-4027  USA
+
+Telephone Number: 404-639-1688 or 404-718-5935
+
+Please contact us if you have any questions. ",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+NOTE: This form should accompany the specimens and dispatch of viruses should not be delayed until detailed epidemiological information is available.,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"To insert rows for additional specimens beyond 10, please do the following: before you enter any data in row 12, Take the pointer all the way to the left until it changes to a right-pointing arrow, select row 12 (value inside cell A12 is 10) and right click on the mouse and select ""Insert."" You may repeat the process as needed. After adding the rows, make sure to correct the numbering in column A.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,

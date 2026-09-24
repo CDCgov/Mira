@@ -5,7 +5,7 @@ x-data-storage-path:
 
 x-mira-image:
   &mira-image
-  ghcr.io/rchau88/mira:latest
+  ghcr.io/cdcgov/mira-dev:v3.0.1
 
 services:
   mira:
@@ -15,7 +15,7 @@ services:
       - mira
     privileged: true
     ports:
-      - 5175:5175
+      - 5174:5175
     restart: always
     volumes:
       - type: bind

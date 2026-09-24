@@ -2,6 +2,10 @@
 ARG MICROMAMBA_IMAGE
 ARG MICROMAMBA_IMAGE=${MICROMAMBA_IMAGE:-mambaorg/micromamba:2.8.0}
 
+# Create an argument to pull a particular version of seqsender image (backend only)
+ARG SEQSENDER_IMAGE
+ARG SEQSENDER_IMAGE=${SEQSENDER_IMAGE:-ghcr.io/cdcgov/seqsender:v1.3.93}
+
 # Define the base image shared by both the backend and frontend stages
 ARG MIRA_NF_IMAGE
 ARG MIRA_NF_IMAGE=${MIRA_NF_IMAGE:-cdcgov/mira-nf:v2.2.1}
@@ -10,12 +14,18 @@ ARG MIRA_NF_IMAGE=${MIRA_NF_IMAGE:-cdcgov/mira-nf:v2.2.1}
 FROM ${MICROMAMBA_IMAGE} AS micromamba
 RUN echo "Getting micromamba image"
 
+############# SEQSENDER IMAGE ##################
+FROM ${SEQSENDER_IMAGE} AS seqsender
+RUN echo "Getting seqsender image"
+
 ############# MIRA IMAGE ##################
 FROM ${MIRA_NF_IMAGE} AS base
 
+# Set the MIRA image environment variable
 ARG MIRA_NF_IMAGE
 ENV MIRA_NF_IMAGE="${MIRA_NF_IMAGE}"
 
+# Set up micromamba environment variables
 ENV MAMBA_ROOT_PREFIX="/opt/conda"
 ENV MAMBA_EXE="/bin/micromamba"
 
@@ -25,6 +35,20 @@ COPY --from=micromamba /usr/local/bin/_dockerfile_shell.sh /usr/local/bin/_docke
 COPY --from=micromamba /usr/local/bin/_entrypoint.sh /usr/local/bin/_entrypoint.sh
 COPY --from=micromamba /usr/local/bin/_dockerfile_initialize_user_accounts.sh /usr/local/bin/_dockerfile_initialize_user_accounts.sh
 COPY --from=micromamba /usr/local/bin/_dockerfile_setup_root_prefix.sh /usr/local/bin/_dockerfile_setup_root_prefix.sh
+
+# Default backend and data directories
+ENV SEQSENDER_DIR=/seqsender
+
+# Copy SeqSender binary from the seqsender image
+COPY --from=seqsender ${SEQSENDER_DIR} ${SEQSENDER_DIR}
+
+# Create the isolated SeqSender environment from its image manifest
+RUN micromamba create --yes --name seqsender -f ${SEQSENDER_DIR}/env.yaml \
+  && micromamba install --yes --name seqsender --channel conda-forge \
+    python=3.9 numpy=1.24.4 beartype=0.19.0 \
+  && micromamba run --name seqsender python -m pip install --no-cache-dir \
+    nameparser==1.1.3 cerberus==1.3.5 \
+  && micromamba clean --all --yes
 
 # Install system dependencies
 ARG DEBIAN_FRONTEND=noninteractive
@@ -83,7 +107,6 @@ ENV DATA_DIR=/data
 VOLUME ${DATA_DIR}
 
 ############# MIRA DESCRIPTION ##################
-
 COPY DESCRIPTION ${MIRA_DIR}/DESCRIPTION
 
 ############# MIRA Backend ##################

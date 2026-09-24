@@ -53,12 +53,15 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-left text-foreground;
     margin: 0;
     /* Nunito Sans — CDC body copy & subheadings */
     font-family: 'Nunito Sans', system-ui, -apple-system, sans-serif;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
+  }
+  button, input, select, textarea, option {
+    text-align: left;
   }
   /* Roboto — CDC headers & titles, in CDC Navy */
   h1, h2, h3, h4, h5, h6 {

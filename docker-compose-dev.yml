@@ -3,6 +3,10 @@ x-mira-nf-image:
   &mira-nf-image
   cdcgov/mira-nf:v2.2.1
 
+x-seqsender-image:
+  &seqsender-image
+  ghcr.io/cdcgov/seqsender:v1.3.93
+
 x-data-storage-path:
   &data-storage-path
   /home/snu3/FLU_SC2_SEQUENCING
@@ -25,6 +29,7 @@ services:
       args:
         MICROMAMBA_IMAGE: mambaorg/micromamba:2.8.0
         MIRA_NF_IMAGE: *mira-nf-image
+        SEQSENDER_IMAGE: *seqsender-image
         NODE_VERSION: 24
         # Set POLARS_PACKAGE=polars-lts-cpu==1.33.1 when building on Apple Silicon so the
         # amd64 image runs under Rosetta without a polars AVX crash; empty keeps stock polars.
@@ -33,7 +38,7 @@ services:
       - mira
     privileged: true
     ports:
-      - 5175:5175
+      - 5174:5175
       - 8080:8080
     restart: always
     volumes:

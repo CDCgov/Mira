@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import List, Optional, Literal, Dict, Any
 
 # Import polars
-from fastapi import UploadFile
 import polars as pl
 
 # Import general python packages
@@ -11,12 +10,14 @@ import os
 import re
 import glob
 import json
-import time
 import shutil
 import signal
 import psutil
 import subprocess
 from datetime import datetime
+
+# Import shared logger (INFO/DEBUG -> stdout, WARNING/ERROR/CRITICAL -> stderr)
+from .logging_config import logger
 
 # Import schema validator 
 from .schema_validator import (
@@ -38,7 +39,9 @@ from .schema_validator import (
 
 # Import utils for dataframe operations
 from .utils import (
-    compare_and_update_db_table
+    _cast_expr,
+    _as_bool,
+    compare_and_update_db_table,
 )
 
 # Import sqlite_handler for database connection
@@ -51,22 +54,6 @@ from .sqlite_handler import (
 
 # Import shared logger (INFO/DEBUG -> stdout, WARNING/ERROR/CRITICAL -> stderr)
 from .logging_config import logger
-
-# SQLite BOOLEAN columns are read back by Polars as strings ("0"/"1"), and
-# bool("0") is truthy in Python. Coerce such values to a real boolean before use.
-def _as_bool(value: Any) -> bool:
-    return str(value).strip().lower() in ("1", "true", "t", "yes")
-
-# Build a cast expression for a column to a target Polars dtype. Polars cannot
-# cast a string ("0"/"1") straight to Boolean, so map string values explicitly;
-# all other dtypes use a plain cast.
-def _cast_expr(col: str, dtype: Any) -> "pl.Expr":
-    if dtype == pl.Boolean:
-        return (
-            pl.col(col).cast(pl.String).str.strip_chars().str.to_lowercase()
-            .is_in(["1", "true", "t", "yes"]).alias(col)
-        )
-    return pl.col(col).cast(dtype)
 
 # Function to remove previous pipeline outputs for a given run directory
 def _remove_previous_pipeline_outputs(run_dir: str) -> None:
@@ -104,7 +91,6 @@ def _remove_previous_pipeline_outputs(run_dir: str) -> None:
 
     # If the deployment type is Local, remove the outputs folder via a Docker container
     if _DEPLOY_TYPE == "Local":
-
         # Prepare the list of container paths for the permission denied outputs
         container_paths = []
         for output_path in permission_denied_paths:
@@ -302,7 +288,7 @@ def retrieve_sample_coverage_plot(run_name: str, experiment_type: str, sample_id
         pathogen = experiment_type.split("-")[0]
         instrument = experiment_type.split("-")[-1]
         # Get sample segment coverage plot result from storage
-        sample_coverage_plot_path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, "outputs", "aggregate_outputs", "dash-json", f"coveragefig_{sample_id}_seg.json")
+        sample_coverage_plot_path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, "outputs", "aggregate_outputs", "dash-json", f"coveragefig_{sample_id}_linear.json")
         # Check if the sample coverage plot result file exists
         if os.path.exists(sample_coverage_plot_path):
             with open(sample_coverage_plot_path, "r") as f:
@@ -802,7 +788,7 @@ def update_assembly_in_database(
         else:
             # Compare and update database table
             compare_and_update_db_table(
-                unique_cols = ["run_name"],
+                unique_cols = ["run_name", "experiment_type"],
                 compare_tbl = assembly_tbl,
                 db_tbl = db_assembly_tbl,
                 db_tbl_name = "assembly"
@@ -1926,7 +1912,7 @@ def _extract_nextflow_task_lines(nextflow_log: str, prefix: str, rest: str) -> L
         return []
     return matched
 
-
+# Define function to retrieve the error log for a single failed task
 def retrieve_task_log(
     run_name: str,
     experiment_type: str,
