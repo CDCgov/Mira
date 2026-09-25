@@ -141,7 +141,6 @@ from .seqsender_handler import (
     validate_seqsender_uploaded_files,
     retrieve_seqsender_gff,
     retrieve_seqsender_table2asn,
-    retrieve_seqsender_gisaid_cli,
     retrieve_seqsender_submission_log,
     retrieve_seqsender_status_report,
     retrieve_seqsender_process_status,
@@ -1788,42 +1787,8 @@ async def upload_seqsender_fasta(
     except ValueError as err:
         raise HTTPException(status_code=404, detail=str(err))
     except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err)) 
-    
+        raise HTTPException(status_code=500, detail=str(err))
 
-# Upload GISAID CLI file to SeqSender storage location
-@app.post("/upload/seqsender/gisaid_cli", response_model=Dict[str, Any], summary="Upload a GISAID CLI file to SeqSender storage location", tags=["SeqSender Workflows"])
-async def upload_seqsender_gisaid_cli(
-    organism: Literal[tuple(organisms)] = Form(..., description="Type of organisms to submit."),
-    gisaid_cli_file: UploadFile = File(..., description="Gisaid CLI file to upload.")
-):
-    """
-    Upload a GISAID CLI file to the SeqSender storage location for a given submission.
-    """
-    try:
-        # Define the storage directory based on submission name and organism
-        submission_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism))
-        submission_gisaid_cli_dir = os.path.realpath(os.path.join(submission_dir, "gisaid_cli"))
-        os.makedirs(submission_gisaid_cli_dir, exist_ok=True)
-        # Standardize the filename
-        filename = organism.lower()+"CLI"
-        dest_file_path = os.path.join(submission_gisaid_cli_dir, filename)
-        # Copy GISAID CLI file to the destination file path
-        gisaid_cli_file.file.seek(0)
-        with open(dest_file_path, "wb") as buf:
-            shutil.copyfileobj(gisaid_cli_file.file, buf)
-        # Return success message with file path and name
-        return {
-            "status": "success",
-            "message": f"GISAID CLI file '{gisaid_cli_file.filename}' has been uploaded successfully.",
-            "file_path": dest_file_path,
-            "file_name": filename
-        }
-    except ValueError as err:
-        raise HTTPException(status_code=404, detail=str(err))
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err)) 
-    
 
 # Upload raw reads files to SeqSender storage location
 @app.post("/upload/seqsender/raw_reads", response_model=Dict[str, Any], summary="Upload raw reads files to SeqSender storage location", tags=["SeqSender Workflows"])
@@ -1905,7 +1870,7 @@ async def upload_seqsender_gff(
 async def create_submission(req: CreateSubmissionRequest):
     """
     Create a SeqSender submission for a given submission name, organism, database, and submission type. 
-    The submission will be created using the provided config file, metadata file, fasta file, and optionally GISAID CLI and GFF files. 
+    The submission will be created using the provided config file, metadata file, fasta file, and optionally a GFF file. 
     The function will return a list of messages indicating the success or failure of each step in the submission process.
     """
     try:
@@ -1914,11 +1879,6 @@ async def create_submission(req: CreateSubmissionRequest):
             ncbi_submitter_info = pl.DataFrame([req.ncbi_submitter_info.model_dump()])
         else:
             ncbi_submitter_info = None
-        # Get GISAID Submitter Info if provided, else set to None
-        if req.gisaid_submitter_info is not None:
-            gisaid_submitter_info = pl.DataFrame([req.gisaid_submitter_info.model_dump()])
-        else:
-            gisaid_submitter_info = None
         # Create the submission in a separate thread to avoid blocking the event loop
         result = await asyncio.to_thread(
             create_seqsender_submission,
@@ -1927,7 +1887,6 @@ async def create_submission(req: CreateSubmissionRequest):
             database = req.database,
             submission_type = req.submission_type,
             ncbi_submitter_info = ncbi_submitter_info,
-            gisaid_submitter_info = gisaid_submitter_info,
             gff_file = req.gff_file,
             table2asn= req.table2asn,
             ncbi_publication_title = req.ncbi_publication_title,
@@ -1964,11 +1923,11 @@ async def validate_submission_files(
         raise HTTPException(status_code=500, detail=str(err))
    
 
-# Submit a submission to NCBI or GISAID using SeqSender
-@app.post("/submit/submission", response_model=Dict[str, Any], summary="Submit a SeqSender submission to NCBI or GISAID", tags=["SeqSender Workflows"])
+# Submit a submission to NCBI using SeqSender
+@app.post("/submit/submission", response_model=Dict[str, Any], summary="Submit a SeqSender submission to NCBI", tags=["SeqSender Workflows"])
 async def submit_submission(req: SubmissionRequest):
     """
-    Submit a SeqSender submission to NCBI or GISAID for a given submission name, organism, database, and submission type. 
+    Submit a SeqSender submission to NCBI for a given submission name, organism, database, and submission type. 
     The function will return a dictionary containing the details of the submission process.
     """
     try:
@@ -1990,7 +1949,7 @@ async def submit_submission(req: SubmissionRequest):
 @app.post("/create/submission/files", response_model=Dict[str, Any], summary="Create SeqSender submission files without submitting", tags=["SeqSender Workflows"])
 async def create_submission_files(req: SubmissionRequest):
     """
-    Generate the per-database submission files (BioSample/SRA/GenBank/GISAID) for a stored
+    Generate the per-database submission files (BioSample/SRA/GenBank) for a stored
     submission using SeqSender's "prep" command, without launching an actual submission to
     any portal. Returns a dictionary containing the status, message, and created file locations.
     """
@@ -2115,11 +2074,11 @@ async def retrieve_submission_status(
 # ---------- List all submissions ----------
 @app.get("/list/submitters", response_model=ListSubmitterResponse, summary="List all submitters", tags=["Submitter Utils"])
 async def get_submitters(
-    submission_portal: Optional[Literal[tuple(submission_portals)]] = Query(None, description="Submission portal (NCBI or GISAID).")
+    submission_portal: Optional[Literal[tuple(submission_portals)]] = Query(None, description="Submission portal (NCBI).")
 ):
     """
     Return a list of submitters in the database, optionally filtered by submission_portal
-    ("NCBI" or "GISAID"), including saved passwords so users can verify or update them.
+    ("NCBI"), including saved passwords so users can verify or update them.
     """
     try:
         db_submitter_tbl = lookup_tbl_in_database(
@@ -2142,7 +2101,7 @@ async def get_submitters(
 @app.get("/retrieve/submitter", response_model=ListSubmitterResponse, summary="Retrieve information about a given submitter", tags=["Submitter Utils"])
 async def get_submitter_info(
     submitter_name: str = Query(..., description="Name of the submitter."),
-    submission_portal: Literal[tuple(submission_portals)] = Query(..., description="Submission portal (NCBI or GISAID).")
+    submission_portal: Literal[tuple(submission_portals)] = Query(..., description="Submission portal (NCBI).")
 ):
     """
     Return a submitter matching the given name and submission portal, including the saved
@@ -2170,7 +2129,7 @@ async def get_submitter_info(
 @app.post("/save/submitter", response_model=Dict[str, Any], summary="Save a submitter's credentials for future use", tags=["Submitter Utils"])
 async def save_submitter_endpoint(req: SubmitterInfo):
     """
-    Save (insert or update) a submitter's credentials for a given portal (NCBI or GISAID) so
+    Save (insert or update) a submitter's credentials for a given portal (NCBI) so
     they can be reused on future submissions without needing to submit a full submission.
     """
     try:
@@ -2469,32 +2428,6 @@ async def get_table2asn(
         raise HTTPException(status_code=500, detail=str(err))  
     
       
-@app.get("/retrieve/gisaid_cli", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender GISAID CLI file location", tags=["SeqSender Results"])
-async def get_gisaid_cli(
-    submission_name: str = Query(..., description="Name of the submission."),
-    organism: Literal[tuple(organisms)] = Query(..., description="Organism for which to send sequences."),
-    database: List[Literal[tuple(database_targets)]] = Query(..., description="One or more databases to submit to."),
-    submission_type: Literal[tuple(submission_types)] = Query(..., description="Type of submission."),
-):
-    """
-    Retrieve SeqSender GISAID CLI file location for a given submission name, organism, database, and submission type. 
-    The function will return a dictionary containing the details of the GISAID CLI file location.
-    """
-    try:
-        result = await asyncio.to_thread(
-            retrieve_seqsender_gisaid_cli,
-            submission_name = submission_name,
-            organism = organism,
-            database = database,
-            submission_type = submission_type
-        )
-        return result
-    except ValueError as err:
-        raise HTTPException(status_code=404, detail=str(err))
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))      
-    
-
 @app.get("/retrieve/submission_log", response_model=Optional[Dict[str, Any]], summary="Retrieve SeqSender submission log location", tags=["SeqSender Results"])
 async def get_submission_log(
     submission_name: str = Query(..., description="Name of the submission."),

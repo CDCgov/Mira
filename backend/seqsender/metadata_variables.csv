@@ -3,7 +3,7 @@ organism,Required,The most descriptive organism name for the samples.
 authors,Required,"Citing authors. List of <b>Last, First Middle, suffix</b> separated by a semicolon "";"" E.g.: ""Baker, Howard Henry, Jr.; Powell, Earl Alexander, III.;"""
 collection_date,Required,"Collection date for sample. Must be in a valid format based on ISO 8601: ""YYYY-MM-DD"", ""YYYY-MM"", or ""YYYY"". Time is not supported."
 bioproject,Required,NCBI BioProject ID.
-sequence_name,Required,Sequence identifier used in fasta file. This is used to create the fasta file for Genbank or GISAID by updating the sequence name in your fasta file to reflect the sample name for the specified database.
+sequence_name,Required,Sequence identifier used in fasta file. This is used to create the fasta file for Genbank by updating the sequence name in your fasta file to reflect the sample name for the specified database.
 gb-sample_name,Required,Identifier name used for GenBank. Max length is 50 characters.
 gb-fasta_definition_line_modifiers,Optional,"NCBI fasta definition line modifiers can be added here. As many modifiers as you like can be added, but each must bounded by a set of brackets. Some of the available keywords are listed at ""https://www.ncbi.nlm.nih.gov/genbank/mods_fastadefline/""."
 gb-title,Optional,"Optional internal field for how the GenBank submission should be named when viewed from the NCBI submission portal, . If not provided, when performing submissions <--submission_name> with the suffix ""-GB"" will be used instead."
@@ -46,32 +46,6 @@ src-Variety,Optional,Variety of organism from which sequence was obtained.
 cmt-StructuredCommentPrefix,Required,"Structured comment keyword. ONLY REQUIRED IF INCLUDING COMMENT FILE. For FLU use 'FluData', HIV use 'HIV-DataBaseData', and for COV and other organisms use 'Assembly-Data'."
 cmt-StructuredCommentSuffix,Required,"Structured comment keyword. ONLY REQUIRED IF INCLUDING COMMENT FILE. For FLU use 'FluData', HIV use 'HIV-DataBaseData', and for COV and other organisms use 'Assembly-Data'."
 cmt-Assembly Method,Required,ONLY REQUIRED IF INCLUDING COMMENT FILE. Process used to assemble genome.
-gs-sample_name,Required,"Identifier name used for GISAID. Max length is 50 characters. This field is the same as ""rsv_sequence_name"" in GISAID's metadata template."
-gs-rsv_subtype,Required,"For RSV, there are two subtypes, ""RSV-A"" or ""RSV-B""."
-gs-rsv_passage,Required,"""Original"" if the sample was sequenced directly from swabs, otherwise add the name of the cell line (e.g., ""Vero"") used to culture the specimen."
-gs-rsv_location,Required,"Format as ""Continent / Country / Region / Sub-region""."
-gs-rsv_add_location,Optional,"Additional location information (e.g. Cruise Ship, Convention, Live animal market)."
-gs-rsv_host,Required,"Host species name. For Wastewater use ""Environment""."
-gs-rsv_add_host_info,Optional,Additional information regarding patient (e.g. Patient infected while interacting with animal).
-gs-rsv_sampling_strategy,Optional,"Sampling strategy for sequence (e.g. Sentinel surveillance (ILI), Sentinel surveillance (ARI), Sentinel surveillance (SARI), Non-sentinel-surveillance (hospital), Non-sentinel-surveillance (GP network), Longitudinal sampling on same patient(s), S gene dropout)."
-gs-rsv_sex,Required,"Biological sex. Should be ""Female"", ""Male"", or ""Unknown""."
-gs-rsv_patient_age,Required,"Age in years of the person from whom the specimen was collected. May take format other than numeric years, for example, ""0.5"" (i.e., 6 months), ""5 days"", ""7 months"". If units are not given, they are assumed in years. If missing, use ""Unknown""."
-gs-rsv_patient_status,Required,"E.g., ""Hospitalized"", ""Released"", ""Live"", ""Deceased"", ""Unknown""."
-gs-rsv_specimen,Optional,"Specimen source. For wastewater it must be ""Wastewater surveillance""."
-gs-rsv_outbreak,Optional,"Outbreak information (Date, Location e.g. type of gathering, Family cluster, etc.)."
-gs-rsv_last_vaccinated,Optional,Provide details if applicable.
-gs-rsv_treatment,Optional,"Provide details if applicable (e.g. Drug name, dosage)."
-gs-rsv_seq_technology,Required,"Add the sequencer brand and model (e.g. Illumina MiSeq, Sanger, Nanopore MinION)."
-gs-rsv_assembly_method,Optional,"Genome assembly algorithm (e.g. CLC Genomics Workbench 12, Geneious 10.2.4, SPAdes/MEGAHIT v1.2.9, UGENE v. 33)."
-gs-rsv_coverage,Optional,"Average genome coverage (e.g. 50x, 100x, 1,000x)."
-gs-rsv_orig_lab,Required,Full name of laboratory from where sample originated.
-gs-rsv_orig_lab_addr,Required,Complete building address of laboratory from where sample originated.
-gs-rsv_provider_sample_id,Optional,ID used by originating lab.
-gs-rsv_subm_lab,Required,Full name of laboratory submitting this record to GISAID.
-gs-rsv_subm_lab_addr,Required,Complete building address of the submitting laboratory.
-gs-rsv_subm_sample_id,Optional,ID used by submitting lab.
-gs-rsv_comment,Required,Leave blank.
-gs-comment_type,Required,Leave blank.
 bs-sample_name,Required,Identifier name used for BioSample. Max length is 50 characters.
 bs-sample_title,Required,Descriptive title for sample.
 bs-sample_description,Optional,Optional description for sample.

@@ -157,7 +157,7 @@ def _apply_migrations(connection: sqlite3.Connection) -> None:
         connection.commit()
 
     # Relax legacy NOT NULL constraints on fields that are legitimately absent before a
-    # submission is sent, including GISAID rows created without optional credentials.
+    # submission is sent.
     nullable_col_notnull = {
         row[1]: row[3]
         for row in connection.execute('PRAGMA table_info("submission")').fetchall()

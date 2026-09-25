@@ -21,7 +21,7 @@ CREATE TABLE submission (
   db                   TEXT NOT NULL 
                         CHECK (db IN (
                           'BIOSAMPLE', 'SRA', 'GENBANK-TBL2ASN', 
-                          'GENBANK-FTP', 'GISAID'
+                          'GENBANK-FTP'
                         )),
   submission_type      TEXT NOT NULL DEFAULT 'TEST' 
                           CHECK (submission_type IN (
@@ -73,19 +73,6 @@ CREATE TABLE gb_submission_status(
   genbank_accession                     TEXT DEFAULT NULL,
   genbank_message                       TEXT DEFAULT NULL,
   UNIQUE(submission_id_pk, gb_sample_name)
-);
---
--- Table structure for table `gs_submission_status`
---
-DROP TABLE IF EXISTS gs_submission_status;
-CREATE TABLE gs_submission_status(  
-  submission_id_pk                      INTEGER NOT NULL REFERENCES submission(submission_id_pk) ON DELETE CASCADE,
-  gs_sample_name                        TEXT NOT NULL,
-  gs_segment_name                       TEXT NOT NULL,
-  gisaid_accession_epi_isl_id           TEXT DEFAULT NULL,
-  gisaid_segment_accession_epi_isl_id   TEXT DEFAULT NULL,
-  gisaid_message                        TEXT DEFAULT NULL,
-  UNIQUE(submission_id_pk, gs_sample_name, gs_segment_name)
 );
 
 --

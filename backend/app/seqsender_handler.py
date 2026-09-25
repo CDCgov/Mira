@@ -882,17 +882,13 @@ def update_seqsender_submission_status_report_messages(
 
 # ---------- Helper: create SeqSender config file ----------
 def create_seqsender_config_file(
-    gisaid_submitter_name: Optional[str],
     ncbi_submitter_name: Optional[str],
     submission_name: str,
     organism: str,
     database: List[str],
 ) -> None:
     try:
-        # Include GISAID credentials only when a submitter was supplied; prep can still
-        # generate GISAID files without credentials or the GISAID CLI.
-        needs_ncbi = any(db != "GISAID" for db in database)
-        needs_gisaid = "GISAID"
+        needs_ncbi = bool(database)
 
         # Read in the config template file
         with open(CONFIG_TEMPLATE_PATH, "r", encoding="utf-8") as fh:
@@ -964,31 +960,6 @@ def create_seqsender_config_file(
             submitter_cfg["Name"]["First"] = text(ncbi_row["ncbi_submitter_first_name"])
             submitter_cfg["Name"]["Last"] = text(ncbi_row["ncbi_submitter_last_name"])
 
-        # Populate the GISAID section of the config if needed
-        if needs_gisaid:
-            gisaid_cfg = config["Submission"]["GISAID"]
-            gisaid_cfg["Submission_Position"] = 2
-            if gisaid_submitter_name:
-                gisaid_tbl = lookup_tbl_in_database(
-                    db_tbl_name = ["submitter"],
-                    return_var = ["*"],
-                    filter_coln_var = ["submitter_name", "submission_portal"],
-                    filter_coln_val = {"submitter_name": [gisaid_submitter_name], "submission_portal": ["GISAID"]},
-                    filter_var_by = ["AND", "AND"]
-                )
-                if gisaid_tbl.is_empty():
-                    raise ValueError(f"GISAID submitter '{gisaid_submitter_name}' does not exist in the database.")
-                gisaid_row = gisaid_tbl.to_dicts()[0]
-                gisaid_cfg["Client-Id"] = text(gisaid_row["gisaid_client_id"])
-                gisaid_cfg["Username"] = text(gisaid_submitter_name)
-                gisaid_cfg["Password"] = text(gisaid_row["submitter_password"])
-            else:
-                gisaid_cfg["Client-Id"] = "cid-123456789"
-                gisaid_cfg["Username"] = "Jane_Doe"
-                gisaid_cfg["Password"] = "XXXXXXXX"
-        else:
-            del config["Submission"]["GISAID"]
-
         # Write the rendered config into the submission's directory
         submission_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism))
         submission_name_dir = os.path.join(submission_dir, submission_name)
@@ -1009,7 +980,6 @@ def create_seqsender_submission(
     database: List[str],
     submission_type: str,
     ncbi_submitter_info: Optional[pl.DataFrame] = None,
-    gisaid_submitter_info: Optional[pl.DataFrame] = None,
     gff_file: Optional[bool] = False,
     table2asn: Optional[bool] = False,
     ncbi_publication_title: Optional[str] = None,
@@ -1033,38 +1003,22 @@ def create_seqsender_submission(
         else:
             ncbi_submitter_name = None
 
-        # Create GISAID submitter
-        gisaid_submitter_tbl = gisaid_submitter_info
-        if gisaid_submitter_tbl is not None and not gisaid_submitter_tbl.is_empty():
-            row = gisaid_submitter_tbl.to_dicts()[0]
-            submitter_name = row["submitter_name"]
-            submission_portal = "GISAID"
-            gisaid_submitter_name = row["submitter_name"]
-            update_submitter_in_database(
-                submitter_name = submitter_name,
-                submission_portal = submission_portal,
-                submitter_tbl = gisaid_submitter_tbl,
-                return_tbl = True
-            )
-        else:
-            gisaid_submitter_name = None
-
         # Create submission table. Every column declared in submission_pa_schema must be
         # present (even if null) — update_submission_in_database casts/validates against
         # every schema column, and a missing column raises a Polars ColumnNotFoundError.
         submission_tbl = pl.DataFrame({
             "submission_name": [submission_name for db in database],
             "organism": [organism for db in database],
-            "submission_portal": ["NCBI" if db != "GISAID" else "GISAID" for db in database],
+            "submission_portal": ["NCBI" for db in database],
             "database": [db for db in database],
             "database_status": ["ACTIVE" for db in database],
             "submission_type": [submission_type for db in database],
-            "gff_file": [gff_file if db != "GISAID" else False for db in database],
-            "table2asn": [table2asn if db != "GISAID" else False for db in database],
-            "submitter_name": [ncbi_submitter_name if db != "GISAID" else gisaid_submitter_name for db in database],
-            "ncbi_publication_title": [ncbi_publication_title if db != "GISAID" else None for db in database],
-            "ncbi_publication_status": [ncbi_publication_status if db != "GISAID" else "Unpublished" for db in database],
-            "ncbi_release_date": [ncbi_release_date if db != "GISAID" else None for db in database],
+            "gff_file": [gff_file for db in database],
+            "table2asn": [table2asn for db in database],
+            "submitter_name": [ncbi_submitter_name for db in database],
+            "ncbi_publication_title": [ncbi_publication_title for db in database],
+            "ncbi_publication_status": [ncbi_publication_status for db in database],
+            "ncbi_release_date": [ncbi_release_date for db in database],
             "number_of_samples": [0 for db in database],
             "ncbi_submission_id": [None for db in database],
             "ncbi_submission_status": [None for db in database],
@@ -1086,10 +1040,8 @@ def create_seqsender_submission(
 
         # Create config file after the submission rows exist so NCBI publication and release
         # values can be read from the submission table.
-        # Default gisaid submitter name
         create_seqsender_config_file(
             ncbi_submitter_name = ncbi_submitter_name,
-            gisaid_submitter_name = gisaid_submitter_name,
             submission_name = submission_name,
             organism = organism,
             database = database,
@@ -1251,7 +1203,7 @@ def retrieve_seqsender_metadata_template(
 
         # Ensure the cache directory exists.
         if not os.path.isdir(test_data_dir):
-            database_flags = {"BIOSAMPLE": "--biosample", "SRA": "--sra", "GENBANK": "--genbank", "GISAID": "--gisaid"}
+            database_flags = {"BIOSAMPLE": "--biosample", "SRA": "--sra", "GENBANK": "--genbank"}
             os.makedirs(cache_dir, exist_ok=True)
             cmd = [seqsender_python, seqsender_script, "test_data", "--organism", organism, "--submission_dir", test_data_dir]
             cmd.extend(flag for db in database if (flag := database_flags.get(db.strip().upper())))
@@ -1477,12 +1429,11 @@ def validate_seqsender_uploaded_files(
     submission_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism))
     submission_name_dir = os.path.join(submission_dir, submission_name)
     raw_reads_dir = os.path.join(submission_name_dir, "raw_reads")
-    gisaid_cli_dir = os.path.join(submission_dir, "gisaid_cli")
 
     # Check the presence of required files for the SeqSender submission.
     file_status = {
         "metadata": os.path.isfile(os.path.join(submission_name_dir, METADATA_FILENAME)),
-        "fasta": os.path.isfile(os.path.join(submission_name_dir, FASTA_FILENAME)) if "GenBank" in selected_databases or "GISAID" in selected_databases else True,
+        "fasta": os.path.isfile(os.path.join(submission_name_dir, FASTA_FILENAME)) if "GenBank" in selected_databases else True,
         "raw_reads": "SRA" not in selected_databases or (
             os.path.isdir(raw_reads_dir)
             and any(
@@ -1490,7 +1441,6 @@ def validate_seqsender_uploaded_files(
                 for filename in os.listdir(raw_reads_dir)
             )
         ),
-        "gisaid_cli": True,
         "gff": not require_gff or os.path.isfile(os.path.join(submission_name_dir, GFF_FILENAME)),
     }
 
@@ -1499,7 +1449,6 @@ def validate_seqsender_uploaded_files(
         "metadata": "Metadata File",
         "fasta": "FASTA File",
         "raw_reads": "Raw Reads (FASTQs)",
-        "gisaid_cli": "GISAID CLI",
         "gff": "GFF File",
     }
 
@@ -1602,50 +1551,6 @@ def retrieve_seqsender_table2asn(
         raise Exception(str(err))   
     
 
-# Retrieve gisaid cli file for a given submission name, organism, database, and submission type
-def retrieve_seqsender_gisaid_cli(
-    submission_name: str,
-    organism: str,
-    database: List[str],
-    submission_type: str
-) -> Dict[str, Any]:
-    """
-    Retrieve submission GISAID CLI file for a given submission name, organism, database, and submission type.
-    
-    Args:
-        submission_name (str): Name of the submission.
-        organism (str): Type of organism.
-        database (List[str]): List of databases to submit to.
-        submission_type (str): Type of submissions: Test or Production.
-
-    Returns:
-        Dict[str, Any]: Dictionary containing the details of the submission GISAID CLI file location.
-    """
-    try:
-        # Check if submission for this submission_name exists in database
-        db_submission_tbl = lookup_tbl_in_database(
-            db_tbl_name = ["submission"],
-            return_var = ["*"],
-            filter_coln_var = ["submission_name", "organism", "database", "submission_type"],
-            filter_coln_val = {"submission_name": [submission_name], "organism": [organism], "database": database, "submission_type": [submission_type]},
-            filter_var_by = ["AND", "AND", "AND", "AND"]
-        )
-        if db_submission_tbl.shape[0] == 0:
-           raise ValueError(f"Submission '{submission_name}' does not exist in the database.")
-        # Retrieve metadata file path
-        submission_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism))
-        GISAID_CLI_FILENAME = organism.lower() + "CLI"
-        gisaid_cli_file_path = os.path.join(submission_dir, GISAID_CLI_FILENAME)
-        if not os.path.exists(gisaid_cli_file_path):
-            raise ValueError(f"GISAID CLI file '{GISAID_CLI_FILENAME}' does not exist in submission directory '{submission_dir}'.")
-        # Return file path
-        return {"gisaid_cli_file_path": gisaid_cli_file_path}
-    except ValueError as err:
-        raise ValueError(str(err))
-    except Exception as err:
-        raise Exception(str(err))
-
-    
 # Retrieve submission log file for a given submission name, organism, database, and submission type
 def retrieve_seqsender_submission_log(
     submission_name: str,
@@ -1754,12 +1659,8 @@ def submit_ncbi_submission(
         Dict[str, Any]: Dictionary containing the status and message of the submission process.
     """
     try:
-        # Check if submission for this submission_name exists in database except GISAID
-        selected_databases = [
-            normalized_database
-            for db in database
-            if (normalized_database := _normalize_seqsender_database(db)) != "GISAID"
-        ]
+        # Check if submission for this submission_name exists in database
+        selected_databases = [_normalize_seqsender_database(db) for db in database]
 
         # Check if any active submissions exist for the selected databases.
         db_submission_tbl = lookup_tbl_in_database(
@@ -1830,8 +1731,7 @@ def submit_ncbi_submission(
         if "GENBANK" in selected_databases:
             _reconcile_fasta_with_metadata_samples(metadata_file, fasta_file)
 
-        # Count every active database row, including GISAID, while keeping selected_databases
-        # limited to the NCBI targets passed to the SeqSender submit command.
+        # Count every active database row for this submission.
         active_submission_tbl = lookup_tbl_in_database(
             db_tbl_name=["submission"],
             return_var=["database"],
@@ -1953,168 +1853,6 @@ def submit_ncbi_submission(
         raise Exception(str(err))
 
 
-# Function to submit submissions to GISAID
-def submit_gisaid_submission(
-    submission_name: str,
-    organism: str,
-    database: str,
-    submission_type: str
-) -> Dict[str, Any]:
-    """
-    Submit submission to GISAID for a given submission name, organism, and submission type.
-    
-    Args:
-        submission_name (str): Name of the submission.
-        organism (str): Type of organism.
-        database (Literal["GISAID"]): Database to which the submission is being made (e.g., "GISAID").
-        submission_type (str): Type of submissions: Test or Production.
-
-    Returns:
-        Dict[str, Any]: Dictionary containing the status and message of the submission process.
-    """
-    try:
-        # Check if submission for this submission_name exists in database
-        db_submission_tbl = lookup_tbl_in_database(
-            db_tbl_name = ["submission"],
-            return_var = ["*"],
-            filter_coln_var = ["submission_name", "organism", "database", "submission_type", "database_status"],
-            filter_coln_val = {"submission_name": [submission_name], "organism": [organism], "database": [database], "submission_type": [submission_type], "database_status": ["ACTIVE"]},
-            filter_var_by = ["AND", "AND", "AND", "AND", "AND"]
-        )
-
-        # Check if the submission database is active.
-        if db_submission_tbl.shape[0] == 0:
-           raise ValueError(f"Submission '{submission_name}' does not have an active '{database}' database.")
-
-        # Retrieve submitter from submission table
-        submitter = db_submission_tbl.select("submitter").to_series().to_list()[0]
-
-        # Look up submitter credentials
-        submitter_tbl = lookup_tbl_in_database(
-            db_tbl_name=["submitter"],
-            filter_coln_var=["submitter", "submission_portal"],
-            filter_coln_val={"submitter": [submitter], "submission_portal": [database]},
-            filter_var_by=["AND", "AND"]
-        )
-
-        # Check if submitter credentials exist in the database
-        if submitter_tbl.shape[0] == 0:
-            raise ValueError(f"Submitter '{submitter}' does not have credentials for {database}.")
-
-        # Retrieve GISAID credentials for the submitter
-        gisaid_username = submitter_tbl.select("username").to_series().to_list()[0]
-        gisaid_password = submitter_tbl.select("password").to_series().to_list()[0]
-        gisaid_client_id = submitter_tbl.select("gisaid_client_id").to_series().to_list()[0]
-
-        # Define the submission directory as seen by this backend process (used for local
-        # file-existence checks, Popen's cwd, and the stdout log file).
-        submission_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism))
-        submission_name_dir = os.path.join(submission_dir, submission_name)
-        submission_files_dir = os.path.join(submission_name_dir, "submission_files", "GISAID")
-        gisaid_cli_file = os.path.join(submission_dir, "gisaid_cli", f"{organism.lower()}CLI")
-
-        # Check if gisaid_cli_file exists
-        if not os.path.exists(gisaid_cli_file):
-            raise FileNotFoundError(f"GISAID CLI file '{gisaid_cli_file}' does not exist.")
-
-        # Run the copied SeqSender application in its isolated Micromamba environment.
-        upload_cmd = [
-            f"{gisaid_cli_file}",
-            "upload",
-        ]
-        cmd = [
-            "--username", gisaid_username,
-            "--password", gisaid_password,
-            "--clientid", gisaid_client_id,
-        ]
-
-        # Check if metadata file exists in the submission directory
-        metadata_file = os.path.join(submission_files_dir, METADATA_FILENAME)
-        if not os.path.exists(metadata_file):
-            raise FileNotFoundError(f"Metadata file '{metadata_file}' does not exist.")
-        else:
-            cmd.extend(["--metadata", metadata_file])
-
-        # Check if fasta file exists in the submission directory
-        fasta_file = os.path.join(submission_files_dir, FASTA_FILENAME)
-        if not os.path.exists(fasta_file):
-            raise FileNotFoundError(f"FASTA file '{fasta_file}' does not exist.")
-        else:
-            cmd.extend(["--fasta", fasta_file])
-
-        # Add the log file path to the command arguments
-        gisaid_log = os.path.join(submission_files_dir, "gisaid.log")
-        cmd.extend(["--log", gisaid_log])
-
-        # Make sure every metadata sample has a matching sequence, and drop any FASTA record
-        # that isn't referenced by the metadata (e.g. left over after rows were removed).
-        _reconcile_fasta_with_metadata_samples(metadata_file, fasta_file)
-
-        # Record the sample count on every database row for this submission (not just the
-        # rows for the currently-selected databases), since the count isn't database-specific.
-        metadata_tbl = pl.read_csv(metadata_file)
-        n_kept_records = metadata_tbl.select(f"{database_prefixes[database]}-sample_name").unique().height
-        update_tbl_in_database(
-            db_tbl_name=["submission"],
-            table=pl.DataFrame({"number_of_samples": [n_kept_records]}),
-            filter_coln_var=["submission_name", "organism", "database", "submission_type"],
-            filter_coln_val={
-                "submission_name": [submission_name],
-                "organism": [organism],
-                "database": [database],
-                "submission_type": [submission_type],
-            },
-            filter_var_by=["AND", "AND", "AND", "AND"],
-        )
-
-        # Create seqsender_stdout.log file in the submission directory
-        gisaid_stdout_path = os.path.join(submission_name_dir, "gisaid.stdout.log")
-        stdout_fh = open(gisaid_stdout_path, "w", encoding="utf-8")
-
-        # Log the command that will be executed
-        logger.info(
-            f"Launching GISAID CLI pipeline for submission '{submission_name}' with command:\n" +
-            f"{gisaid_cli_file} upload\n" +
-            f" --username {gisaid_username}\n" +
-            f" --password {gisaid_password}\n" +
-            f" --clientid {gisaid_client_id}\n" +
-            f" --metadata {metadata_file}\n" +
-            f" --fasta {fasta_file}\n" +
-            f" --log {gisaid_log}\n"
-        )    
-
-        # Run SeqSender asynchronously so the API can return its PID immediately.
-        upload_proc = subprocess.Popen(
-            upload_cmd + cmd,
-            cwd=submission_name_dir,
-            stdout=stdout_fh,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-
-        # The child has inherited its own copy of the file descriptor; the parent's copy
-        # is no longer needed and can be closed safely.
-        stdout_fh.close()
-
-        # Record the process information in the global dictionary with thread safety.
-        with _SEQSENDER_PROCESS_LOCK:
-            _SEQSENDER_PROCESSES[upload_proc.pid] = {
-                "process": upload_proc,
-                "identity": f"{submission_name}_{organism}_GISAID_{submission_type}",
-                "log_path": gisaid_stdout_path,
-            }
-
-        # Return the process ID and command for reference
-        return {
-            "status":  "success",
-            "pid":     upload_proc.pid,
-        }
-    except ValueError as err:
-        raise ValueError(str(err))
-    except Exception as err:
-        raise Exception(str(err))
-
-
 # Prepare SeqSender submission files without submitting to any portal
 def prep_seqsender_submission(
     submission_name: str,
@@ -2123,7 +1861,7 @@ def prep_seqsender_submission(
     submission_type: str
 ) -> Dict[str, Any]:
     """
-    Generate the per-database submission files (BioSample/SRA/GenBank/GISAID) for a stored
+    Generate the per-database submission files (BioSample/SRA/GenBank) for a stored
     submission without launching an actual submission to any portal.
 
     Args:
@@ -2195,7 +1933,7 @@ def prep_seqsender_submission(
         # Check if fasta file exists in the submission directory. Only pass --fasta_file when
         # GenBank is selected -- SeqSender validates the path even for BioSample/SRA-only runs.
         fasta_file = os.path.join(submission_name_dir, FASTA_FILENAME)
-        if "GENBANK" in selected_databases or "GISAID" in selected_databases:
+        if "GENBANK" in selected_databases:
             if not os.path.exists(fasta_file):
                 raise FileNotFoundError(f"FASTA file '{fasta_file}' does not exist.")
             cmd.extend(["--fasta_file", fasta_file])
@@ -2206,7 +1944,7 @@ def prep_seqsender_submission(
 
         # Reconcile sequence records when GenBank is selected, then record each database's
         # unique sample count using its own sample_name column.
-        if "GENBANK" in selected_databases or "GISAID" in selected_databases:
+        if "GENBANK" in selected_databases:
             _reconcile_fasta_with_metadata_samples(metadata_file, fasta_file)
 
         # Ensure that the metadata table has the expected structure before proceeding
@@ -2240,15 +1978,13 @@ def prep_seqsender_submission(
             cmd.extend(["--table2asn"])
 
         # Database selection flags -- these only select which per-database files "prep" creates,
-        # no actual portal submission (and thus no GISAID CLI) is required for this command.
+        # no actual portal submission is required for this command.
         if "BIOSAMPLE" in selected_databases:
             cmd.extend(["--biosample"])
         if "SRA" in selected_databases:
             cmd.extend(["--sra"])
         if "GENBANK" in selected_databases:
             cmd.extend(["--genbank"])
-        if "GISAID" in selected_databases:
-            cmd.extend(["--gisaid"])
 
         # Log the command that will be executed
         logger.info(
@@ -2260,10 +1996,9 @@ def prep_seqsender_submission(
             (f" --biosample\n" if "BIOSAMPLE" in selected_databases else "") +
             (f" --sra\n" if "SRA" in selected_databases else "") +
             (f" --genbank\n" if "GENBANK" in selected_databases else "") +
-            (f" --gisaid\n" if "GISAID" in selected_databases else "") +
             f" --config_file {config_file}\n" +
             f" --metadata_file {metadata_file}\n" +
-            (f" --fasta_file {fasta_file}\n" if "GENBANK" in selected_databases or "GISAID" in selected_databases else "") +
+            (f" --fasta_file {fasta_file}\n" if "GENBANK" in selected_databases else "") +
             (f" --gff_file {gff_file_path}\n" if gff_file else "") +
             (f" --table2asn\n" if table2asn else "")
         )
@@ -2419,13 +2154,8 @@ def check_seqsender_submission(
     submission_type: str
 ) -> Dict[str, Any]:
 
-    # SeqSender submission logs track NCBI targets only. GISAID files are downloaded and
-    # submitted manually, so never include GISAID in a remote status check.
-    selected_databases = [
-        normalized_database
-        for db in database
-        if (normalized_database := _normalize_seqsender_database(db)) != "GISAID"
-    ]
+    # SeqSender submission logs track NCBI targets only.
+    selected_databases = [_normalize_seqsender_database(db) for db in database]
     if not selected_databases:
         return load_submission_status(
             submission_name=submission_name,
@@ -2528,20 +2258,19 @@ def load_submission_status(
         raise ValueError(f"Submission '{submission_name}' does not exist in the database.")
     
     # Retrieve values from the submission. SeqSender's log and status report contain NCBI
-    # targets only; GISAID is submitted manually and keeps its independently stored status.
+    # targets only.
     submission_status = db_submission_tbl.select("submission_status").to_series().to_list()[0]
     ncbi_databases = sorted({
-        normalized_database
+        _normalize_seqsender_database(str(row["database"]))
         for row in db_submission_tbl.to_dicts()
-        if (normalized_database := _normalize_seqsender_database(str(row["database"]))) != "GISAID"
-        and str(row.get("database_status") or "ACTIVE").strip().upper() == "ACTIVE"
+        if str(row.get("database_status") or "ACTIVE").strip().upper() == "ACTIVE"
     })
     if not ncbi_databases:
         return {
             "status": submission_status,
             "database_statuses": {},
             "submission_status_report": {},
-            "message": "GISAID is submitted manually; no NCBI submission status was checked.",
+            "message": "No active NCBI databases; no submission status was checked.",
         }
 
     table2asn = any(

@@ -21,7 +21,7 @@ class UpdateAllSubmissionStatusesTests(TestCase):
                 {
                     "submission_name": "mixed-status",
                     "organism": "FLU",
-                    "database": "GISAID",
+                    "database": "GENBANK",
                     "submission_type": "consensus",
                     "submission_status": "SUBMITTED",
                     "ncbi_submission_status": None,
@@ -29,7 +29,7 @@ class UpdateAllSubmissionStatusesTests(TestCase):
                 {
                     "submission_name": "ready",
                     "organism": "FLU",
-                    "database": "GISAID",
+                    "database": "GENBANK",
                     "submission_type": "consensus",
                     "submission_status": "PROCESSING",
                     "ncbi_submission_status": None,
@@ -72,7 +72,7 @@ class UpdateAllSubmissionStatusesTests(TestCase):
         check_submission.assert_called_once_with(
             submission_name="ready",
             organism="FLU",
-            database=["GISAID", "NCBI"],
+            database=["GENBANK", "NCBI"],
             submission_type="consensus",
         )
         self.assertEqual(

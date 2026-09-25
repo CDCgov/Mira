@@ -196,7 +196,6 @@ const API = {
   uploadSeqsenderMetadata:           `${API_BASE}/upload/seqsender/metadata`,
   uploadSeqsenderFasta:              `${API_BASE}/upload/seqsender/fasta`,
   uploadSeqsenderRawReads:           `${API_BASE}/upload/seqsender/raw_reads`,
-  uploadSeqsenderGisaidCli:          `${API_BASE}/upload/seqsender/gisaid_cli`,
   uploadSeqsenderGff:                `${API_BASE}/upload/seqsender/gff`,
   createSeqsenderConfig:             `${API_BASE}/create/config`,
   createSeqsenderSubmission:         `${API_BASE}/create/submission`,
@@ -217,7 +216,6 @@ const API = {
   retrieveSeqSenderConfig:           `${API_BASE}/retrieve/config`,
   retrieveSeqSenderMetadata:         `${API_BASE}/retrieve/metadata`,
   retrieveSeqSenderFasta:            `${API_BASE}/retrieve/fasta`,
-  retrieveSeqSenderGisaidCli:        `${API_BASE}/retrieve/gisaid_cli`,
   retrieveSeqSenderGff:              `${API_BASE}/retrieve/gff`,
   retrieveSeqSenderTable2asn:        `${API_BASE}/retrieve/table2asn`,
   retrieveSeqSenderSubmissionLog:    `${API_BASE}/retrieve/submission_log`,
@@ -384,13 +382,12 @@ const TABS = [
 const STATS = [
   { tag: "mira", label: "Sequencing Runs", value: "…",  hover: "Click here to see past runs",  icon: Cpu, color: "text-teal-600" },
   { tag: "seqsender-ncbi", label: "Submissions to NCBI", value: "…", sub: "",  icon: Cloud,   color: "text-purple-500" },
-  { tag: "seqsender-gisaid", label: "Submissions to GISAID", value: "…", sub: "", icon: Cloud,   color: "text-purple-500" },
 ];
 
 const FEATURES = [
   { icon: Cpu,          title: "IRMA Assembly",     desc: "Iterative refinement meta-assembler for influenza, SARS-CoV-2 and RSV consensus genome assembly from FASTQ reads." },
   { icon: ShieldCheck,  title: "QC & Clade Assignment", desc: "Automated quality control metrics per segment and Nextclade-powered clade/lineage assignment for all supported pathogens." },
-  { icon: Send,         title: "SeqSender",          desc: "One-click submission pipeline to NCBI BioSample, SRA, GenBank, and GISAID with configurable metadata and validation." },
+  { icon: Send,         title: "SeqSender",          desc: "One-click submission pipeline to NCBI BioSample, SRA, and GenBank with configurable metadata and validation." },
   { icon: Network,      title: "Nextclade Integration", desc: "Build pre-configured Nextclade Web URLs to visualize clade assignments, mutations, and phylogenetic placement." },
 ];
 
@@ -505,7 +502,7 @@ function HomeChartCard({ icon: Icon, title, statValue, statLabel, data, color, u
 
 function SubmissionTurnaroundChart({ data, loading }) {
   const hasData = Array.isArray(data) && data.length > 0;
-  const databaseOrder = ["GISAID", "BIOSAMPLE", "SRA", "GENBANK"];
+  const databaseOrder = ["BIOSAMPLE", "SRA", "GENBANK"];
   const databases = [...new Set(data.map((row) => row.database))].sort((a, b) => {
     const aIndex = databaseOrder.indexOf(a);
     const bIndex = databaseOrder.indexOf(b);
@@ -529,7 +526,6 @@ function SubmissionTurnaroundChart({ data, loading }) {
     BIOSAMPLE: "#0081A1",
     GENBANK: "#722161",
     SRA: "#2F6B3C",
-    GISAID: "#C45A16",
   };
   const fallbackColors = ["#466D8A", "#A13D63", "#557A46", "#B87824"];
   const maxDays = hasData ? Math.max(...data.map((row) => row.days)) : 0;
@@ -627,7 +623,6 @@ function SubmissionTurnaroundChart({ data, loading }) {
 function HomeTab({ onNewRun, onLoadRun, onOpenSeqSender, isActive }) {
   const [runCount, setRunCount] = useState(null);
   const [ncbiCount, setNcbiCount] = useState(null);     // sequences submitted to NCBI (GenBank + SRA)
-  const [gisaidCount, setGisaidCount] = useState(null); // sequences submitted to GISAID
   const [segmentsTrend, setSegmentsTrend] = useState(null); // null = loading, [] = no data
   const [submissionTurnaround, setSubmissionTurnaround] = useState(null);
 
@@ -641,9 +636,8 @@ function HomeTab({ onNewRun, onLoadRun, onOpenSeqSender, isActive }) {
         const activeRows = rows.filter((row) => String(row.database_status ?? "ACTIVE").toUpperCase() === "ACTIVE");
         const submittedRows = activeRows.filter((row) => String(row.submission_status).toUpperCase() !== "CREATED");
         if (!cancelled) {
-          // Each row is one (submission, database) pair — count NCBI (GenBank + SRA) and GISAID submissions separately.
+          // Each row is one (submission, database) pair.
           setNcbiCount(submittedRows.filter((r) => ["GENBANK", "SRA", "BIOSAMPLE"].includes((r.database ?? "").toUpperCase())).length);
-          setGisaidCount(submittedRows.filter((r) => (r.database ?? "").toUpperCase() === "GISAID").length);
           const latestBySubmissionDatabase = new Map();
           activeRows.forEach((row) => {
             if (!row.submission_name || !row.database || !row.date_submitted || !row.date_updated) return;
@@ -682,7 +676,7 @@ function HomeTab({ onNewRun, onLoadRun, onOpenSeqSender, isActive }) {
           );
         }
       } catch {
-        if (!cancelled) { setNcbiCount(0); setGisaidCount(0); setSubmissionTurnaround([]); }
+        if (!cancelled) { setNcbiCount(0); setSubmissionTurnaround([]); }
       }
     })();
     return () => { cancelled = true; };
@@ -803,10 +797,8 @@ function HomeTab({ onNewRun, onLoadRun, onOpenSeqSender, isActive }) {
               <Send size={22} className="shrink-0 text-sky-700" />
               <p className="whitespace-nowrap text-xl font-bold leading-none">New Submission</p>
             </button>
-            {STATS.filter(({ tag }) => tag !== "mira" && tag !== "seqsender-gisaid").map(({ tag, label, sub, icon: Icon, color }) => {
-              const displayValue = tag === "seqsender-ncbi"
-                ? (ncbiCount === null ? "…" : ncbiCount.toLocaleString())
-                : (gisaidCount === null ? "…" : gisaidCount.toLocaleString());
+            {STATS.filter(({ tag }) => tag !== "mira").map(({ label, sub, icon: Icon, color }) => {
+              const displayValue = ncbiCount === null ? "…" : ncbiCount.toLocaleString();
               return (
                 <button
                   key={label}
@@ -864,7 +856,7 @@ const ASSEMBLY_STEPS = [
 
 const SEQSENDER_ACTION = {
   title: "Step 5: SeqSender",
-  subtitle: "Submit assembled sequences to NCBI & GISAID databases",
+  subtitle: "Submit assembled sequences to NCBI databases",
   icon: Send,
 };
 
@@ -5771,7 +5763,6 @@ const DB_LIST = [
   { key: "biosample", value: "BIOSAMPLE", label: "BioSample", url: "https://www.ncbi.nlm.nih.gov/biosample/"},
   { key: "sra", value: "SRA", label: "SRA", url: "https://www.ncbi.nlm.nih.gov/sra/ "},
   { key: "genbank", value: "GENBANK", label: "GenBank", url: "https://www.ncbi.nlm.nih.gov/genbank/"},
-  { key: "gisaid", value: "GISAID", label: "GISAID", url: "https://www.gisaid.org/"},
 ];
 
 const submitterListCache = new Map();
@@ -5815,8 +5806,8 @@ function SectionHeader({ title, icon: Icon, open, onToggle, widthClass = "w-full
   );
 }
 
-// Pick an existing submitter (by portal), used by the NCBI/GISAID credential
-// blocks' "Existing User" mode.
+// Pick an existing submitter (by portal), used by the NCBI credential
+// block's "Existing User" mode.
 function ExistingSubmitterPicker({ submitters, loading, error, selectedId, onSelect, placeholder, disabled = false }) {
   return (
     <div>
@@ -5859,7 +5850,6 @@ const SEQSENDER_METADATA_TABLES = [
   { key: "biosample", title: "BioSample Metadata", prefixes: ["bs-"], sampleNameColumn: "bs-sample_name" },
   { key: "sra", title: "SRA Metadata", prefixes: ["sra-"], sampleNameColumn: "sra-sample_name" },
   { key: "genbank", title: "GenBank Metadata", prefixes: ["gb-", "src-", "cmt-"], sampleNameColumn: "gb-sample_name" },
-  { key: "gisaid", title: "GISAID Metadata", prefixes: ["gs-"], sampleNameColumn: "gs-sample_name" },
 ];
 
 const SEQSENDER_DATABASE_PREFIXES = SEQSENDER_METADATA_TABLES.flatMap(({ prefixes }) => prefixes);
@@ -6345,7 +6335,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     .filter((row) => String(row.database_status ?? "ACTIVE").toUpperCase() === "ACTIVE");
   const initialDatabases = new Set(initialRows.map((row) => row.database));
   const initialNcbiRow = initialRows.find((row) => row.submission_portal === "NCBI") ?? null;
-  const initialGisaidRow = initialRows.find((row) => row.submission_portal === "GISAID") ?? null;
   const storedSubmissionQuery = (() => {
     if (!initialSubmission) return "";
     const params = new URLSearchParams();
@@ -6500,8 +6489,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     biosample: initialDatabases.has("BIOSAMPLE"),
     sra: initialDatabases.has("SRA"),
     genbank: initialDatabases.has("GENBANK"),
-    gisaid: initialDatabases.has("GISAID"),
-  } : { biosample: true, sra: true, genbank: true, gisaid: true });
+  } : { biosample: true, sra: true, genbank: true });
   const [organism, setOrganism]             = useState(initialSubmission?.organism ?? "FLU"); // default to Influenza
   const [subName, setSubName]               = useState(initialSubmission?.submission_name ?? "");
   const [metaFile, setMetaFile]             = useState(initialSubmission ? "metadata.csv (stored)" : "");
@@ -6510,9 +6498,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
   const [fastaFileObject, setFastaFileObject] = useState(null); // File object for the selected FASTA File, for actual upload
   const [rawReadsFiles, setRawReadsFiles]     = useState(initialDatabases.has("SRA") ? "FASTQ files (stored)" : ""); // multiple raw FASTQ read files for SRA submission
   const [rawReadsFileObjects, setRawReadsFileObjects] = useState([]); // File objects for the selected Raw Reads files, for actual upload
-  const [gisaidCliFile, setGisaidCliFile]             = useState(null);
-  const [gisaidCliFileObject, setGisaidCliFileObject] = useState(null); // File object for the selected GISAID CLI file, for actual upload
-  const [gisaidCliMode, setGisaidCliMode]   = useState(initialDatabases.has("GISAID") ? "existing" : "new"); // "new" | "existing" — reuse the CLI already stored for this organism
   const [gffFile, setGffFile]               = useState(initialRows.some((row) => row.gff_file) ? "annotation.gff (stored)" : "");
   const [gffFileObject, setGffFileObject]   = useState(null);
   const [table2asn, setTable2asn]           = useState(initialRows.some((row) => row.table2asn));
@@ -6770,7 +6755,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     return { file: new File([serializedMetadata], "metadata.csv", { type: "text/csv" }), rows: normalizedRows };
   };
 
-  // ── Submission credentials (Submission.NCBI / Submission.GISAID in config.yaml) ──
+  // ── Submission credentials (Submission.NCBI in config.yaml) ──
   const [ncbiUsername, setNcbiUsername]             = useState("");
   const [ncbiPassword, setNcbiPassword]             = useState("");
   const [ncbiSpuidNamespace, setNcbiSpuidNamespace] = useState("");
@@ -6798,56 +6783,42 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
   const [ncbiPubTitle, setNcbiPubTitle]                     = useState(initialNcbiRow?.ncbi_publication_title ?? "");
   const [ncbiPubStatus, setNcbiPubStatus]                   = useState(initialNcbiRow?.ncbi_publication_status ?? "Unpublished");
   const [ncbiPubReleaseDate, setNcbiPubReleaseDate]         = useState(initialNcbiRow?.ncbi_release_date ?? "");
-  const [gisaidClientId, setGisaidClientId]         = useState(null);
-  const [gisaidUsername, setGisaidUsername]         = useState(null);
-  const [gisaidPassword, setGisaidPassword]         = useState(null);
 
-  // ── New vs Existing submitter picker (per portal) ──
+  // ── New vs Existing submitter picker ──
   const [ncbiUserMode, setNcbiUserMode]             = useState("new"); // "new" | "existing"
   const [ncbiSubmitters, setNcbiSubmitters]         = useState([]);
   const [ncbiSubmittersLoading, setNcbiSubmittersLoading] = useState(false);
   const [ncbiSubmittersError, setNcbiSubmittersError]     = useState(null);
   const [ncbiSelectedSubmitterId, setNcbiSelectedSubmitterId] = useState("");
-  const [gisaidUserMode, setGisaidUserMode]         = useState("new"); // "new" | "existing"
-  const [gisaidSubmitters, setGisaidSubmitters]     = useState([]);
-  const [gisaidSubmittersLoading, setGisaidSubmittersLoading] = useState(false);
-  const [gisaidSubmittersError, setGisaidSubmittersError]     = useState(null);
-  const [gisaidSelectedSubmitterId, setGisaidSelectedSubmitterId] = useState("");
 
-  // ── Standalone "Save credentials" state (per portal) ──
+  // ── Standalone "Save credentials" state ──
   const [ncbiSaveStatus, setNcbiSaveStatus]         = useState("idle"); // "idle" | "saving" | "saved" | "error"
   const [ncbiSaveError, setNcbiSaveError]           = useState(null);
-  const [gisaidSaveStatus, setGisaidSaveStatus]     = useState("idle"); // "idle" | "saving" | "saved" | "error"
-  const [gisaidSaveError, setGisaidSaveError]       = useState(null);
 
-  // ── Standalone "Delete submitter" state (per portal) ──
+  // ── Standalone "Delete submitter" state ──
   const [ncbiDeleteStatus, setNcbiDeleteStatus]     = useState("idle"); // "idle" | "deleting" | "error"
   const [ncbiDeleteError, setNcbiDeleteError]       = useState(null);
-  const [gisaidDeleteStatus, setGisaidDeleteStatus] = useState("idle"); // "idle" | "deleting" | "error"
-  const [gisaidDeleteError, setGisaidDeleteError]   = useState(null);
-  const [deleteSubmitterModal, setDeleteSubmitterModal] = useState(null); // "NCBI" | "GISAID" | null — which portal's confirmation modal is open
+  const [deleteSubmitterModal, setDeleteSubmitterModal] = useState(null); // "NCBI" | null — whether the confirmation modal is open
 
 
   const loadSubmitters = useCallback(async (portal, options) => {
-    const isNcbi = portal === "NCBI";
-    (isNcbi ? setNcbiSubmittersLoading : setGisaidSubmittersLoading)(true);
-    (isNcbi ? setNcbiSubmittersError : setGisaidSubmittersError)(null);
+    setNcbiSubmittersLoading(true);
+    setNcbiSubmittersError(null);
     try {
       const submitters = await fetchSubmitters(portal, options);
-      (isNcbi ? setNcbiSubmitters : setGisaidSubmitters)(submitters);
+      setNcbiSubmitters(submitters);
     } catch (err) {
-      (isNcbi ? setNcbiSubmittersError : setGisaidSubmittersError)(err.message || "Failed to load submitters.");
+      setNcbiSubmittersError(err.message || "Failed to load submitters.");
     } finally {
-      (isNcbi ? setNcbiSubmittersLoading : setGisaidSubmittersLoading)(false);
+      setNcbiSubmittersLoading(false);
     }
   }, []);
 
-  // Fetch both portals' saved submitters up front — whether the New/Existing toggle is
+  // Fetch saved submitters up front — whether the New/Existing toggle is
   // shown at all depends on whether any submitters exist, so this can't be lazy.
   useEffect(() => {
     if (!isActive) return;
     loadSubmitters("NCBI");
-    loadSubmitters("GISAID");
   }, [isActive, loadSubmitters]);
   // For a brand-new submission (no initialSubmission to hydrate from), default straight to
   // "Existing User" the first time each portal's submitter list loads with entries, so
@@ -6861,13 +6832,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       setNcbiUserMode("existing");
     }
   }, [initialSubmission, ncbiSubmitters]);
-  const gisaidAutoModeSetRef = useRef(false);
-  useEffect(() => {
-    if (!initialSubmission && !gisaidAutoModeSetRef.current && gisaidSubmitters.length > 0) {
-      gisaidAutoModeSetRef.current = true;
-      setGisaidUserMode("existing");
-    }
-  }, [initialSubmission, gisaidSubmitters]);
 
   // Poll the SeqSender submission process status at regular intervals.
   useEffect(() => {
@@ -6966,18 +6930,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     setNcbiPubReleaseDate(s.ncbi_release_date ?? "");
   };
 
-  // Fill GISAID fields from a previously saved submitter.
-  const selectGisaidSubmitter = (s) => {
-    setGisaidSaveStatus("idle");
-    setGisaidSaveError(null);
-    setGisaidDeleteStatus("idle");
-    setGisaidDeleteError(null);
-    setGisaidSelectedSubmitterId(String(s.submitter_id));
-    setGisaidUsername(s.submitter_name ?? "");
-    setGisaidPassword(s.submitter_password ?? "");
-    setGisaidClientId(s.gisaid_client_id ?? "");
-  };
-
   // Clear every NCBI credential/organization field back to a blank "New User" form.
   const clearNcbiFields = () => {
     setNcbiUsername("");
@@ -7000,13 +6952,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     setNcbiSubmitterAltEmail("");
     setNcbiSubmitterFirst("");
     setNcbiSubmitterLast("");
-  };
-
-  // Clear every GISAID credential field back to a blank "New User" form.
-  const clearGisaidFields = () => {
-    setGisaidUsername(null);
-    setGisaidPassword(null);
-    setGisaidClientId(null);
   };
 
   // Permanently remove the selected NCBI submitter's saved credentials.
@@ -7034,31 +6979,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     }
   };
 
-  // Permanently remove the selected GISAID submitter's saved credentials.
-  const handleDeleteGisaidSubmitter = async () => {
-    const submitter = gisaidSubmitters.find((s) => String(s.submitter_id) === gisaidSelectedSubmitterId);
-    if (!submitter) return;
-    setGisaidDeleteStatus("deleting");
-    setGisaidDeleteError(null);
-    try {
-      const res = await fetch(API.deleteSubmitter, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ submitter_name: submitter.submitter_name, submission_portal: "GISAID" }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || "Failed to delete GISAID submitter.");
-      setGisaidSelectedSubmitterId("");
-      clearGisaidFields();
-      setGisaidDeleteStatus("idle");
-      setDeleteSubmitterModal(null);
-      await loadSubmitters("GISAID", { force: true });
-    } catch (err) {
-      setGisaidDeleteStatus("error");
-      setGisaidDeleteError(err.message || "Failed to delete GISAID submitter.");
-    }
-  };
-
   // Hydrate credentials from the saved submitter rows associated with a selected past submission.
   useEffect(() => {
     if (!initialSubmission) return;
@@ -7070,12 +6990,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       setNcbiPubStatus(initialNcbiRow.ncbi_publication_status ?? "Unpublished");
       setNcbiPubReleaseDate(initialNcbiRow.ncbi_release_date ?? "");
     }
-    if (initialGisaidRow) {
-      setGisaidUserMode("existing");
-      const submitter = gisaidSubmitters.find((item) => item.submitter_name === initialGisaidRow.submitter_name);
-      if (submitter) selectGisaidSubmitter(submitter);
-    }
-  }, [initialSubmission, ncbiSubmitters, gisaidSubmitters]);
+  }, [initialSubmission, ncbiSubmitters]);
 
   const isValidEmailAddr = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 
@@ -7150,42 +7065,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     }
   };
 
-  // Save just the GISAID credentials block to the database, independent of any submission.
-  const handleSaveGisaidSubmitter = async () => {
-    const missing = [];
-    if (!gisaidUsername) missing.push("GISAID Credentials: Username");
-    if (!gisaidPassword) missing.push("GISAID Credentials: Password");
-    if (!gisaidClientId) missing.push("GISAID Credentials: Client-Id");
-
-    if (missing.length > 0) {
-      setGisaidSaveStatus("error");
-      setGisaidSaveError(missing);
-      return;
-    }
-
-    setGisaidSaveStatus("saving");
-    setGisaidSaveError(null);
-    try {
-      const res = await fetch(API.saveSubmitter, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          submitter_name: gisaidUsername,
-          submitter_password: gisaidPassword,
-          submission_portal: "GISAID",
-          gisaid_client_id: gisaidClientId,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || "Failed to save GISAID credentials.");
-      setGisaidSaveStatus("saved");
-      await loadSubmitters("GISAID", { force: true });
-    } catch (err) {
-      setGisaidSaveStatus("error");
-      setGisaidSaveError([err.message || "Failed to save GISAID credentials."]);
-    }
-  };
-
   // ── Collapsible section state ──
   // A new submission, or a past submission still entirely CREATED (never submitted), opens every
   // section; any other past submission collapses every section except Status.
@@ -7211,25 +7090,10 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
   }));
 
   const toggleDb = (k) => setDbs((p) => ({ ...p, [k]: !p[k] }));
-  const showGisaidCredentialInputs = false;
-  const showGisaidCliInput = false;
   const selectedDatabases = Object.entries(dbs)
     .filter(([, selected]) => selected)
     .map(([database]) => database.toUpperCase());
-  const selectedNcbiDatabases = selectedDatabases.filter((database) => database !== "GISAID");
-  const submissionFilesDownloadUrl = (database) => {
-    const submissionName = submissionJob?.submission_name ?? initialSubmission?.submission_name ?? subName;
-    const submissionOrganism = submissionJob?.organism ?? initialSubmission?.organism ?? organism;
-    const submissionType = submissionJob?.submission_type ?? initialSubmission?.submission_type ?? (testMode ? "TEST" : "PRODUCTION");
-    if (!submissionName || !submissionOrganism) return "";
-    const params = new URLSearchParams({
-      submission_name: submissionName,
-      organism: submissionOrganism,
-      database,
-      submission_type: submissionType,
-    });
-    return `${API.downloadSeqsenderSubmissionFiles}?${params.toString()}`;
-  };
+  const selectedNcbiDatabases = selectedDatabases;
 
   // Validate every required field (scoped to the selected databases) before allowing final submission.
   const handleSubmit = async (mode = "submit") => {
@@ -7263,8 +7127,8 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     const gffRequired = table2asn && (organism === "FLU" || organism === "COV");
     if (gffRequired && !gffFile) missing.push("Submission Options: GFF File is required when --table2asn is enabled.");
 
-    // FASTA is only required for GenBank/GISAID submissions — BioSample and SRA don't need sequences.
-    const fastaRequired = dbs.genbank || dbs.gisaid;
+    // FASTA is only required for GenBank submissions — BioSample and SRA don't need sequences.
+    const fastaRequired = dbs.genbank;
 
     if (!initialSubmission) {
       if (!metaFile) missing.push("Submission Inputs: Metadata File");
@@ -7373,7 +7237,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         database: selectedDatabases,
         submission_type: testMode ? "TEST" : "PRODUCTION",
         ncbi_submitter_info: ncbiSubmitterInfo,
-        gisaid_submitter_info: null,
         gff_file: !!gffFile,
         table2asn: table2asn,
         ncbi_publication_title: ncbiPubTitle,
@@ -7405,15 +7268,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         const uploadData = await uploadRes.json().catch(() => ({}));
         if (!uploadRes.ok) throw new Error(uploadData.detail || `Failed to upload ${fieldName}`);
       };
-      const uploadGisaidCli = async (url, fieldName, file) => {
-        const form = new FormData();
-        form.append("organism", submissionData.organism);
-        if (Array.isArray(file)) file.forEach((f) => form.append(fieldName, f));
-        else if (file) form.append(fieldName, file);
-        const uploadRes = await fetch(url, { method: "POST", body: form });
-        const uploadData = await uploadRes.json().catch(() => ({}));
-        if (!uploadRes.ok) throw new Error(uploadData.detail || `Failed to upload ${fieldName}`);
-      };
       // Upload the selected files to the backend API endpoints for each file type.
       // Metadata is always re-serialized from metadataPreview (not gated on metaFileObject) so a
       // past submission's stored metadata.csv also picks up normalization (e.g. collection_date)
@@ -7432,10 +7286,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       }
       if (gffFileObject) {
         await uploadFile(API.uploadSeqsenderGff, "gff_file", gffFileObject);
-      }
-      // "Existing CLI" mode reuses whatever GISAID CLI file is already stored for this organism — skip upload.
-      if (showGisaidCliInput && dbs.gisaid && gisaidCliMode === "new" && gisaidCliFileObject) {
-        await uploadGisaidCli(API.uploadSeqsenderGisaidCli, "gisaid_cli_file", gisaidCliFileObject);
       }
 
       // If new submission, check for existing submission with the same identity.
@@ -7475,7 +7325,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         metadata: metadataPreview.columns.length > 0,
         fasta: !!fastaFileObject,
         raw_reads: rawReadsFileObjects.length > 0,
-        gisaid_cli: gisaidCliMode === "new" && !!gisaidCliFileObject,
         gff: !!gffFileObject,
       };
 
@@ -7509,7 +7358,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         setCreateFilesResult(prepData);
 
         if (ncbiActive) loadSubmitters("NCBI", { force: true });
-        if (dbs.gisaid) loadSubmitters("GISAID", { force: true });
         props.onSubmitted?.();
 
       } else {
@@ -7556,7 +7404,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         // carried submitter_name/ncbi_spuid_namespace, dropping every other field (org, address,
         // publication, etc.), so re-selecting that "just created" entry later showed blank fields.
         if (ncbiActive) loadSubmitters("NCBI", { force: true });
-        if (dbs.gisaid) loadSubmitters("GISAID", { force: true });
 
         // Let the parent tab know a submission was just created/updated so the Past Submissions
         // panel refreshes even if it was already open (its own mount-time fetch won't rerun otherwise).
@@ -7875,98 +7722,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
             </div>
           )}
 
-          {showGisaidCredentialInputs && dbs.gisaid && (
-            <div className="w-full rounded-xl border border-border bg-muted/10 p-3 space-y-3">
-              <p className="text-xs font-bold text-foreground uppercase tracking-wider">GISAID</p>
-              <div>
-                <FieldLabel>Username <span className="text-destructive">*</span></FieldLabel>
-                {gisaidSubmitters.length > 0 && (
-                  <div className="flex gap-2 mb-2">
-                    <button type="button" disabled={!canCreateOrSubmit} onClick={() => { setGisaidUserMode("new"); setGisaidSelectedSubmitterId(""); setGisaidSaveStatus("idle"); setGisaidSaveError(null); setGisaidDeleteStatus("idle"); setGisaidDeleteError(null); clearGisaidFields(); }}
-                      className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors disabled:opacity-60 disabled:cursor-not-allowed",
-                        gisaidUserMode === "new" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary hover:text-primary")}>
-                      New User
-                    </button>
-                    <button type="button" disabled={!canCreateOrSubmit} onClick={() => { setGisaidUserMode("existing"); setGisaidSaveStatus("idle"); setGisaidSaveError(null); setGisaidDeleteStatus("idle"); setGisaidDeleteError(null); }}
-                      className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors disabled:opacity-60 disabled:cursor-not-allowed",
-                        gisaidUserMode === "existing" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary hover:text-primary")}>
-                      Existing User
-                    </button>
-                  </div>
-                )}
-                {gisaidUserMode === "existing" && gisaidSubmitters.length > 0 ? (
-                  <ExistingSubmitterPicker
-                    submitters={gisaidSubmitters}
-                    loading={gisaidSubmittersLoading}
-                    error={gisaidSubmittersError}
-                    selectedId={gisaidSelectedSubmitterId}
-                    onSelect={selectGisaidSubmitter}
-                    placeholder="Select a GISAID submitter…"
-                    disabled={!canCreateOrSubmit}
-                  />
-                ) : (
-                  <input
-                    value={gisaidUsername ?? ""}
-                    onChange={(e) => setGisaidUsername(e.target.value)}
-                    placeholder="e.g. your GISAID username"
-                    autoComplete="off"
-                    disabled={!canCreateOrSubmit}
-                    className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
-                  />
-                )}
-              </div>
-              <div>
-                <FieldLabel>Password <span className="text-destructive">*</span></FieldLabel>
-                <PasswordInput value={gisaidPassword ?? ""} onChange={(e) => setGisaidPassword(e.target.value)} disabled={!canCreateOrSubmit} />
-              </div>
-              <div>
-                <FieldLabel>Client-Id <span className="text-destructive">*</span></FieldLabel>
-                <input
-                  value={gisaidClientId ?? ""}
-                  onChange={(e) => setGisaidClientId(e.target.value)}
-                  autoComplete="off"
-                  disabled={!canCreateOrSubmit}
-                  className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-muted"
-                />        
-              </div>
-              <div className="flex items-center gap-3 pt-1 flex-wrap">
-                <button
-                  type="button"
-                  onClick={handleSaveGisaidSubmitter}
-                  disabled={gisaidSaveStatus === "saving" || !canCreateOrSubmit}
-                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {gisaidSaveStatus === "saving" ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
-                  Save GISAID Credentials
-                </button>
-                {gisaidSelectedSubmitterId && (
-                  <button
-                    type="button"
-                    onClick={() => { setGisaidDeleteStatus("idle"); setGisaidDeleteError(null); setDeleteSubmitterModal("GISAID"); }}
-                    disabled={!canCreateOrSubmit}
-                    className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-border text-xs font-semibold text-destructive hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Trash2 size={13} /> Delete Submitter
-                  </button>
-                )}
-                {gisaidSaveStatus === "saved" && (
-                  <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600 dark:text-green-400">
-                    <Check size={13} /> Saved for future use
-                  </span>
-                )}
-              </div>
-              {gisaidSaveStatus === "error" && gisaidSaveError && (
-                <ul className="space-y-0.5">
-                  {gisaidSaveError.map((msg, i) => (
-                    <li key={i} className="flex items-start gap-1.5 text-xs text-destructive">
-                      <AlertCircle size={12} className="shrink-0 mt-0.5" />
-                      <span>{msg}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
         </>
       )}
 
@@ -8020,7 +7775,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
           {/* ── File inputs ────────────── */}
           {[
             { label: "Metadata File",  required: true,  val: metaFile,      set: setMetaFile,       accept: ".csv,.tsv,.xlsx",      ph: "metadata.csv",            show: true, downloadUrl: API.downloadSeqsenderMetadata, onFile: (files) => { setMetaFileObject(files[0] ?? null); setMetadataUndoSnapshot(null); } },
-            { label: "FASTA File",  required: dbs.genbank || dbs.gisaid,  val: fastaFile,     set: setFastaFile,      accept: ".fasta,.fa,.fas",      ph: "sequence.fasta",          show: true, downloadUrl: API.downloadSeqsenderFasta, onFile: (files) => setFastaFileObject(files[0] ?? null) },
+            { label: "FASTA File",  required: dbs.genbank,  val: fastaFile,     set: setFastaFile,      accept: ".fasta,.fa,.fas",      ph: "sequence.fasta",          show: true, downloadUrl: API.downloadSeqsenderFasta, onFile: (files) => setFastaFileObject(files[0] ?? null) },
             { label: "Raw Reads (FASTQs)", required: true, val: rawReadsFiles, set: setRawReadsFiles, accept: ".fastq,.fq,.fastq.gz,.fq.gz", ph: "e.g. sample_R1.fastq.gz, sample_R2.fastq.gz", show: dbs.sra, multiple: true, downloadUrl: API.downloadSeqsenderRawReads, downloadLabel: "Download stored raw reads (.zip)", onFile: (files) => setRawReadsFileObjects(files) },
           ].filter(({ show }) => show).map(({ label, required, val, set, accept, ph, desc, multiple, downloadUrl, downloadLabel, onFile }) => (
             <div key={label} className="w-full">
@@ -8066,50 +7821,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
             </div>
           ))}
 
-          {/* ── GISAID CLI: New upload vs reuse the existing file already stored for this organism ────────────── */}
-          {showGisaidCliInput && dbs.gisaid && (
-            <div className="w-full">
-              <FieldLabel>GISAID CLI <span className="text-destructive">*</span></FieldLabel>
-              <div className="flex gap-2 mb-2">
-                <button type="button" disabled={!canCreateOrSubmit}
-                  onClick={() => { setGisaidCliMode("new"); setGisaidCliFile(null); setGisaidCliFileObject(null); }}
-                  className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-                    gisaidCliMode === "new" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary hover:text-primary")}>
-                  New CLI
-                </button>
-                <button type="button" disabled={!canCreateOrSubmit}
-                  onClick={() => { setGisaidCliMode("existing"); setGisaidCliFile(null); setGisaidCliFileObject(null); }}
-                  className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-                    gisaidCliMode === "existing" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary hover:text-primary")}>
-                  Existing CLI
-                </button>
-              </div>
-              {gisaidCliMode === "new" ? (
-                <div className="flex w-full gap-2">
-                  <input value={gisaidCliFile ?? ""} onChange={(e) => setGisaidCliFile(e.target.value)} placeholder="e.g. fluCLI"
-                    disabled={!canCreateOrSubmit}
-                    className="flex-1 h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-60" />
-                  <label className={cn(
-                    "flex items-center gap-1.5 px-3 h-9 rounded-md border border-border bg-muted/20 text-xs text-muted-foreground transition-colors",
-                    !canCreateOrSubmit ? "cursor-not-allowed opacity-60" : "hover:bg-muted/40 cursor-pointer"
-                  )}>
-                    <FolderOpen size={13} /> Browse
-                    <input type="file" className="hidden" accept="binary"
-                      disabled={!canCreateOrSubmit}
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f) { setGisaidCliFile(f.name); setGisaidCliFileObject(f); }
-                        e.target.value = "";
-                      }} />
-                  </label>
-                </div>
-              ) : (
-                <p className="flex items-center gap-1.5 text-xs text-muted-foreground rounded-md border border-border bg-muted/20 px-3 h-9">
-                  <FolderOpen size={13} className="shrink-0" /> Will reuse the CLI file already stored in this organism's submission folder.
-                </p>
-              )}
-            </div>
-          )}
         </>
       )}
 
@@ -8329,7 +8040,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                 { key: "biosample", label: "BioSample", accessionLabel: "Submission ID",  placeholder: "e.g. SAMN00000000"    },
                 { key: "sra",       label: "SRA",       accessionLabel: "Submission ID",  placeholder: "e.g. SRR00000000"    },
                 { key: "genbank",   label: "GenBank",   accessionLabel: "Submission ID",  placeholder: "e.g. MN000000"       },
-                { key: "gisaid",    label: "GISAID",    accessionLabel: "EPI ISL Accession",    placeholder: "e.g. EPI_ISL_000000" },
               ]
                 .filter(({ key }) => dbs[key])
                 .map(({ key, label, accessionLabel, placeholder }) => {
@@ -8369,27 +8079,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                           )}
                         </span>
                       </div>
-                      {key === "gisaid" ? (
-                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-background px-3 py-2">
-                          <p className="text-xs text-muted-foreground">Download these files and complete the submission using GISAID CLI instructions.</p>
-                          <button
-                            type="button"
-                            onClick={() => downloadStoredFile(
-                              submissionFilesDownloadUrl("GISAID"),
-                              "GISAID Submission Files",
-                              `${submissionJob?.submission_name ?? initialSubmission?.submission_name ?? subName}_gisaid_submission_files.zip`
-                            )}
-                            disabled={storedDownloading === "GISAID Submission Files"}
-                            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {storedDownloading === "GISAID Submission Files" ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />}
-                            Download submission files
-                          </button>
-                          {storedDownloadError?.field === "GISAID Submission Files" && (
-                            <p className="w-full text-xs text-destructive">{storedDownloadError.message}</p>
-                          )}
-                        </div>
-                      ) : statusReportRows.length > 0 && (
+                      {statusReportRows.length > 0 && (
                         <StatusReportTable
                           rows={statusReportRows}
                           onMessageChange={(sampleName, message) => {
@@ -8404,7 +8094,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                         />
                       )}
                       {/* ── Comments — free-text notes attached to this database's submission row ────────────── */}
-                      {key !== "gisaid" && (
                       <div className="space-y-1.5 pt-1">
                         <label htmlFor={`seqsender-comments-${key}`} className="text-xs font-semibold text-foreground">Comments</label>
                         <textarea
@@ -8437,7 +8126,6 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                           )}
                         </div>
                       </div>
-                      )}
                     </div>
                   </div>
                   );
@@ -8487,15 +8175,14 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         </>
       )}
 
-      {/* ── Delete Submitter confirmation modal (shared by NCBI/GISAID) ────────────── */}
+      {/* ── Delete Submitter confirmation modal ────────────── */}
       {deleteSubmitterModal && (() => {
-        const isNcbi = deleteSubmitterModal === "NCBI";
-        const submitters = isNcbi ? ncbiSubmitters : gisaidSubmitters;
-        const selectedId = isNcbi ? ncbiSelectedSubmitterId : gisaidSelectedSubmitterId;
+        const submitters = ncbiSubmitters;
+        const selectedId = ncbiSelectedSubmitterId;
         const submitter = submitters.find((s) => String(s.submitter_id) === selectedId);
-        const deleteStatus = isNcbi ? ncbiDeleteStatus : gisaidDeleteStatus;
-        const deleteError = isNcbi ? ncbiDeleteError : gisaidDeleteError;
-        const handleDelete = isNcbi ? handleDeleteNcbiSubmitter : handleDeleteGisaidSubmitter;
+        const deleteStatus = ncbiDeleteStatus;
+        const deleteError = ncbiDeleteError;
+        const handleDelete = handleDeleteNcbiSubmitter;
         const closeModal = () => {
           if (deleteStatus === "deleting") return;
           setDeleteSubmitterModal(null);
@@ -9616,7 +9303,6 @@ function ResourcesTab() {
           <div className="mt-1 pt-2 border-t border-border">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Databases</p>
             <ResourceLink href="https://www.ncbi.nlm.nih.gov/sra">NCBI SRA</ResourceLink>
-            <ResourceLink href="https://www.gisaid.org">GISAID</ResourceLink>
             <ResourceLink href="https://clades.nextstrain.org">Nextclade Web</ResourceLink>
           </div>
         </ResourceCard>

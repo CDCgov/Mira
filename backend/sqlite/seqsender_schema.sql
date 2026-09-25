@@ -17,10 +17,9 @@ CREATE TABLE IF NOT EXISTS submitter (
                             )),
   submission_portal         TEXT NOT NULL
                             CHECK (submission_portal IN (
-                              'NCBI', 'GISAID'
+                              'NCBI'
                             )),
   ncbi_spuid_namespace      TEXT DEFAULT NULL,
-  gisaid_client_id          TEXT DEFAULT NULL,
   ncbi_org_role             TEXT DEFAULT NULL,
   ncbi_org_type             TEXT DEFAULT NULL,
   ncbi_org_name             TEXT DEFAULT NULL,
@@ -54,12 +53,12 @@ CREATE TABLE IF NOT EXISTS submission (
                             )),
   submission_portal         TEXT NOT NULL
                             CHECK (submission_portal IN (
-                              'NCBI', 'GISAID'
+                              'NCBI'
                             )),
   database                  TEXT NOT NULL 
                             CHECK (database IN (
                               'BIOSAMPLE', 'SRA', 
-                              'GENBANK', 'GISAID'
+                              'GENBANK'
                             )),
   database_status           TEXT NOT NULL DEFAULT 'ACTIVE' 
                             CHECK (database_status IN (

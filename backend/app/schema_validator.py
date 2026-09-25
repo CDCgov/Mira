@@ -177,18 +177,16 @@ biosample_packages = {
 database_targets = [
     "BIOSAMPLE",
     "SRA",
-    "GENBANK",
-    "GISAID"
+    "GENBANK"
 ]
 database_prefixes = {
     "BIOSAMPLE": "bs",
     "SRA": "sra",
-    "GENBANK": "gb",
-    "GISAID": "gs"
+    "GENBANK": "gb"
 }
 database_statuses = ["ACTIVE", "ARCHIVED"]
 submission_types = ["TEST", "PRODUCTION"]
-submission_portals = ["NCBI", "GISAID"]
+submission_portals = ["NCBI"]
 submission_statuses = [
     'CREATED', 'RUNNING', 'SUBMITTED', 'PROCESSING', 
     'CANCELED','FAILED', 'COMPLETED'
@@ -199,11 +197,6 @@ ncbi_submission_statuses = [
     'FAILED', 'PROCESSED', 'ERROR', 'WAITING',
     'DELETED', 'RETRIED', 'VALIDATED', 'EMAILED'
 ]
-gisaid_cli_file = {
-    "FLU": "fluCLI",
-    "COV": "covCLI",
-    "RSV": "rsvCLI"
-}
 # Aliases for SeqSender databases and mapping of SeqSender statuses to internal statuses.
 SEQSENDER_DATABASE_ALIASES = {
     "GENBANK-FTP": "GENBANK",
@@ -247,7 +240,6 @@ submitter_pa_schema = pa.DataFrameSchema(
         "submitter_password": _required_str(description="Password for the submitter."),
         "submission_portal":  _required_enum_col(submission_portals, description="Type of submission portal used by the submitter."),
         "ncbi_spuid_namespace":  _nullable_str(description="Organization SPUID namespace for NCBI submission."),
-        "gisaid_client_id":      _nullable_str(description="Client ID for GISAID submission."),
         "ncbi_org_role":         _nullable_str(description="Organization role for NCBI submission."),
         "ncbi_org_type":         _nullable_str(description="Organization type for NCBI submission."),
         "ncbi_org_name":         _nullable_str(description="Organization name for NCBI submission."),
@@ -378,7 +370,7 @@ submission_log_pa_schema = pa.DataFrameSchema(
             description="Organism associated with the submission."
         ),
         "Database": _required_enum_col(
-            ["BIOSAMPLE", "SRA", "GENBANK-FTP", "GENBANK-TABLE2ASN", "GISAID"],
+            ["BIOSAMPLE", "SRA", "GENBANK-FTP", "GENBANK-TABLE2ASN"],
             description="SeqSender database target and submission method."
         ),
         "Submission_Type": _required_enum_col(

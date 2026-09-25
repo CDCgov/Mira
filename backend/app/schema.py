@@ -162,7 +162,7 @@ class AssemblyRequest(AssemblyInfo):
 class SubmissionInfo(BaseModel):
     submission_name: str = Field(..., description="Name of the submission.")
     organism: _Organisms = Field(..., description="Organism for which to send sequences.")
-    submission_portal: _SubmissionPortals = Field(..., description="Submission portal (NCBI or GISAID).")
+    submission_portal: _SubmissionPortals = Field(..., description="Submission portal (NCBI).")
     database: _DatabaseTargets = Field(..., description="Database being submitted to.")
     database_status: _DatabaseStatuses = Field(..., description="Status of the submission to the database.")
     submission_type: _SubmissionTypes = Field(..., description="Type of submission.")
@@ -194,10 +194,9 @@ class ListSubmissionResponse(BaseModel):
 class SubmitterInfo(BaseModel):
     submitter_name: str = Field(..., description="Name of the submitter.")
     submitter_password: str = Field(..., description="Password for the submitter.")
-    submission_portal: _SubmissionPortals = Field(..., description="Submission portal (NCBI or GISAID).")
+    submission_portal: _SubmissionPortals = Field(..., description="Submission portal (NCBI).")
     # Portal-specific credential fields
     ncbi_spuid_namespace: Optional[str] = Field(None, description="NCBI SPUID namespace for the submitter.")
-    gisaid_client_id: Optional[str] = Field(None, description="GISAID client ID for the submitter.")
     # NCBI Description.Organization
     ncbi_org_role: Optional[str] = Field(None, description="NCBI organization role for the submitter.")
     ncbi_org_type: Optional[str] = Field(None, description="NCBI organization type for the submitter.")
@@ -232,7 +231,7 @@ class ListSubmitterResponse(BaseModel):
 # ------  DELETE SUBMITTER REQUEST (REQUIRED: SUBMITTER NAME, SUBMISSION PORTAL) ----------
 class DeleteSubmitterRequest(BaseModel):
     submitter_name: str = Field(..., description="Name of the submitter.")
-    submission_portal: _SubmissionPortals = Field(..., description="Submission portal (NCBI or GISAID).")
+    submission_portal: _SubmissionPortals = Field(..., description="Submission portal (NCBI).")
 
 class SubmissionRequest(BaseModel):
     submission_name: str = Field(..., description="Name of the submission.")
@@ -271,7 +270,6 @@ class UpdateSubmissionStatusReportMessagesRequest(BaseModel):
 
 class CreateSubmissionRequest(SubmissionRequest):
     ncbi_submitter_info: Optional[SubmitterInfo] = Field(None, description="NCBI submitter information for the submission.")
-    gisaid_submitter_info: Optional[SubmitterInfo] = Field(None, description="GISAID submitter information for the submission.")
     gff_file: bool = Field(..., description="Indicates if a GFF file is included in the submission.")
     table2asn: bool = Field(..., description="Indicates if a table2asn file is included in the submission.")
     ncbi_publication_title: Optional[str] = Field(None, description="NCBI publication title for the submission.")
