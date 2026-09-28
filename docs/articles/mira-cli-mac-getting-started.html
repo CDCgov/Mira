@@ -194,25 +194,16 @@ try again with <code>sudo</code> added before the command.</p>
 <div class="section level2">
 <h2 id="test-your-mira-setup">Test your MIRA Setup<a class="anchor" aria-label="anchor" href="#test-your-mira-setup"></a>
 </h2>
-<ul>
-<li><a href="https://centersfordiseasecontrol.sharefile.com/d-s839d7319e9b04e2baba07b4d328f02c2" class="external-link">Click
-here to download tiny test data from ONT Influenza genome and
-SARS-CoV-2-spike - 40Mb</a></li>
-<li><a href="https://centersfordiseasecontrol.sharefile.com/d-s3c52c0b25c2243078f506d60bd787c62" class="external-link">Click
-here for the above data set + full genomes of Influenza and SARS-CoV-2
-from Illumina MiSeqs - 1Gb</a></li>
-<li>unzip the file and find two folders:
-<ol style="list-style-type: decimal">
-<li><code>tiny_test_run_flu</code></li>
-<li><code>tiny_test_run_sc2</code></li>
-</ol>
-</li>
-<li>move these 2b folders into <code>MIRA_NGS</code> so that the file
-structure looks like:
-<code>/MIRA_NGS/tiny_test_run_flu/fastq_pass/barcode##s/</code> and
-<code>/MIRA_NGS/tiny_test_run_sc2/fastq_pass/barcode##s/</code>
-</li>
-</ul>
+<div class="section level4">
+<h4 id="download-test-data-format-with-docker-recommended">Download test data + format with Docker (recommended)<a class="anchor" aria-label="anchor" href="#download-test-data-format-with-docker-recommended"></a>
+</h4>
+<div class="section level5">
+<h5 id="linux-macos">Linux / macOS<a class="anchor" aria-label="anchor" href="#linux-macos"></a>
+</h5>
+<div class="sourceCode" id="cb4"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="ex">docker</span> run <span class="at">--rm</span> <span class="at">-v</span> <span class="st">"</span><span class="va">$PWD</span><span class="st">:/data"</span> cdcgov/mira-test-data:v0.0.2</span></code></pre></div>
+<p>Output appears in <code>./mira_run/</code></p>
+</div>
+</div>
 <div class="section level3">
 <h3 id="upon-successful-installation-you-can-proceed-to-running-mira-with-oxford-nanopore-data-or-illumina-data">Upon successful installation, you can proceed to running MIRA with
 <a href="./running-mira-cli.html">Oxford Nanopore data</a> or <a href="./running-mira-cli-illumina.html">Illumina data</a><a class="anchor" aria-label="anchor" href="#upon-successful-installation-you-can-proceed-to-running-mira-with-oxford-nanopore-data-or-illumina-data"></a>

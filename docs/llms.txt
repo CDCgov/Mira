@@ -137,7 +137,7 @@ Key features:
 
 ``` bash
 # Linux / macOS
-docker run --rm -v "$PWD:/data" cdcgov/mira-test-data:0.0.1
+docker run --rm -v "$PWD:/data" cdcgov/mira-test-data:v0.0.2
 ```
 
 Output appears in `./mira_run/`

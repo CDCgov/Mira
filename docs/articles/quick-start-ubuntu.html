@@ -187,25 +187,15 @@ reads to. From the command line, run:</li>
 <div class="section level2">
 <h2 id="test-your-mira-setup">Test your MIRA Setup<a class="anchor" aria-label="anchor" href="#test-your-mira-setup"></a>
 </h2>
+<div class="section level4">
+<h4 id="download-test-data-format-with-docker-recommended">Download test data + format with Docker (recommended)<a class="anchor" aria-label="anchor" href="#download-test-data-format-with-docker-recommended"></a>
+</h4>
+<div class="section level5">
+<h5 id="linux-macos">Linux / macOS<a class="anchor" aria-label="anchor" href="#linux-macos"></a>
+</h5>
+<div class="sourceCode" id="cb14"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" tabindex="-1"></a><span class="ex">docker</span> run <span class="at">--rm</span> <span class="at">-v</span> <span class="st">"</span><span class="va">$PWD</span><span class="st">:/data"</span> cdcgov/mira-test-data:v0.0.2</span></code></pre></div>
+<p>Output appears in <code>./mira_run/</code></p>
 <ul>
-<li><a href="https://centersfordiseasecontrol.sharefile.com/d-s839d7319e9b04e2baba07b4d328f02c2" class="external-link">Click
-here to download tiny test data from ONT Influenza genome and
-SARS-CoV-2-spike - 40Mb</a></li>
-<li><a href="https://centersfordiseasecontrol.sharefile.com/d-s3c52c0b25c2243078f506d60bd787c62" class="external-link">Click
-here for the above data set + full genomes of Influenza and SARS-CoV-2
-from Illumina MiSeqs - 1Gb</a></li>
-<li>unzip the file and find two folders:
-<ol style="list-style-type: decimal">
-<li><code>tiny_test_run_flu</code></li>
-<li><code>tiny_test_run_sc2</code></li>
-</ol>
-</li>
-<li>move these folders into <code>MIRA_NGS</code>
-<ul>
-<li>if you cannot find the MIRA_NGS folder in your Linux section of file
-explorer, look in Linux–&gt;home–&gt;your username</li>
-</ul>
-</li>
 <li>Open your browser and type <a href="http://localhost:8020" class="external-link uri">http://localhost:8020</a> in the address bar.</li>
 <li>Click <code>Refresh Run Listing</code> in MIRA, you should now see
 these folders listed.</li>
@@ -230,6 +220,8 @@ data type.
 <li>When “IRMA is finished!” is displayed, Click “DISPLAY IRMA
 RESULTS”</li>
 </ul>
+</div>
+</div>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside>

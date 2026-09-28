@@ -62,17 +62,14 @@ page or email us at <idseqsupport@cdc.gov>
 
 ## Test your MIRA Setup
 
-- [Click here to download tiny test data from ONT Influenza genome and
-  SARS-CoV-2-spike -
-  40Mb](https://centersfordiseasecontrol.sharefile.com/d-s839d7319e9b04e2baba07b4d328f02c2)
-- [Click here for the above data set + full genomes of Influenza and
-  SARS-CoV-2 from Illumina MiSeqs -
-  1Gb](https://centersfordiseasecontrol.sharefile.com/d-s3c52c0b25c2243078f506d60bd787c62)
-- unzip the file and find two folders:
-  1.  `tiny_test_run_flu`
-  2.  `tiny_test_run_sc2`
-- move these 2b folders into `MIRA_NGS` so that the file structure looks
-  like: `/MIRA_NGS/tiny_test_run_flu/fastq_pass/barcode##s/` and
-  `/MIRA_NGS/tiny_test_run_sc2/fastq_pass/barcode##s/`
+#### Download test data + format with Docker (recommended)
+
+##### Linux / macOS
+
+``` bash
+docker run --rm -v "$PWD:/data" cdcgov/mira-test-data:v0.0.2
+```
+
+Output appears in `./mira_run/`
 
 ### Upon successful installation, you can proceed to running MIRA with [Oxford Nanopore data](https://cdcgov.github.io/MIRA/articles/running-mira-cli.md) or [Illumina data](https://cdcgov.github.io/MIRA/articles/running-mira-cli-illumina.md)
