@@ -119,15 +119,16 @@ cd ~/FLU_SC2_SEQUENCING
 sudo docker compose up -d
 ```
 
-- [Click here to download tiny test data from ONT Influenza genome and SARS-CoV-2-spike - 40Mb](https://centersfordiseasecontrol.sharefile.com/d-s839d7319e9b04e2baba07b4d328f02c2)
-- [Click here for the above data set + full genomes of Influenza and SARS-CoV-2 from Illumina MiSeqs - 1Gb](https://centersfordiseasecontrol.sharefile.com/d-s3c52c0b25c2243078f506d60bd787c62)
-- unzip the file and find two folders:
-    1. `tiny_test_run_flu`
-    2. `tiny_test_run_sc2`
-- move these folders into `FLU_SC2_SEQUENCING`
-  - if you cannot find the FLU_SC2_SEQUENCING folder in your Linux section of file explorer, look in Linux-->home-->your username
+#### Download test data + format with Docker (recommended)
+##### Linux / macOS
 
-- Open your browser and type <http://localhost:8020> in the address bar.
+```bash
+docker run --rm -v "$PWD:/data" cdcgov/mira-test-data:0.0.1
+```
+
+Output appears in `./mira_run/`
+
+#### Open your browser and type `http://localhost:8020` in the address bar.
 - Click `Refresh Run Listing` in MIRA, you should now see these folders listed.
 - Click `Download Samplesheet`.
   - This will give you an excel sheet with available barcodes populated. Add in our samplenames for ONT data (Illumina data will self identify samplenames based on fastqs)
