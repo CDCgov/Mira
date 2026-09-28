@@ -67,14 +67,15 @@ and click the 'pull' button.
  * Under Volumes you will make the "Container Path" type in '/data'.
 
 ## Test your MIRA Setup
-    
-- [Click here to download tiny test data from ONT Influenza genome and SARS-CoV-2-spike - 40Mb](https://centersfordiseasecontrol.sharefile.com/d-s839d7319e9b04e2baba07b4d328f02c2)
-- [Click here for the above data set + full genomes of Influenza and SARS-CoV-2 from Illumina MiSeqs - 1Gb](https://centersfordiseasecontrol.sharefile.com/d-s3c52c0b25c2243078f506d60bd787c62)
-- unzip the file and find two folders:
-    1. `tiny_test_run_flu`
-    2. `tiny_test_run_sc2`
-- move these folders into `MIRA_NGS`
-  - if you cannot find the MIRA_NGS folder in your Linux section of file explorer, look in Linux-->home-->your username
+
+#### Download test data + format with Docker (recommended)
+##### Linux / macOS
+
+```bash
+docker run --rm -v "$PWD:/data" cdcgov/mira-test-data:v0.0.2
+```
+
+Output appears in `./mira_run/`
 
 
 ## Next Steps
