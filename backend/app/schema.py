@@ -243,13 +243,17 @@ class StatusUpdateCronRequest(BaseModel):
     frequency: Literal["hourly"] = Field("hourly", description="How often submission statuses are updated.")
     interval_hours: Literal[1, 2, 3, 4] = Field(1, description="Number of hours between status updates.")
 
-# ------  DELETE SUBMISSION REQUEST (REQUIRED: SUBMISSION NAME, ORGANISM) ----------
+# ------  DELETE SUBMISSION REQUEST ----------
 class DeleteSubmissionRequest(BaseModel):
     submission_name: str = Field(..., description="Name of the submission.")
     organism: _Organisms = Field(..., description="Organism for which to send sequences.")
+    database: List[_DatabaseTargets] = Field(..., min_length=1, description="Exact database targets belonging to the selected submission.")
+    submission_type: _SubmissionTypes = Field(..., description="Type of submission.")
 
 # ------  COPY SUBMISSION REQUEST (REQUIRED: SUBMISSION NAME, ORGANISM, NEW SUBMISSION NAME) ----------
-class CopySubmissionRequest(DeleteSubmissionRequest):
+class CopySubmissionRequest(BaseModel):
+    submission_name: str = Field(..., description="Name of the submission.")
+    organism: _Organisms = Field(..., description="Organism for which to send sequences.")
     new_submission_name: str = Field(..., description="Name for the duplicated submission.")
 
 # ------  UPDATE SUBMISSION COMMENTS REQUEST ----------

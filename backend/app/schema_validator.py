@@ -228,6 +228,7 @@ GFF_FILENAME = "annotation.gff"
 TABLE2ASN_FILENAME = "table2asn"
 SUBMISSION_LOG_FILENAME = "submission_log.csv"
 SUBMISSION_STATUS_REPORT_FILENAME = "submission_status_report.csv"
+ACCESSION_REPORT_FILENAME = "AccessionReport.tsv"
 CONFIG_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "..", "seqsender", "config_template.yaml")
 METADATA_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "..", "seqsender", "metadata_template.csv")
 

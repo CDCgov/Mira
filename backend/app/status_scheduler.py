@@ -145,7 +145,7 @@ def update_all_submission_statuses() -> dict[str, Any]:
             skipped_created.add(key)
             grouped.pop(key, None)
             continue
-        if submission_status == "PROCESSED" or portal_status in {"CREATED", "PROCESSED"}:
+        if submission_status == "COMPLETED" or portal_status in {"CREATED", "PROCESSED"}:
             continue
         if key not in skipped_created:
             grouped.setdefault(key, set()).add(row["database"])

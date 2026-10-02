@@ -192,6 +192,7 @@ const API = {
   downloadSeqsenderGff:              `${API_BASE}/download/seqsender/gff`,
   downloadSeqsenderRawReads:         `${API_BASE}/download/seqsender/raw_reads`,
   downloadSeqsenderSubmissionFiles:  `${API_BASE}/download/seqsender/submission_files`,
+  downloadSeqsenderAccessionReport:  `${API_BASE}/download/seqsender/accession_report`,
   validateSeqsenderFiles:            `${API_BASE}/validate/seqsender/files`,
   uploadSeqsenderMetadata:           `${API_BASE}/upload/seqsender/metadata`,
   uploadSeqsenderFasta:              `${API_BASE}/upload/seqsender/fasta`,
@@ -586,7 +587,7 @@ function SubmissionTurnaroundChart({ data, loading }) {
                   categoryarray: submissionNames,
                   tickmode: "array",
                   tickvals: submissionNames,
-                  ticktext: submissions.map(({ submissionName, dateSubmitted }) => `${submissionName}<br>${dateSubmitted}`),
+                  ticktext: submissions.map(({ submissionName, dateSubmitted }) => `${submissionName}`),
                   tickangle: -30,
                 },
                 yaxis: {
@@ -634,12 +635,13 @@ function HomeTab({ onNewRun, onLoadRun, onOpenSeqSender, isActive }) {
       try {
         const rows = await fetchSubmissions();
         const activeRows = rows.filter((row) => String(row.database_status ?? "ACTIVE").toUpperCase() === "ACTIVE");
-        const submittedRows = activeRows.filter((row) => String(row.submission_status).toUpperCase() !== "CREATED");
+        const productionRows = activeRows.filter((row) => String(row.submission_type).toUpperCase() === "PRODUCTION");
+        const submittedRows = productionRows.filter((row) => String(row.submission_status).toUpperCase() !== "CREATED");
         if (!cancelled) {
           // Each row is one (submission, database) pair.
           setNcbiCount(submittedRows.filter((r) => ["GENBANK", "SRA", "BIOSAMPLE"].includes((r.database ?? "").toUpperCase())).length);
           const latestBySubmissionDatabase = new Map();
-          activeRows.forEach((row) => {
+          productionRows.forEach((row) => {
             if (!row.submission_name || !row.database || !row.date_submitted || !row.date_updated) return;
             const submittedAt = Date.parse(`${row.date_submitted}T00:00:00Z`);
             const updatedAt = Date.parse(`${row.date_updated}T00:00:00Z`);
@@ -5839,11 +5841,25 @@ function ExistingSubmitterPicker({ submitters, loading, error, selectedId, onSel
 const SUBMISSION_STATUS_BADGE_STYLES = {
   PENDING:    "bg-muted text-muted-foreground",
   CREATED:    "bg-muted text-muted-foreground",
+  RUNNING:    "bg-sky-100 text-sky-700 dark:bg-sky-900/20 dark:text-sky-400",
+  QUEUED:     "bg-sky-100 text-sky-700 dark:bg-sky-900/20 dark:text-sky-400",
   PROCESSING: "bg-sky-100 text-sky-700 dark:bg-sky-900/20 dark:text-sky-400",
+  WAITING:    "bg-sky-100 text-sky-700 dark:bg-sky-900/20 dark:text-sky-400",
+  RETRIED:    "bg-sky-100 text-sky-700 dark:bg-sky-900/20 dark:text-sky-400",
   SUBMITTED:  "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400",
   COMPLETED:  "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400",
+  PROCESSED:  "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400",
+  VALIDATED:  "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400",
+  EMAILED:    "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400",
   FAILED:     "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400",
+  ERROR:      "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400",
   CANCELED:   "bg-muted text-muted-foreground",
+  DELETED:    "bg-muted text-muted-foreground",
+};
+
+const SUBMISSION_TYPE_BADGE_STYLES = {
+  TEST:       "bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300",
+  PRODUCTION: "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-300",
 };
 
 const SEQSENDER_METADATA_TABLES = [
@@ -6202,7 +6218,7 @@ const STATUS_REPORT_COLUMNS = [
   { key: "message", label: "Message" },
 ];
 
-function StatusReportTable({ rows, onMessageChange }) {
+function StatusReportTable({ rows, onMessageChange, onDownloadAccessionReport, accessionReportDownloading, accessionReportError }) {
   const [sortColumn, setSortColumn] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
   const [editedMessages, setEditedMessages] = useState({}); // row index (within `rows`) -> edited message text
@@ -6278,6 +6294,20 @@ function StatusReportTable({ rows, onMessageChange }) {
         >
           <Download size={10} /> Excel
         </button>
+        {onDownloadAccessionReport && (
+          <button
+            type="button"
+            onClick={onDownloadAccessionReport}
+            disabled={accessionReportDownloading}
+            className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {accessionReportDownloading ? <RefreshCw size={10} className="animate-spin" /> : <Download size={10} />}
+            Download Accession Report
+          </button>
+        )}
+        {accessionReportError && (
+          <span className="text-[10px] text-destructive">{accessionReportError}</span>
+        )}
       </div>
       <div className="overflow-auto max-h-48">
         <table className="w-full text-[11px]">
@@ -8082,6 +8112,21 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                       {statusReportRows.length > 0 && (
                         <StatusReportTable
                           rows={statusReportRows}
+                          onDownloadAccessionReport={key === "genbank" && refreshedSubmissionStatus?.accession_report_available
+                            ? () => {
+                                const params = new URLSearchParams();
+                                params.set("submission_name", submissionJob?.submission_name ?? initialSubmission?.submission_name ?? subName);
+                                params.set("organism", submissionJob?.organism ?? initialSubmission?.organism ?? organism);
+                                params.set("submission_type", submissionJob?.submission_type ?? initialSubmission?.submission_type ?? (testMode ? "TEST" : "PRODUCTION"));
+                                downloadStoredFile(
+                                  `${API.downloadSeqsenderAccessionReport}?${params.toString()}`,
+                                  "accessionReport",
+                                  "AccessionReport.tsv"
+                                );
+                              }
+                            : null}
+                          accessionReportDownloading={storedDownloading === "accessionReport"}
+                          accessionReportError={storedDownloadError?.field === "accessionReport" ? storedDownloadError.message : null}
                           onMessageChange={(sampleName, message) => {
                             const database = key.toUpperCase();
                             setStatusReportMessageEdits((prev) => ({
@@ -8362,6 +8407,8 @@ function PastSubmissionsPanel({ onSelectSubmission, onDeleteSubmission, isActive
         body: JSON.stringify({
           submission_name: selectedRow.submission_name,
           organism: selectedRow.organism,
+          database: selectedRow.databases.map(({ database }) => database),
+          submission_type: selectedRow.submission_type,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -8670,12 +8717,19 @@ function PastSubmissionsPanel({ onSelectSubmission, onDeleteSubmission, isActive
                             title={`${database}: ${samples ?? "—"} samples`}
                             className="whitespace-nowrap rounded-full bg-muted px-2 py-0.5 font-mono text-[10px] font-medium text-foreground"
                           >
-                            {database}: {samples ?? "—"}
+                            {database}: {samples ?? "—"} samples
                           </span>
                         ))}
                       </div>
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2 font-mono text-foreground">{submission.submission_type}</td>
+                    <td className="whitespace-nowrap px-3 py-2">
+                      <span className={cn(
+                        "rounded-full px-2 py-0.5 font-mono text-[10px] font-medium",
+                        SUBMISSION_TYPE_BADGE_STYLES[submission.submission_type] ?? "bg-muted text-muted-foreground"
+                      )}>
+                        {submission.submission_type || "—"}
+                      </span>
+                    </td>
                     <td className="whitespace-nowrap px-3 py-2">
                       <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-medium", SUBMISSION_STATUS_BADGE_STYLES[submission.submission_status] ?? "bg-muted text-muted-foreground")}>
                         {submission.submission_status || "—"}
@@ -8690,7 +8744,14 @@ function PastSubmissionsPanel({ onSelectSubmission, onDeleteSubmission, isActive
                             className="whitespace-nowrap rounded-full bg-muted px-2 py-0.5 font-mono text-[10px] font-medium text-foreground"
                           >
                             {database}: {accession}
-                            {ncbiStatus ? <span className="text-muted-foreground"> · {ncbiStatus}</span> : null}
+                            {ncbiStatus ? (
+                              <span className={cn(
+                                "ml-1 rounded-full px-1.5 py-0.5",
+                                SUBMISSION_STATUS_BADGE_STYLES[ncbiStatus] ?? "bg-muted text-muted-foreground"
+                              )}>
+                                {ncbiStatus}
+                              </span>
+                            ) : null}
                           </span>
                         ))}
                         {submission.databases.every(({ accession }) => !accession) && (
@@ -8756,8 +8817,18 @@ function PastSubmissionsPanel({ onSelectSubmission, onDeleteSubmission, isActive
               <button onClick={() => setActionMode(null)} className="text-muted-foreground hover:text-foreground transition-colors"><X size={14} /></button>
             </div>
             <p className="text-xs text-muted-foreground leading-relaxed">
-              Are you sure you want to delete <span className="font-mono font-semibold text-foreground">{selectedRow.submission_name}</span>? This permanently removes its database rows and stored files.
+              Confirm the selected submission below. This permanently removes its matching database rows and stored files.
             </p>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 rounded-lg border border-border bg-muted/30 p-3 text-xs">
+              <dt className="font-medium text-muted-foreground">Submission</dt>
+              <dd className="font-mono font-semibold text-foreground">{selectedRow.submission_name}</dd>
+              <dt className="font-medium text-muted-foreground">Organism</dt>
+              <dd className="font-mono text-foreground">{selectedRow.organism}</dd>
+              <dt className="font-medium text-muted-foreground">Databases</dt>
+              <dd className="font-mono text-foreground">{selectedRow.databases.map(({ database }) => database).sort().join(", ")}</dd>
+              <dt className="font-medium text-muted-foreground">Type</dt>
+              <dd className="font-mono text-foreground">{selectedRow.submission_type}</dd>
+            </dl>
             {actionError && (
               <div className="flex items-start gap-2 text-xs text-destructive">
                 <AlertCircle size={12} className="shrink-0 mt-0.5" /> {actionError}
@@ -8927,9 +8998,19 @@ function SeqSenderTab({ onBack, showBackToMira, newSubmissionSignal, isActive, s
   const handleSubmissionDeleted = (deletedSubmission) => {
     setPanelSession((currentSession) => {
       const loadedSubmission = currentSession.submission;
+      const loadedDatabases = loadedSubmission?.databases
+        ?.map(({ database }) => database)
+        .sort()
+        .join("::");
+      const deletedDatabases = deletedSubmission.databases
+        .map(({ database }) => database)
+        .sort()
+        .join("::");
       if (!loadedSubmission
         || loadedSubmission.submission_name !== deletedSubmission.submission_name
-        || loadedSubmission.organism !== deletedSubmission.organism) {
+        || loadedSubmission.organism !== deletedSubmission.organism
+        || loadedSubmission.submission_type !== deletedSubmission.submission_type
+        || loadedDatabases !== deletedDatabases) {
         return currentSession;
       }
       return { key: currentSession.key + 1, submission: null };

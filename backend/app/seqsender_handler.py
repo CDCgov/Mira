@@ -30,6 +30,7 @@ from .schema_validator import (
     TABLE2ASN_FILENAME,
     SUBMISSION_LOG_FILENAME,
     SUBMISSION_STATUS_REPORT_FILENAME,
+    ACCESSION_REPORT_FILENAME,
     CONFIG_TEMPLATE_PATH,
     SEQSENDER_DATABASE_ALIASES,
     SEQSENDER_STATUS_MAP,
@@ -888,7 +889,8 @@ def create_seqsender_config_file(
     database: List[str],
 ) -> None:
     try:
-        needs_ncbi = bool(database)
+        needs_ncbi = bool(database);
+        auto_remove_failed_seqs = False
 
         # Read in the config template file
         with open(CONFIG_TEMPLATE_PATH, "r", encoding="utf-8") as fh:
@@ -936,7 +938,11 @@ def create_seqsender_config_file(
             ncbi_cfg["Publication_Title"] = text(submission_row["ncbi_publication_title"])
             ncbi_cfg["Publication_Status"] = text(submission_row["ncbi_publication_status"])
             ncbi_cfg["Specified_Release_Date"] = text(submission_row["ncbi_release_date"])
-            ncbi_cfg["GenBank_Auto_Remove_Failed_Samples"] = False
+            # Set GenBank auto-remove failed samples based on the flag
+            if auto_remove_failed_seqs:
+                ncbi_cfg["GenBank_Auto_Remove_Failed_Samples"] = True
+            else:
+                ncbi_cfg["GenBank_Auto_Remove_Failed_Samples"] = False
             ncbi_cfg["Link_Sample_Between_NCBI_Databases"] = True
             ncbi_cfg["Add_Definition_Line_Accessions"] = True
             ncbi_cfg["Submission_Position"] = 1
@@ -1059,38 +1065,81 @@ def create_seqsender_submission(
         raise Exception(str(err))
 
 
-# Delete every database row and on-disk folder for a submission, identified by name and organism.
+# Delete the exact selected submission and remove its folder only when no sibling rows remain.
 def delete_seqsender_submission(
     submission_name: str,
     organism: str,
+    database: List[str],
+    submission_type: str,
 ) -> Dict[str, Any]:
     try:
+        requested_databases = {
+            _normalize_seqsender_database(target_database)
+            for target_database in database
+        }
         db_submission_tbl = lookup_tbl_in_database(
             db_tbl_name = ["submission"],
             return_var = ["*"],
-            filter_coln_var = ["submission_name", "organism"],
-            filter_coln_val = {"submission_name": [submission_name], "organism": [organism]},
-            filter_var_by = ["AND"]
+            filter_coln_var = ["submission_name", "organism", "submission_type"],
+            filter_coln_val = {
+                "submission_name": [submission_name],
+                "organism": [organism],
+                "submission_type": [submission_type],
+            },
+            filter_var_by = ["AND", "AND"]
         )
         if db_submission_tbl.is_empty():
-            raise ValueError(f"Submission '{submission_name}' does not exist in the database.")
+            raise ValueError(
+                f"Submission '{submission_name}' does not exist for organism '{organism}' "
+                f"and submission type '{submission_type}'."
+            )
+
+        stored_databases = {
+            _normalize_seqsender_database(value)
+            for value in db_submission_tbl.get_column("database").to_list()
+        }
+        if stored_databases != requested_databases:
+            raise ValueError(
+                f"The selected databases for submission '{submission_name}' no longer match "
+                "the stored submission. Refresh Past Submissions and try again."
+            )
+
+        sibling_submission_tbl = lookup_tbl_in_database(
+            db_tbl_name = ["submission"],
+            return_var = ["submission_type"],
+            filter_coln_var = ["submission_name", "organism"],
+            filter_coln_val = {
+                "submission_name": [submission_name],
+                "organism": [organism],
+            },
+            filter_var_by = ["AND"]
+        )
+        has_sibling_submission = any(
+            str(value).strip().upper() != submission_type.strip().upper()
+            for value in sibling_submission_tbl.get_column("submission_type").to_list()
+        )
 
         # Remove the on-disk submission directory (config, metadata, FASTA, raw reads, etc.)
-        # first — if this fails the database is left untouched.
+        # only when another submission identity does not share the same name and organism.
         submission_dir = os.path.realpath(os.path.join(_DEFAULT_SEQSENDER_STORAGE_PATH, organism, submission_name))
-        if os.path.exists(submission_dir):
+        if not has_sibling_submission and os.path.exists(submission_dir):
             shutil.rmtree(submission_dir)
 
-        # Delete every row (every database target) for this submission from the database
+        # Delete only rows matching the full identity confirmed above.
         delete_val_in_database(
             db_tbl_name = ["submission"],
-            delete_coln_var = ["submission_name", "organism"],
-            delete_coln_val = {"submission_name": [submission_name], "organism": [organism]},
-            delete_var_by = ["AND"]
+            delete_coln_var = ["submission_name", "organism", "database", "submission_type"],
+            delete_coln_val = {
+                "submission_name": [submission_name],
+                "organism": [organism],
+                "database": sorted(requested_databases),
+                "submission_type": [submission_type],
+            },
+            delete_var_by = ["AND", "AND", "AND"]
         )
         return {
             "status":  "success",
-            "message": f"Submission '{submission_name}' has been removed from the database.",
+            "message": f"Submission '{submission_name}' ({submission_type}) has been removed from the database.",
         }
     except ValueError as err:
         raise ValueError(str(err))
@@ -2270,6 +2319,7 @@ def load_submission_status(
             "status": submission_status,
             "database_statuses": {},
             "submission_status_report": {},
+            "accession_report_available": False,
             "message": "No active NCBI databases; no submission status was checked.",
         }
 
@@ -2302,6 +2352,10 @@ def load_submission_status(
             f"Submission status report file '{SUBMISSION_STATUS_REPORT_FILENAME}' does not exist in "
             f"'{submission_status_report_dir}'."
         )
+    accession_report_available = (
+        "GENBANK" in ncbi_databases
+        and os.path.isfile(os.path.join(submission_status_report_dir, "GENBANK", ACCESSION_REPORT_FILENAME))
+    )
     
     # Read the submission log to extract the details for the specified database.
     database_statuses = _read_submission_log(
@@ -2358,5 +2412,6 @@ def load_submission_status(
             for target_database, details in database_statuses.items()
         },
         "submission_status_report": submission_status_report,
+        "accession_report_available": accession_report_available,
         "message": f"Submission status was successfully pulled and updated accordingly.",
     }

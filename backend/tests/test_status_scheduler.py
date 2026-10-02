@@ -137,3 +137,54 @@ class UpdateAllSubmissionStatusesTests(TestCase):
         self.assertEqual(summary["checked"], 1)
         self.assertEqual(summary["succeeded"], 1)
         record_run.assert_called_once()
+
+    @patch("app.status_scheduler._record_run")
+    @patch("app.status_scheduler.check_seqsender_submission")
+    @patch("app.status_scheduler.lookup_tbl_in_database")
+    def test_excludes_completed_submission_rows(
+        self,
+        lookup_submission,
+        check_submission,
+        record_run,
+    ):
+        lookup_submission.return_value = pl.DataFrame(
+            [
+                {
+                    "submission_name": "partially-completed",
+                    "organism": "FLU",
+                    "database": "BIOSAMPLE",
+                    "submission_type": "TEST",
+                    "submission_status": "COMPLETED",
+                    "ncbi_submission_status": "PROCESSED",
+                },
+                {
+                    "submission_name": "partially-completed",
+                    "organism": "FLU",
+                    "database": "SRA",
+                    "submission_type": "TEST",
+                    "submission_status": "PROCESSING",
+                    "ncbi_submission_status": "PROCESSING",
+                },
+                {
+                    "submission_name": "fully-completed",
+                    "organism": "FLU",
+                    "database": "GENBANK",
+                    "submission_type": "TEST",
+                    "submission_status": "COMPLETED",
+                    "ncbi_submission_status": "PROCESSED",
+                },
+            ]
+        )
+        check_submission.return_value = {"status": "PROCESSING"}
+
+        summary = update_all_submission_statuses()
+
+        check_submission.assert_called_once_with(
+            submission_name="partially-completed",
+            organism="FLU",
+            database=["SRA"],
+            submission_type="TEST",
+        )
+        self.assertEqual(summary["checked"], 1)
+        self.assertEqual(summary["succeeded"], 1)
+        record_run.assert_called_once()
