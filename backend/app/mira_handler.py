@@ -288,7 +288,7 @@ def retrieve_sample_coverage_plot(run_name: str, experiment_type: str, sample_id
         pathogen = experiment_type.split("-")[0]
         instrument = experiment_type.split("-")[-1]
         # Get sample segment coverage plot result from storage
-        sample_coverage_plot_path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, "outputs", "aggregate_outputs", "dash-json", f"coveragefig_{sample_id}_linear.json")
+        sample_coverage_plot_path = os.path.join(_DEFAULT_MIRA_STORAGE_PATH, pathogen, instrument, run_name, "outputs", "aggregate_outputs", "dash-json", f"coveragefig_{sample_id}_seg.json")
         # Check if the sample coverage plot result file exists
         if os.path.exists(sample_coverage_plot_path):
             with open(sample_coverage_plot_path, "r") as f:

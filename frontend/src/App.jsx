@@ -63,6 +63,8 @@ import {
   Menu,
   Eye,
   EyeOff,
+  Lock,
+  Move,
 } from "lucide-react";
 
 /* ── utility ─────────────────────────────────────── */
@@ -1017,9 +1019,61 @@ const PLOT_CONFIG = {
   }],
 };
 
+// Plotly indexes node.x/node.y by the original node order but drops link-less
+// nodes from its graph, so each dropped node shifts every later one into the
+// wrong column. Runs generated before mira-oxide pruned them still embed such
+// nodes (e.g. a zero-read "No Match"), so drop them here too.
+function pruneSankeyNodes(trace) {
+  const node = trace.node ?? {};
+  const source = trace.link?.source ?? [];
+  const target = trace.link?.target ?? [];
+  const count = node.label?.length ?? 0;
+  if (!count) return trace;
+  const used = new Set([...source, ...target]);
+  if (used.size === count) return trace;
+
+  const keep = [];
+  const remap = new Array(count).fill(-1);
+  for (let i = 0; i < count; i++) {
+    if (used.has(i)) { remap[i] = keep.length; keep.push(i); }
+  }
+  const pick = arr => (Array.isArray(arr) ? keep.map(i => arr[i]) : arr);
+  return {
+    ...trace,
+    node: { ...node, label: pick(node.label), color: pick(node.color), x: pick(node.x), y: pick(node.y) },
+    link: { ...trace.link, source: source.map(i => remap[i]), target: target.map(i => remap[i]) },
+  };
+}
+
+// Re-stack every column by incoming reads, highest at the top. mira-oxide now
+// emits this order, but older runs stack each column alphabetically.
+function sortSankeyColumns(trace) {
+  const x = trace.node?.x;
+  const y = x && trace.node?.y ? [...trace.node.y] : null;
+  if (!y || !x.length) return trace;
+
+  const reads = new Array(x.length).fill(0);
+  (trace.link?.target ?? []).forEach((t, k) => { reads[t] += trace.link.value?.[k] ?? 0; });
+
+  const columns = new Map();
+  x.forEach((v, i) => { columns.set(v, [...(columns.get(v) ?? []), i]); });
+
+  for (const column of columns.values()) {
+    if (column.length < 2) continue;
+    const slots = column.map(i => y[i]).sort((a, b) => a - b);
+    [...column]
+      .sort((a, b) => reads[b] - reads[a])
+      .forEach((i, rank) => { y[i] = slots[rank]; });
+  }
+
+  return { ...trace, node: { ...trace.node, y } };
+}
+
 // Plotly figure pinned to its container's measured width and a viewport-capped
 // height, so multi-subplot grids never overflow their box horizontally.
-function ResponsivePlot({ data, layout, config, style, minHeight = 320, maxHeight = 640, heightVh = 0.72, ...rest }) {
+// With `fitHeight`, the height tracks the container instead, so the figure
+// follows a user-resizable wrapper in both directions.
+function ResponsivePlot({ data, layout, config, style, minHeight = 320, maxHeight = 640, heightVh = 0.72, fitHeight = false, ...rest }) {
   const ref = useRef(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   useEffect(() => {
@@ -1027,7 +1081,9 @@ function ResponsivePlot({ data, layout, config, style, minHeight = 320, maxHeigh
     if (!el) return undefined;
     const measure = () => {
       const width = el.clientWidth;
-      const height = Math.max(minHeight, Math.min(Math.round(window.innerHeight * heightVh), maxHeight));
+      const height = fitHeight
+        ? Math.max(minHeight, el.clientHeight)
+        : Math.max(minHeight, Math.min(Math.round(window.innerHeight * heightVh), maxHeight));
       setSize((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
     };
     measure();
@@ -1035,9 +1091,9 @@ function ResponsivePlot({ data, layout, config, style, minHeight = 320, maxHeigh
     ro.observe(el);
     window.addEventListener("resize", measure);
     return () => { ro.disconnect(); window.removeEventListener("resize", measure); };
-  }, [minHeight, maxHeight, heightVh]);
+  }, [minHeight, maxHeight, heightVh, fitHeight]);
   return (
-    <div ref={ref} className="w-full">
+    <div ref={ref} className={fitHeight ? "w-full h-full" : "w-full"}>
       {size.width > 0 && (
         <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
           <Plot
@@ -1612,6 +1668,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden, onOpenSeqSe
   const [resultSampleCoveragePlot, setResultSampleCoveragePlot]       = useState(null); // {sample_id: plotly_figure}
   const [resultSampleCoverageLinear, setResultSampleCoverageLinear]   = useState(null); // {sample_id: combined coverage figure}
   const [focusedCovSegment, setFocusedCovSegment]                     = useState(null); // segment name focused in combined view, or null
+  const [sankeyArrangement, setSankeyArrangement]                     = useState("fixed"); // "fixed" honours the generated node x/y; "freeform" lets the user drag nodes
   const [selectedSampleForCoverage, setSelectedSampleForCoverage]     = useState("");   // selected sample in dropdown
   const [resultVariants, setResultVariants]                           = useState(null);
   const [resultMinorSnvs, setResultMinorSnvs]                         = useState(null);
@@ -4774,28 +4831,49 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden, onOpenSeqSe
                             <div className="p-2">
                               {figure ? (
                                 <>
-                                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1 pb-1">Read Assignment - {currentSample}</p>
+                                  <div className="flex items-center justify-between gap-2 px-1 pb-1">
+                                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Read Assignment - {currentSample}</p>
+                                    <button
+                                      onClick={() => setSankeyArrangement(a => (a === "fixed" ? "freeform" : "fixed"))}
+                                      title={sankeyArrangement === "fixed"
+                                        ? "Unlock the nodes so they can be dragged freely"
+                                        : "Snap the nodes back to the default layout"}
+                                      className="flex items-center gap-1 h-7 px-2 rounded-md border border-border bg-background text-xs font-medium text-foreground hover:border-primary hover:text-primary transition-colors"
+                                    >
+                                      {sankeyArrangement === "fixed"
+                                        ? <><Lock size={12} className="shrink-0" /> Default layout</>
+                                        : <><Move size={12} className="shrink-0" /> Adjust individual node positions</>}
+                                    </button>
+                                  </div>
                                   <div className="overflow-x-auto">
-                                    <div style={{ width: "75%", margin: "0 auto", minWidth: figure.layout?.width ? `${figure.layout.width}px` : undefined }}>
-                                      <Suspense fallback={<div className="flex items-center justify-center h-40 text-xs text-muted-foreground">Loading chart…</div>}>
-                                      <Plot
-                                        data={figure.data ?? []}
+                                    <div
+                                      className="mx-auto rounded-md border border-dashed border-border/60"
+                                      style={{ width: "75%", height: 360, minWidth: 320, minHeight: 220, maxWidth: "100%", resize: "both", overflow: "hidden" }}
+                                    >
+                                      <ResponsivePlot
+                                        // Copy the node object so Plotly's drag handler can't write
+                                        // dragged positions back into the cached figure.
+                                        data={(figure.data ?? []).map(tr => (
+                                          tr.type === "sankey"
+                                            ? sortSankeyColumns(pruneSankeyNodes({ ...tr, arrangement: sankeyArrangement, node: { ...(tr.node ?? {}) } }))
+                                            : tr
+                                        ))}
                                         layout={{
                                           ...(figure.layout ?? {}),
                                           title: undefined,
-                                          autosize: true,
                                           margin: { l: 20, r: 20, t: 10, b: 20 },
                                           paper_bgcolor: "transparent",
                                           plot_bgcolor: "transparent",
                                           font: { size: 11 },
                                         }}
                                         config={PLOT_CONFIG}
-                                        style={{ width: "100%", minHeight: 280 }}
+                                        fitHeight
+                                        minHeight={200}
                                         useResizeHandler
                                       />
-                                      </Suspense>
                                     </div>
                                   </div>
+                                  <p className="text-[10px] text-muted-foreground/70 text-right px-1 pt-1">Drag the bottom-right corner to resize</p>
                                 </>
                               ) : (
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground px-3 py-4">
@@ -4905,7 +4983,7 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden, onOpenSeqSe
                           {resultMinorSnvs.length === 0 ? (
                             <EmptyResultTable title="Minor Variants Table" message="No Minor Variants found for this run." />
                           ) : (
-                            <ResultTable title="Minor Variants Table" data={resultMinorSnvs} page={minorSnvsPage} setPage={setMinorSnvsPage} compact fitCols={5} defaultHiddenCols={["dais_reference"]} stickyFirstCol />
+                            <ResultTable title="Minor Variants Table" data={resultMinorSnvs} page={minorSnvsPage} setPage={setMinorSnvsPage} compact fitCols={5} defaultHiddenCols={["numbering_reference"]} stickyFirstCol />
                           )}
                         </ResultSection>
                       )}
