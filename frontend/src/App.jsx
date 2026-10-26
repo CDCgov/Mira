@@ -6882,6 +6882,11 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     }
   }, []);
 
+  // Credentials are saved per organism, so only the submitters saved for the selected organism can be chosen.
+  const ncbiSubmittersForOrganism = ncbiSubmitters.filter(
+    (s) => String(s.organism ?? "").toUpperCase() === String(organism ?? "").toUpperCase()
+  );
+
   // Fetch saved submitters up front — whether the New/Existing toggle is
   // shown at all depends on whether any submitters exist, so this can't be lazy.
   useEffect(() => {
@@ -6895,11 +6900,11 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
   // successful submit — doesn't clobber a user who deliberately switched back to "New User".
   const ncbiAutoModeSetRef = useRef(false);
   useEffect(() => {
-    if (!initialSubmission && !ncbiAutoModeSetRef.current && ncbiSubmitters.length > 0) {
+    if (!initialSubmission && !ncbiAutoModeSetRef.current && ncbiSubmittersForOrganism.length > 0) {
       ncbiAutoModeSetRef.current = true;
       setNcbiUserMode("existing");
     }
-  }, [initialSubmission, ncbiSubmitters]);
+  }, [initialSubmission, ncbiSubmitters, organism]);
 
   // Poll the SeqSender submission process status at regular intervals.
   useEffect(() => {
@@ -6959,6 +6964,17 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialSubmission]);
+
+  // Switching organism drops a selected submitter that was saved for a different one.
+  useEffect(() => {
+    if (!ncbiSelectedSubmitterId) return;
+    const selected = ncbiSubmitters.find((s) => String(s.submitter_id) === ncbiSelectedSubmitterId);
+    if (selected && String(selected.organism ?? "").toUpperCase() !== String(organism ?? "").toUpperCase()) {
+      setNcbiSelectedSubmitterId("");
+      clearNcbiFields();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [organism]);
 
   // Fill every NCBI field from a previously saved submitter.
   const selectNcbiSubmitter = (s) => {
@@ -7032,7 +7048,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       const res = await fetch(API.deleteSubmitter, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ submitter_name: submitter.submitter_name, submission_portal: "NCBI" }),
+        body: JSON.stringify({ submitter_name: submitter.submitter_name, organism: submitter.organism, submission_portal: "NCBI" }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || "Failed to delete NCBI submitter.");
@@ -7052,7 +7068,10 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
     if (!initialSubmission) return;
     if (initialNcbiRow) {
       setNcbiUserMode("existing");
-      const submitter = ncbiSubmitters.find((item) => item.submitter_name === initialNcbiRow.submitter_name);
+      const submitter = ncbiSubmitters.find(
+        (item) => item.submitter_name === initialNcbiRow.submitter_name
+          && String(item.organism ?? "").toUpperCase() === String(initialNcbiRow.organism ?? organism).toUpperCase()
+      );
       if (submitter) selectNcbiSubmitter(submitter);
       setNcbiPubTitle(initialNcbiRow.ncbi_publication_title ?? "");
       setNcbiPubStatus(initialNcbiRow.ncbi_publication_status ?? "Unpublished");
@@ -7065,6 +7084,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
   // Save just the NCBI credentials/organization block to the database, independent of any submission.
   const handleSaveNcbiSubmitter = async () => {
     const missing = [];
+    if (!organism) missing.push("Pathogen: Organism");
     if (!ncbiUsername) missing.push("NCBI Credentials: Username");
     if (!ncbiPassword) missing.push("NCBI Credentials: Password");
     if (!ncbiSpuidNamespace) missing.push("NCBI Credentials: Spuid Namespace");
@@ -7103,6 +7123,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
         body: JSON.stringify({
           submitter_name: ncbiUsername,
           submitter_password: ncbiPassword,
+          organism: organism.toUpperCase(),
           submission_portal: "NCBI",
           ncbi_spuid_namespace: ncbiSpuidNamespace,
           ncbi_org_role: ncbiOrgRole,
@@ -7278,6 +7299,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
       const ncbiSubmitterInfo = ncbiActive ? {
         submitter_name: ncbiUsername,
         submitter_password: ncbiPassword,
+        organism: organism.toUpperCase(),
         submission_portal: "NCBI",
         ncbi_spuid_namespace: ncbiSpuidNamespace,
         ncbi_org_role: ncbiOrgRole,
@@ -7584,7 +7606,7 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
               <p className="text-xs font-bold text-foreground uppercase tracking-wider">NCBI</p>
               <div>
                 <FieldLabel>Username <span className="text-destructive">*</span></FieldLabel>
-                {ncbiSubmitters.length > 0 && (
+                {ncbiSubmittersForOrganism.length > 0 && (
                   <div className="flex gap-2 mb-2">
                     <button type="button" disabled={!canCreateOrSubmit} onClick={() => { setNcbiUserMode("new"); setNcbiSelectedSubmitterId(""); setNcbiSaveStatus("idle"); setNcbiSaveError(null); setNcbiDeleteStatus("idle"); setNcbiDeleteError(null); clearNcbiFields(); }}
                       className={cn("px-3 py-1 rounded-full text-xs font-semibold border transition-colors disabled:opacity-60 disabled:cursor-not-allowed",
@@ -7598,9 +7620,9 @@ const SeqSenderPanel = forwardRef(function SeqSenderPanel(props, ref) {
                     </button>
                   </div>
                 )}
-                {ncbiUserMode === "existing" && ncbiSubmitters.length > 0 ? (
+                {ncbiUserMode === "existing" && ncbiSubmittersForOrganism.length > 0 ? (
                   <ExistingSubmitterPicker
-                    submitters={ncbiSubmitters}
+                    submitters={ncbiSubmittersForOrganism}
                     loading={ncbiSubmittersLoading}
                     error={ncbiSubmittersError}
                     selectedId={ncbiSelectedSubmitterId}

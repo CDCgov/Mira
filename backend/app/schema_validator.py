@@ -239,6 +239,7 @@ submitter_pa_schema = pa.DataFrameSchema(
     columns={
         "submitter_name": _required_str(description="Name of the submitter."),
         "submitter_password": _required_str(description="Password for the submitter."),
+        "organism": _required_enum_col(organisms, description="Type of organism the submitter's credentials are saved for."),
         "submission_portal":  _required_enum_col(submission_portals, description="Type of submission portal used by the submitter."),
         "ncbi_spuid_namespace":  _nullable_str(description="Organization SPUID namespace for NCBI submission."),
         "ncbi_org_role":         _nullable_str(description="Organization role for NCBI submission."),

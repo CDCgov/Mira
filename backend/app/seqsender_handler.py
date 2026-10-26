@@ -494,6 +494,7 @@ def _absolutize_raw_reads_paths(metadata_file: str, submission_name_dir: str) ->
 # Function to update the submitter information in the database with the provided submitter information
 def update_submitter_in_database(
     submitter_name: str,
+    organism: str,
     submission_portal: str,
     submitter_tbl: pl.DataFrame,
     return_tbl: bool = False
@@ -503,6 +504,7 @@ def update_submitter_in_database(
     
     Args:
         submitter_name (str): Name of the submitter.
+        organism (str): Organism the submitter's credentials are saved for.
         submission_portal (str): Submission portal used by the submitter.
         submitter_tbl (pl.DataFrame): Submitter table containing submitter information.
         return_tbl (bool, optional): Whether to return the updated submitter table. Defaults to False.
@@ -511,12 +513,12 @@ def update_submitter_in_database(
         Optional[pl.DataFrame]: Updated submitter table if return_tbl is True, otherwise None.
     """
     try:
-        # Check if submitter for this submitter_name exists in database
+        # Check if submitter for this submitter_name and organism exists in database
         db_submitter_tbl = lookup_tbl_in_database(
             db_tbl_name = ["submitter"],
             return_var = ["*"],
-            filter_coln_var = ["submitter_name", "submission_portal"],
-            filter_coln_val = {"submitter_name": [submitter_name], "submission_portal": [submission_portal]},
+            filter_coln_var = ["submitter_name", "organism", "submission_portal"],
+            filter_coln_val = {"submitter_name": [submitter_name], "organism": [organism], "submission_portal": [submission_portal]},
             filter_var_by = ["AND", "AND"]
         )
         # Make sure db table match the schema data types
@@ -544,7 +546,7 @@ def update_submitter_in_database(
             submitter_tbl = submitter_tbl.with_columns([pl.lit(date.today().isoformat()).alias("updated_date")])
             # Compare and update database table
             compare_and_update_db_table(
-                unique_cols = ["submitter_name", "submission_portal"],
+                unique_cols = ["submitter_name", "organism", "submission_portal"],
                 compare_tbl = submitter_tbl,
                 db_tbl = db_submitter_tbl,
                 db_tbl_name = "submitter"
@@ -558,8 +560,8 @@ def update_submitter_in_database(
         db_submitter_tbl = lookup_tbl_in_database(
             db_tbl_name = ["submitter"],
             return_var = ["*"],
-            filter_coln_var = ["submitter_name", "submission_portal"],
-            filter_coln_val = {"submitter_name": [submitter_name], "submission_portal": [submission_portal]},
+            filter_coln_var = ["submitter_name", "organism", "submission_portal"],
+            filter_coln_val = {"submitter_name": [submitter_name], "organism": [organism], "submission_portal": [submission_portal]},
             filter_var_by = ["AND", "AND"]
         )
         return db_submitter_tbl
@@ -572,16 +574,18 @@ def save_submitter(submitter_tbl: pl.DataFrame) -> Dict[str, Any]:
     try:
         row = submitter_tbl.to_dicts()[0]
         submitter_name = row["submitter_name"]
+        organism = row["organism"]
         submission_portal = row["submission_portal"]
         db_submitter_tbl = update_submitter_in_database(
             submitter_name = submitter_name,
+            organism = organism,
             submission_portal = submission_portal,
             submitter_tbl = submitter_tbl,
             return_tbl = True
         )
         return {
             "status": "success",
-            "message": f"Submitter '{submitter_name}' has been saved for {submission_portal}.",
+            "message": f"Submitter '{submitter_name}' has been saved for {submission_portal} ({organism}).",
             "SubmitterInfo": db_submitter_tbl.to_dicts(),
         }
     except ValueError as err:
@@ -591,27 +595,27 @@ def save_submitter(submitter_tbl: pl.DataFrame) -> Dict[str, Any]:
 
 
 # Remove a saved submitter's credentials (identified by name + portal) from the database.
-def delete_submitter(submitter_name: str, submission_portal: str) -> Dict[str, Any]:
+def delete_submitter(submitter_name: str, organism: str, submission_portal: str) -> Dict[str, Any]:
     try:
         db_submitter_tbl = lookup_tbl_in_database(
             db_tbl_name = ["submitter"],
             return_var = ["*"],
-            filter_coln_var = ["submitter_name", "submission_portal"],
-            filter_coln_val = {"submitter_name": [submitter_name], "submission_portal": [submission_portal]},
-            filter_var_by = ["AND"],
+            filter_coln_var = ["submitter_name", "organism", "submission_portal"],
+            filter_coln_val = {"submitter_name": [submitter_name], "organism": [organism], "submission_portal": [submission_portal]},
+            filter_var_by = ["AND", "AND"],
         )
         if db_submitter_tbl.is_empty():
-            raise ValueError(f"Submitter '{submitter_name}' does not exist for {submission_portal}.")
+            raise ValueError(f"Submitter '{submitter_name}' does not exist for {submission_portal} ({organism}).")
 
         delete_val_in_database(
             db_tbl_name = ["submitter"],
-            delete_coln_var = ["submitter_name", "submission_portal"],
-            delete_coln_val = {"submitter_name": [submitter_name], "submission_portal": [submission_portal]},
-            delete_var_by = ["AND"]
+            delete_coln_var = ["submitter_name", "organism", "submission_portal"],
+            delete_coln_val = {"submitter_name": [submitter_name], "organism": [organism], "submission_portal": [submission_portal]},
+            delete_var_by = ["AND", "AND"]
         )
         return {
             "status": "success",
-            "message": f"Submitter '{submitter_name}' has been removed from {submission_portal}.",
+            "message": f"Submitter '{submitter_name}' has been removed from {submission_portal} ({organism}).",
         }
     except ValueError as err:
         raise ValueError(str(err))
@@ -918,14 +922,14 @@ def create_seqsender_config_file(
             ncbi_tbl = lookup_tbl_in_database(
                 db_tbl_name = ["submitter"],
                 return_var = ["*"],
-                filter_coln_var = ["submitter_name", "submission_portal"],
-                filter_coln_val = {"submitter_name": [ncbi_submitter_name], "submission_portal": ["NCBI"]},
+                filter_coln_var = ["submitter_name", "organism", "submission_portal"],
+                filter_coln_val = {"submitter_name": [ncbi_submitter_name], "organism": [organism], "submission_portal": ["NCBI"]},
                 filter_var_by = ["AND", "AND"]
             )
             if submission_tbl.is_empty():
                 raise ValueError(f"NCBI submission '{submission_name}' does not exist in the database.")
             if ncbi_tbl.is_empty():
-                raise ValueError(f"NCBI submitter '{ncbi_submitter_name}' does not exist in the database.")
+                raise ValueError(f"NCBI submitter '{ncbi_submitter_name}' does not exist in the database for organism {organism}.")
             # Convert null to empty string
             submission_tbl = submission_tbl.with_columns(
                 pl.col(pl.String).fill_null("")
@@ -1012,6 +1016,7 @@ def create_seqsender_submission(
             ncbi_submitter_name = row["submitter_name"]
             update_submitter_in_database(
                 submitter_name = submitter_name,
+                organism = organism,
                 submission_portal = submission_portal,
                 submitter_tbl = ncbi_submitter_tbl,
                 return_tbl = True

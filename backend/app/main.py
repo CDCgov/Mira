@@ -2075,19 +2075,25 @@ async def retrieve_submission_status(
 # ---------- List all submissions ----------
 @app.get("/list/submitters", response_model=ListSubmitterResponse, summary="List all submitters", tags=["Submitter Utils"])
 async def get_submitters(
-    submission_portal: Optional[Literal[tuple(submission_portals)]] = Query(None, description="Submission portal (NCBI).")
+    submission_portal: Optional[Literal[tuple(submission_portals)]] = Query(None, description="Submission portal (NCBI)."),
+    organism: Optional[Literal[tuple(organisms)]] = Query(None, description="Only submitters saved for this organism.")
 ):
     """
     Return a list of submitters in the database, optionally filtered by submission_portal
-    ("NCBI"), including saved passwords so users can verify or update them.
+    ("NCBI") and organism, including saved passwords so users can verify or update them.
     """
     try:
+        filters = {
+            column: [value]
+            for column, value in (("submission_portal", submission_portal), ("organism", organism))
+            if value
+        }
         db_submitter_tbl = lookup_tbl_in_database(
             db_tbl_name = ["submitter"],
             return_var  = ["*"],
-            filter_coln_var = ["submission_portal"] if submission_portal else None,
-            filter_coln_val = {"submission_portal": [submission_portal]} if submission_portal else None,
-            filter_var_by = ["AND"] if submission_portal else None
+            filter_coln_var = list(filters) or None,
+            filter_coln_val = filters or None,
+            filter_var_by = ["AND"] * len(filters) if len(filters) > 1 else None
         )
         if db_submitter_tbl.shape[0] == 0:
             return {"SubmitterInfo": []}
@@ -2102,18 +2108,19 @@ async def get_submitters(
 @app.get("/retrieve/submitter", response_model=ListSubmitterResponse, summary="Retrieve information about a given submitter", tags=["Submitter Utils"])
 async def get_submitter_info(
     submitter_name: str = Query(..., description="Name of the submitter."),
+    organism: Literal[tuple(organisms)] = Query(..., description="Organism the submitter's credentials are saved for."),
     submission_portal: Literal[tuple(submission_portals)] = Query(..., description="Submission portal (NCBI).")
 ):
     """
-    Return a submitter matching the given name and submission portal, including the saved
+    Return a submitter matching the given name, organism and submission portal, including the saved
     password so the user can verify or update it.
     """
     try:
         db_submitter_tbl = lookup_tbl_in_database(
             db_tbl_name = ["submitter"],
             return_var  = ["*"],
-            filter_coln_var = ["submitter_name", "submission_portal"],
-            filter_coln_val = {"submitter_name": [submitter_name], "submission_portal": [submission_portal]},
+            filter_coln_var = ["submitter_name", "organism", "submission_portal"],
+            filter_coln_val = {"submitter_name": [submitter_name], "organism": [organism], "submission_portal": [submission_portal]},
             filter_var_by = ["AND", "AND"],
         )
         if db_submitter_tbl.shape[0] == 0:
@@ -2147,12 +2154,13 @@ async def save_submitter_endpoint(req: SubmitterInfo):
 @app.delete("/delete/submitter", response_model=Dict[str, Any], summary="Delete a saved submitter's credentials", tags=["Submitter Utils"])
 async def delete_submitter_endpoint(req: DeleteSubmitterRequest):
     """
-    Remove a saved submitter's credentials (identified by name + submission portal) from the database.
+    Remove a saved submitter's credentials (identified by name + organism + submission portal) from the database.
     """
     try:
         result = await asyncio.to_thread(
             delete_submitter,
             submitter_name = req.submitter_name,
+            organism = req.organism,
             submission_portal = req.submission_portal,
         )
         return result

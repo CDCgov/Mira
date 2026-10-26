@@ -5,7 +5,7 @@ x-mira-nf-image:
 
 x-seqsender-image:
   &seqsender-image
-  ghcr.io/cdcgov/seqsender:v1.3.93
+  ghcr.io/cdcgov/seqsender:v1.5.2
 
 x-data-storage-path:
   &data-storage-path
@@ -22,7 +22,7 @@ x-mira-frontend-codebase:
 services:
   mira:
     container_name: mira
-    image: mira:latest
+    image: ghcr.io/rchau88/mira-dev:v3.0.2
     build:
       context: .
       dockerfile: Dockerfile

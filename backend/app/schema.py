@@ -194,6 +194,7 @@ class ListSubmissionResponse(BaseModel):
 class SubmitterInfo(BaseModel):
     submitter_name: str = Field(..., description="Name of the submitter.")
     submitter_password: str = Field(..., description="Password for the submitter.")
+    organism: _Organisms = Field(..., description="Organism the submitter's credentials are saved for.")
     submission_portal: _SubmissionPortals = Field(..., description="Submission portal (NCBI).")
     # Portal-specific credential fields
     ncbi_spuid_namespace: Optional[str] = Field(None, description="NCBI SPUID namespace for the submitter.")
@@ -228,9 +229,10 @@ class DBSubmitterInfo(SubmitterInfo):
 class ListSubmitterResponse(BaseModel):
     SubmitterInfo: Optional[List[DBSubmitterInfo]] = Field(None, description="Information about the submitters.")
 
-# ------  DELETE SUBMITTER REQUEST (REQUIRED: SUBMITTER NAME, SUBMISSION PORTAL) ----------
+# ------  DELETE SUBMITTER REQUEST (REQUIRED: SUBMITTER NAME, ORGANISM, SUBMISSION PORTAL) ----------
 class DeleteSubmitterRequest(BaseModel):
     submitter_name: str = Field(..., description="Name of the submitter.")
+    organism: _Organisms = Field(..., description="Organism the submitter's credentials are saved for.")
     submission_portal: _SubmissionPortals = Field(..., description="Submission portal (NCBI).")
 
 class SubmissionRequest(BaseModel):
@@ -283,6 +285,8 @@ class CreateSubmissionRequest(SubmissionRequest):
     @model_validator(mode='after')
     def validate_ncbi_submitter_info(self) -> 'CreateSubmissionRequest':
         if self.ncbi_submitter_info is not None:
+            if self.ncbi_submitter_info.organism != self.organism:
+                raise ValueError("The NCBI submitter's organism must match the submission's organism.")
             postal_code = (self.ncbi_submitter_info.ncbi_addr_postal_code or "").strip()
             if not postal_code.isdigit():
                 raise ValueError("NCBI postal code must contain only digits for SeqSender.")

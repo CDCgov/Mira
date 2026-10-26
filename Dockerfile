@@ -4,7 +4,7 @@ ARG MICROMAMBA_IMAGE=${MICROMAMBA_IMAGE:-mambaorg/micromamba:2.8.0}
 
 # Create an argument to pull a particular version of seqsender image (backend only)
 ARG SEQSENDER_IMAGE
-ARG SEQSENDER_IMAGE=${SEQSENDER_IMAGE:-ghcr.io/cdcgov/seqsender:v1.3.93}
+ARG SEQSENDER_IMAGE=${SEQSENDER_IMAGE:-ghcr.io/cdcgov/seqsender:v1.5.2}
 
 # Define the base image shared by both the backend and frontend stages
 ARG MIRA_NF_IMAGE
@@ -41,11 +41,6 @@ ENV SEQSENDER_DIR=/seqsender
 
 # Copy SeqSender binary from the seqsender image
 COPY --from=seqsender ${SEQSENDER_DIR} ${SEQSENDER_DIR}
-
-# SeqSender v1.3.93 assumes every NCBI <File> response parses as a list. A single
-# file parses as a dict, so normalize it before iterating and merging accessions.
-RUN sed -i '/filename_dict = item\["File"\]/a\\t\t\t\t\t\tif isinstance(filename_dict, dict):\
-							filename_dict = [filename_dict]' ${SEQSENDER_DIR}/genbank_handler.py
 
 # Create the isolated SeqSender environment from its image manifest
 RUN micromamba create --yes --name seqsender -f ${SEQSENDER_DIR}/env.yaml \
