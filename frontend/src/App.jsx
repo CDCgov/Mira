@@ -1574,6 +1574,11 @@ function OntFastqCell({ fastqList, uploadedMap }) {
 
 const PAST_RUNS_PAGE_SIZE = 10;
 
+// Nextflow itself can wedge (e.g. its JVM process-reaper threads deadlock) and leave tasks
+// that already finished on disk reported as still running, so the run polls forever. Warn
+// once the DAG has gone this long without changing while still claiming to be PROCESSING.
+const DAG_STALL_WARNING_MS = 15 * 60 * 1000;
+
 function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden, onOpenSeqSender }) {
   const [openStep, setOpenStep]                           = useState(() => new Set()); // step accordions start collapsed
   const [stepNavCollapsed, setStepNavCollapsed]           = useState(false);
@@ -1656,6 +1661,9 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden, onOpenSeqSe
   const [showDAG, setShowDAG]                         = useState(false);  // whether to show the DAG view
   const [pipelineDAG, setPipelineDAG]                 = useState(null);     // pipeline DAG from /pipeline/status
   const [pipelinePolling, setPipelinePolling]         = useState(false);    // whether polling is active
+  const [dagStalledFor, setDagStalledFor]             = useState(0);        // ms the DAG has gone unchanged while still PROCESSING
+  const dagSignatureRef                                = useRef(null);
+  const dagChangedAtRef                                = useRef(0);
 
   // ── Result section state ──────────────────────
   const [resultBarcodeAssignments, setResultBarcodeAssignments]       = useState(null);
@@ -1880,6 +1888,38 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden, onOpenSeqSe
     const timer = setInterval(poll, 5000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [pipelinePolling, submitProcessId, selectedRun, cancelRun]);
+
+  // ── Stall detection: remember when the DAG last actually changed ──
+  // Each poll replaces pipelineDAG wholesale, so compare a per-task signature rather
+  // than object identity to tell real progress from an unchanging re-fetch.
+  useEffect(() => {
+    if (!pipelineDAG) {
+      dagSignatureRef.current = null;
+      dagChangedAtRef.current = 0;
+      setDagStalledFor(0);
+      return;
+    }
+    const signature = JSON.stringify((pipelineDAG.tasks ?? []).map(t => [t.hash, t.status, t.exit_code]));
+    if (signature !== dagSignatureRef.current) {
+      dagSignatureRef.current = signature;
+      dagChangedAtRef.current = Date.now();
+      setDagStalledFor(0);
+    }
+  }, [pipelineDAG]);
+
+  // Only a run that still claims to be PROCESSING can be stalled; depends on the status
+  // string (not the DAG object) so the ticker isn't reset by every 5 s poll.
+  const pipelineStatus = pipelineDAG?.workflows?.status;
+  useEffect(() => {
+    if (!pipelinePolling || pipelineStatus !== "PROCESSING") {
+      setDagStalledFor(0);
+      return undefined;
+    }
+    const id = setInterval(() => {
+      if (dagChangedAtRef.current) setDagStalledFor(Date.now() - dagChangedAtRef.current);
+    }, 30000);
+    return () => clearInterval(id);
+  }, [pipelinePolling, pipelineStatus]);
 
   // ── Sample sheet state ───────────────────────
   const SAMPLE_TYPES = ["- Control", "+ Control", "Test"];
@@ -4367,15 +4407,30 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden, onOpenSeqSe
                                 )
                           )}
 
+                          {/* stalled pipeline warning */}
+                          {dagStalledFor >= DAG_STALL_WARNING_MS && (
+                            <div className="flex items-start gap-2 text-xs text-warning bg-warning/10 border border-warning/30 rounded-lg px-3 py-2">
+                              <AlertCircle size={13} className="shrink-0 mt-0.5" />
+                              <span>
+                                No task has changed state for {Math.floor(dagStalledFor / 60000)} minutes. A long IRMA or
+                                Nextclade step can look like this, but if it keeps climbing the Nextflow process may be
+                                wedged — cancel the run and start it again.
+                              </span>
+                            </div>
+                          )}
+
                           {/* pipeline tasks — grid: distinct tasks (rows) x samples (columns) */}
                           {(pipelineDAG?.tasks?.length > 0 || pipelineDAG?.process_names?.length > 0) && (() => {
                             const tasks = pipelineDAG.tasks ?? [];
+                            // PASSFAILED only records a sample's QC verdict, so it isn't a progress step.
+                            const isHiddenProcess = (p) => /passfailed/i.test(p || "");
                             // Seed rows with every potential task parsed from the .nextflow.log
                             // ("Starting process > ...") so all rows appear up front.
-                            const taskNames = Array.isArray(pipelineDAG.process_names) ? [...pipelineDAG.process_names] : [];
+                            const taskNames = (Array.isArray(pipelineDAG.process_names) ? pipelineDAG.process_names : [])
+                              .filter(p => !isHiddenProcess(p));
                             tasks.forEach(t => {
                               const p = t.process_name || "unknown";
-                              if (!taskNames.includes(p)) taskNames.push(p);
+                              if (!isHiddenProcess(p) && !taskNames.includes(p)) taskNames.push(p);
                             });
 
                             // Columns = real samples from the samplesheet. Fall back to task-derived
@@ -4401,17 +4456,9 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden, onOpenSeqSe
                               const e = exitOf(t);
                               return e !== "" && e !== "-" && !isNaN(Number(e)) && Number(e) !== 0;
                             };
-                            // PASSFAILED's non-zero exit encodes a sample's QC verdict, not a task failure —
-                            // it succeeds as long as the process ran to completion.
-                            const isVerdictProcess = (t) => /passfailed/i.test(t.process_name || "");
-                            const bucketOf = (t) => {
-                              if (isVerdictProcess(t)) {
-                                return (t.status === "COMPLETED" || exitOf(t) !== "") ? "success" : "running";
-                              }
-                              return isFailedExit(t)
-                                ? "failed"
-                                : (t.status === "COMPLETED" || exitOf(t) === "0") ? "success" : "running";
-                            };
+                            const bucketOf = (t) => isFailedExit(t)
+                              ? "failed"
+                              : (t.status === "COMPLETED" || exitOf(t) === "0") ? "success" : "running";
                             const bump = (map, key, bucket) => {
                               const prev = map.get(key);
                               if (!prev || rank[bucket] > rank[prev]) map.set(key, bucket);
@@ -4530,10 +4577,10 @@ function AssemblyTab({ loadRunSignal, newRunSignal, setHeaderHidden, onOpenSeqSe
                                   {pipelineDAG?.workflows?.number_of_samples ?? 0} total samples
                                 </span>
                                 <span className="w-fit px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/10 dark:text-red-400 font-mono">
-                                  {pipelineDAG?.workflows?.number_of_samples_with_failed_tasks ?? 0} samples failed
+                                  {pipelineDAG?.workflows?.number_of_samples_with_failed_tasks ?? 0} failed assembly
                                 </span>
                                 <span className="w-fit px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/05 dark:text-emerald-400 font-mono">
-                                  {pipelineDAG?.workflows?.number_of_samples_with_successful_tasks ?? 0} samples passed
+                                  {pipelineDAG?.workflows?.number_of_samples_with_successful_tasks ?? 0} completed assembly
                                 </span>
                               </div>
                             </div>
